@@ -1,0 +1,28 @@
+# docker-compose.yml
+services:
+  app:
+    build:
+      context: .
+    ports:
+      - "5173:5173"
+    environment:
+      - DATABASE_URL=postgresql://postgres:Exegeezer09$@db:5432/exegeezer
+      - ORIGIN=http://localhost:5173
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_PASSWORD: Exegeezer09$
+      POSTGRES_DB: exegeezer
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready"]
+      interval: 2s
+      retries: 5
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+volumes:
+  pgdata:

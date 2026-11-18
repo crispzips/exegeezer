@@ -71,6 +71,18 @@
 	});
 
 	/**
+	 * Scroll a container to the middle of its row (the row's own scroller).
+	 * @param {Element} el
+	 */
+	function centreInRow(el) {
+		const scroller = el.closest('.overflow-auto');
+		if (!scroller) return;
+		const box = el.getBoundingClientRect();
+		const view = scroller.getBoundingClientRect();
+		scroller.scrollBy({ left: box.left + box.width / 2 - (view.left + view.width / 2), behavior: 'smooth' });
+	}
+
+	/**
 	 * Open the section in row `d`, or close it if it is already open (which also
 	 * removes every row beneath it).
 	 * @param {number} d
@@ -81,11 +93,22 @@
 		selected = selected[d] === id ? selected.slice(0, d) : [...selected.slice(0, d), id];
 		// once the container has resized (open ones widen), centre it in its row
 		await tick();
-		const scroller = el.closest('.overflow-auto');
-		if (!scroller) return;
-		const box = el.getBoundingClientRect();
-		const view = scroller.getBoundingClientRect();
-		scroller.scrollBy({ left: box.left + box.width / 2 - (view.left + view.width / 2), behavior: 'smooth' });
+		centreInRow(el);
+	}
+
+	/**
+	 * Open a section and every section around it (`ids`, outermost first), as if each
+	 * had been clicked in turn, and bring the opened containers into view. Used by the
+	 * minimap.
+	 * @param {string[]} ids
+	 */
+	async function openPath(ids) {
+		selected = ids;
+		await tick();
+		ids.forEach((id, d) => {
+			const el = host?.querySelector(`[data-row="${d}"] [data-node="${id}"]`);
+			if (el) centreInRow(el);
+		});
 	}
 
 	/**
@@ -190,7 +213,9 @@
 		{paragraphs}
 		{tree}
 		{colors}
-		layoutKey="{rows.length}:{selected[0]}"
-		getScroller={() => host?.querySelector('[data-row="0"]')?.closest('.overflow-auto') ?? null}
+		{selected}
+		onopen={openPath}
+		layoutKey={selected.join('/')}
+		getHost={() => host ?? null}
 	/>
 </div>

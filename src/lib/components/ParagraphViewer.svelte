@@ -1,4 +1,5 @@
 <script>
+	import MinimapTooltip from '#lib/components/MinimapTooltip.svelte';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 
 	/**
@@ -15,7 +16,8 @@
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
 	 * no scrolling, as gray blips whose heights follow each paragraph's real height,
-	 * plus a violet marker on the visible part. Click or drag in it to jump.
+	 * plus a violet marker on the visible part. Each blip is a button: clicking it scrolls
+	 * the main area to the top of that blip. The empty space between blips is not clickable.
 	 * For hierarchical text (paragraphs with a header `level`), every section at
 	 * every header level is a blip. Each header level gets its own lane (a thin
 	 * vertical strip, shallowest on the left), and a section's blip spans from its
@@ -25,7 +27,10 @@
 	 * (cycling when they run out); its subsections use progressively darker shades
 	 * of that colour. Hovering anywhere in a top-level section's part of the column (its
 	 * whole bounding area, not just the blips) shows its title in a tooltip and
-	 * shades that area in taupe2.
+	 * shades that area in taupe2; clicking that background (anywhere but on a blip)
+	 * scrolls to the beginning of the top-level section. Hovering a blip itself instead shows the tooltip
+	 * as the section's name preceded by its ancestors' names, one per line, each level
+	 * tabbed in further and led by a turn-right icon.
 	 * The overview column's marker takes the colour of the top-level section the
 	 * visible text is currently in (taupe2 at 50% opacity when outside any section).
 	 */
@@ -70,8 +75,10 @@
 	/**
 	 * Blip positions/heights as % of the whole text. `title`, `bandTop` and `bandH`
 	 * describe the top-level section the blip belongs to (for the hover tooltip/band).
+	 * `y` is the blip's top in px within the text (where a click scrolls to) and
+	 * `label` names it for assistive tech.
 	 * @type {{ top: number, h: number, lane: number, minor: boolean, color: string | null,
-	 *          title: string | null, bandTop: number, bandH: number }[]}
+	 *          title: string | null, bandTop: number, bandH: number, bandY: number, y: number, label: string, path: string[] }[]}
 	 */
 	let blips = $state([]);
 	let laneCount = $state(1);
@@ -83,17 +90,21 @@
 	 * section's start (the last one to the bottom).
 	 */
 	let regions = $derived.by(() => {
-		/** @type {Map<number, { title: string, top: number, h: number }>} */
+		/** @type {Map<number, { title: string, top: number, h: number, y: number }>} */
 		const seen = new Map();
 		for (const b of blips) {
-			if (b.title && !seen.has(b.bandTop)) seen.set(b.bandTop, { title: b.title, top: b.bandTop, h: b.bandH });
+			if (b.title && !seen.has(b.bandTop)) seen.set(b.bandTop, { title: b.title, top: b.bandTop, h: b.bandH, y: b.bandY });
 		}
 		const list = [...seen.values()].sort((a, b) => a.top - b.top);
 		return list.map((r, i) => ({ ...r, h: (list[i + 1]?.top ?? 100) - r.top }));
 	});
 	/** the section area currently hovered (null when none) */
 	let hover = $state(null);
+	/** the blip currently under the pointer (null when none) */
+	let hoverBlip = $state(null);
 	let tipY = $state(0); // tooltip height inside the synopsis column (px)
+	/** tooltip lines: a hovered blip's section and its ancestors, else the hovered area's top-level title */
+	let tipLines = $derived(hoverBlip ? hoverBlip.path : hover ? [hover.title] : []);
 
 	/**
 	 * Colour of the top-level section that contains the point `y` (px from the top
@@ -128,7 +139,6 @@
 	let draggingMini = false;
 	/** @type {HTMLDivElement | undefined} */
 	let synEl = $state(); // synopsis column (whole text, no scrolling)
-	let draggingSyn = false;
 
 	function update() {
 		if (!mainEl || !miniEl || !miniContent || !miniInner) return;
@@ -177,17 +187,21 @@
 				if (firstHeader > 0) {
 					const top = rows[0].offsetTop;
 					const bottom = rows[firstHeader - 1].offsetTop + rows[firstHeader - 1].offsetHeight;
-					next.push({ top: (top / total) * 100, h: ((bottom - top) / total) * 100, lane: 0, minor: true, color: null, title: null, bandTop: 0, bandH: 0 });
+					next.push({ top: (top / total) * 100, h: ((bottom - top) / total) * 100, lane: 0, minor: true, color: null, title: null, bandTop: 0, bandH: 0, bandY: 0, y: top, label: 'Text before the first section', path: ['Text before the first section'] });
 				}
 
 				// A section runs from its header to the next header of the same or higher level
 				const topLevel = present[0];
 				let topIndex = -1; // which top-level section we are inside
-				/** @type {{ title: string, top: number, h: number } | null} */
+				/** @type {{ title: string, top: number, h: number, y: number } | null} */
 				let currentTop = null; // that top-level section's title and extent (%)
+				/** @type {{ level: number, title: string }[]} the section and its ancestors, outermost first */
+				const trail = [];
 				levels.forEach((lv, i) => {
 					if (lv === 0) return;
 					if (lv === topLevel) topIndex++;
+					while (trail.length && trail[trail.length - 1].level >= lv) trail.pop();
+					trail.push({ level: lv, title: paragraphs[i].text.replace(/^#{1,6}\s+/, '') });
 					let end = i + 1;
 					while (end < levels.length && (levels[end] === 0 || levels[end] > lv)) end++;
 					const top = rows[i].offsetTop;
@@ -195,9 +209,9 @@
 					const topPct = (top / total) * 100;
 					const hPct = ((bottom - top) / total) * 100;
 					const title = paragraphs[i].text.replace(/^#{1,6}\s+/, '');
-					if (lv === topLevel) currentTop = { title, top: topPct, h: hPct };
+					if (lv === topLevel) currentTop = { title, top: topPct, h: hPct, y: top };
 					// headers above the first top-level header have no top-level parent: use themselves
-					const band = currentTop ?? { title, top: topPct, h: hPct };
+					const band = currentTop ?? { title, top: topPct, h: hPct, y: top };
 					next.push({
 						top: topPct,
 						h: hPct,
@@ -206,14 +220,18 @@
 						color: sectionColor(Math.max(topIndex, 0), laneOf.get(lv) ?? 0),
 						title: band.title,
 						bandTop: band.top,
-						bandH: band.h
+						bandH: band.h,
+						bandY: band.y,
+						y: top,
+						label: title,
+						path: trail.map((t) => t.title)
 					});
 				});
 				blips = next;
 				laneCount = present.length;
 			} else {
 				// Flat text: one blip per paragraph, sized by its real rendered height
-				blips = rows.map((row) => ({
+				blips = rows.map((row, i) => ({
 					top: (row.offsetTop / total) * 100,
 					h: (row.offsetHeight / total) * 100,
 					lane: 0,
@@ -221,7 +239,11 @@
 					color: null,
 					title: null,
 					bandTop: 0,
-					bandH: 0
+					bandH: 0,
+					bandY: 0,
+					y: row.offsetTop,
+					label: `Paragraph ${i + 1}`,
+					path: [`Paragraph ${i + 1}`]
 				}));
 				laneCount = 1;
 			}
@@ -264,26 +286,17 @@
 		if (draggingMini) jumpTo(e);
 	}
 
-	/** Scroll the main area so the clicked/dragged point in the synopsis is centred */
-	/** @param {PointerEvent} e */
-	function synJumpTo(e) {
-		if (!mainEl || !synEl) return;
-		const r = synEl.getBoundingClientRect();
-		const frac = Math.min(1, Math.max(0, (e.clientY - r.top) / Math.max(r.height, 1)));
-		mainEl.scrollTop = frac * m.sh - m.ch / 2;
-	}
-
-	/** @param {PointerEvent & { currentTarget: HTMLElement }} e */
-	function synDown(e) {
-		draggingSyn = true;
-		e.currentTarget.setPointerCapture(e.pointerId);
-		synJumpTo(e);
+	/** Scroll the main area so the top of a blip is at the top of the view */
+	/** @param {number} y the blip's top in px within the text */
+	function goToBlip(y) {
+		if (!mainEl) return;
+		// the text has p-3 (12px) of padding above the first paragraph; keep that margin
+		mainEl.scrollTop = Math.max(0, y - 12);
 	}
 
 	/** @param {PointerEvent} e */
 	function synMove(e) {
 		trackTip(e);
-		if (draggingSyn) synJumpTo(e);
 	}
 
 	/** Keep the tooltip level with the pointer (clamped so it stays inside the column) */
@@ -291,7 +304,7 @@
 	function trackTip(e) {
 		if (!synEl) return;
 		const r = synEl.getBoundingClientRect();
-		tipY = Math.min(Math.max(e.clientY - r.top, 14), Math.max(r.height - 14, 14));
+		tipY = e.clientY - r.top; // clamped where it is drawn, since its height depends on its line count
 	}
 </script>
 
@@ -356,11 +369,8 @@
 			data-synopsis
 			data-minimap="Global Linear Minimap"
 			aria-label="Global Linear Minimap"
-			onpointerdown={synDown}
 			onpointermove={synMove}
-			onpointerup={() => (draggingSyn = false)}
-			onpointercancel={() => (draggingSyn = false)}
-			class="relative shrink-0 cursor-pointer touch-none select-none border-l border-taupe2 bg-taupe1"
+			class="relative shrink-0 select-none border-l border-taupe2 bg-taupe1"
 			style="width: {PAD * 2 + laneCount * LANE_W + (laneCount - 1) * LANE_GAP}px"
 		>
 			<!-- Hover areas: one per top-level section, the whole part of the column it covers -->
@@ -372,16 +382,22 @@
 						trackTip(e);
 					}}
 					onpointerleave={() => (hover = null)}
-					class="absolute inset-x-0 {hover && hover.top === region.top ? 'bg-taupe2' : ''}"
+					onclick={() => goToBlip(region.y)}
+					class="absolute inset-x-0 cursor-pointer {hover && hover.top === region.top ? 'bg-taupe2' : ''}"
 					style="top: {region.top}%; height: {region.h}%"
 				></div>
 			{/each}
 
 			{#each blips as blip}
-				<div
-					class="pointer-events-none absolute rounded-[1px] {blip.color ? '' : blip.minor ? 'bg-gray-200' : 'bg-gray-500'}"
+				<button
+					type="button"
+					aria-label="Go to {blip.label}"
+					onclick={() => goToBlip(blip.y)}
+					onpointerenter={() => (hoverBlip = blip)}
+					onpointerleave={() => (hoverBlip = null)}
+					class="absolute cursor-pointer rounded-[1px] {blip.color ? '' : blip.minor ? 'bg-gray-200' : 'bg-gray-500'}"
 					style="{blip.color ? `background-color: ${blip.color}; ` : ''}left: {PAD + blip.lane * (LANE_W + LANE_GAP)}px; width: {LANE_W}px; top: {blip.top}%; height: max(calc({blip.h}% - {BLIP_GAP}px), 1px)"
-				></div>
+				></button>
 			{/each}
 
 			<!-- Marker showing what the main area currently displays -->
@@ -390,14 +406,16 @@
 				style="top: {(m.top / m.sh) * 100}%; height: {(m.ch / m.sh) * 100}%"
 			></div>
 
-			<!-- Tooltip: the top-level section's title, to the left of the column -->
-			{#if hover}
+			<!-- Tooltip, to the left of the column. Over a blip: the section and its ancestors,
+			     one per line, outermost first. Elsewhere in a top-level section's area: its title. -->
+			{#if tipLines.length > 0}
+				{@const half = tipLines.length * 11 + 6}
 				<div
 					role="tooltip"
-					class="pointer-events-none absolute right-full z-30 mr-2 max-w-64 -translate-y-1/2 truncate rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
-					style="top: {tipY}px"
+					class="pointer-events-none absolute right-full z-30 mr-2 w-max max-w-64 -translate-y-1/2 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+					style="top: clamp({half}px, {tipY}px, calc(100% - {half}px))"
 				>
-					{hover.title}
+					<MinimapTooltip lines={tipLines} />
 				</div>
 			{/if}
 		</div>

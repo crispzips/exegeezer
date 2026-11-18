@@ -1,4 +1,5 @@
 <script>
+    import { onMount } from 'svelte';
     import { ArrowOutDownCircleHalf, EyeAlt, Queue, Sitemap } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -29,10 +30,13 @@
     /** @type {HTMLDialogElement | undefined} */
     let frontmatterDialog;
 
-    /** Put the text above the first header into a section called "Frontmatter" */
-    function wrapFrontmatter() {
-        // use the shallowest header level present so Frontmatter is a top-level section
-        const level = Math.min(...paragraphs.filter((p) => p.level > 0).map((p) => p.level));
+    /**
+     * Put the text above the first header into a section called "Frontmatter".
+     * The section is a header at the shallowest header level present, placed first.
+     * @param {{ id: string, originalIndex: number, text: string, level: number, children?: unknown[] }[]} list
+     */
+    function withFrontmatter(list) {
+        const level = Math.min(...list.filter((p) => p.level > 0).map((p) => p.level));
         const header = {
             id: crypto.randomUUID(),
             originalIndex: 0,
@@ -40,9 +44,28 @@
             level,
             children: []
         };
-        paragraphs = [header, ...paragraphs].map((p, i) => ({ ...p, originalIndex: i }));
+        return [header, ...list].map((p, i) => ({ ...p, originalIndex: i }));
+    }
+
+    function wrapFrontmatter() {
+        paragraphs = withFrontmatter(paragraphs);
         frontmatterDialog?.close();
     }
+
+    // TEMPORARY: load Dissertation.md into the main pane when the page opens, with
+    // an automatic Frontmatter section (the file is gitignored, so this does
+    // nothing where it is missing).
+    const dissertationFiles = import.meta.glob('/src/lib/assets/Dissertation.md', { query: '?raw', import: 'default' });
+    onMount(async () => {
+        const load = Object.values(dissertationFiles)[0];
+        if (!load || mainText.length > 0) return;
+        const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
+        const hasHeaders = list.some((p) => p.level > 0);
+        mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({
+            ...p,
+            originalIndex: i
+        }));
+    });
 
     /** The main text shown in the main pane */
     /** @type {{ id: string, originalIndex: number, text: string, level: number }[]} */

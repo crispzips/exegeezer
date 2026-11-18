@@ -70,14 +70,15 @@
     /**
      * Add the loaded text (the paragraphs in the preview) to the main text.
      * If the main text is empty, the loaded text simply becomes the main text.
-     * @param {'prepend' | 'append'} where
+     * 'replace' discards the existing main text and uses the loaded text instead.
+     * @param {'prepend' | 'append' | 'replace'} where
      */
     function inject(where) {
         if (paragraphs.length === 0) return;
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level }));
         const combined =
-            mainText.length === 0
+            mainText.length === 0 || where === 'replace'
                 ? added
                 : where === 'prepend'
                   ? [...added, ...mainText]
@@ -254,6 +255,7 @@
                     >
                         <button role="menuitem" onclick={() => inject('prepend')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Prepend</button>
                         <button role="menuitem" onclick={() => inject('append')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Append</button>
+                        <button role="menuitem" onclick={() => inject('replace')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Replace</button>
                     </div>
                 {/if}
             </div>

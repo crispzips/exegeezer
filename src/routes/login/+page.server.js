@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 
-import { auth } from '#lib/server/auth.js';
+import { auth } from '#lib/server/auth.ts';
 import { APIError } from 'better-auth/api';
 
 export const load = (event) => {
@@ -59,7 +59,7 @@ export const actions = {
 	},
 	signInSocial: async (event) => {
 		const formData = await event.request.formData();
-		const provider = formData.get('provider')?.toString() ?? 'github';
+		const provider = formData.get('provider')?.toString() ?? 'google';
 		const callbackURL = formData.get('callbackURL')?.toString() ?? '/demo/better-auth';
 
 		const result = await auth.api.signInSocial({

@@ -21,3 +21,8 @@ Thumbs.db
 # Vite
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
+
+# Source texts (private / copyrighted)
+src/lib/assets/*.docx
+src/lib/assets/*.md
+src/lib/assets/*.txt

@@ -1,0 +1,29 @@
+@import "tailwindcss";
+
+body {
+	background-color: var(--color-taupe1);
+    color: var(--color-dark);
+}
+
+/* `static` always emits every theme colour as a CSS variable, not only the ones
+   used by a Tailwind class (the synopsis blips read the accents via var()). */
+@theme static {
+  --color-dark: #002b36;
+  --color-lessdark: #073642;
+  --color-grey4: #586e75;
+  --color-grey3: #657b83;
+  --color-grey2:  #839496;
+  --color-grey1:  #93a1a1;
+  --color-taupe2:  #eee8d5;
+  --color-taupe1:  #fdf6e3;
+
+  /* Official Solarized Accent Colors */
+  --color-yellow:  #b58900;
+  --color-orange:  #cb4b16;
+  --color-red:     #dc322f;
+  --color-magenta: #d33682;
+  --color-violet:  #6c71c4;
+  --color-blue:    #268bd2;
+  --color-cyan:    #2aa198;
+  --color-green:   #859900;
+}

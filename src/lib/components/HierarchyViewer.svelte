@@ -2,6 +2,7 @@
 	import { tick } from 'svelte';
 	import { buildSections } from '#lib/utilities/buildSections.js';
 	import SplitPane from '#lib/components/SplitPane.svelte';
+	import HierarchyMinimap from '#lib/components/HierarchyMinimap.svelte';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 
 	/**
@@ -19,6 +20,9 @@
 	let { paragraphs, empty = 'No text yet.' } = $props();
 
 	/** @typedef {import('#lib/utilities/buildSections.js').SectionChild} SectionChild */
+
+	/** @type {HTMLDivElement | undefined} */
+	let host = $state();
 
 	let tree = $derived(buildSections(paragraphs));
 
@@ -126,6 +130,7 @@
 					{@const t = splitTitle(node.title)}
 					<button
 						data-section
+						data-node={node.id}
 						data-level={node.level}
 						data-open={isOpen}
 						onclick={(e) => toggle(d, node.id, e.currentTarget)}
@@ -147,7 +152,7 @@
 						<span class="shrink-0 text-xs font-normal opacity-70">{node.children.length}</span>
 					</button>
 				{:else}
-					<div class="flex w-80 shrink-0 gap-2 overflow-y-auto rounded-md border border-taupe2 bg-taupe1 p-2">
+					<div data-node={node.paragraph.id} class="flex w-80 shrink-0 gap-2 overflow-y-auto rounded-md border border-taupe2 bg-taupe1 p-2">
 						<span class="text-xs text-gray-500">{node.paragraph.originalIndex}</span>
 						<p class="flex-1 whitespace-pre-wrap">{node.paragraph.text}</p>
 					</div>
@@ -175,6 +180,17 @@
 	{/if}
 {/snippet}
 
-<div class="h-full">
-	{@render stack(0)}
+<div bind:this={host} class="flex h-full min-h-0 flex-col">
+	<div class="min-h-0 flex-1">
+		{@render stack(0)}
+	</div>
+
+	<!-- Global Hierarchical Minimap: the whole text along the bottom of the pane -->
+	<HierarchyMinimap
+		{paragraphs}
+		{tree}
+		{colors}
+		layoutKey="{rows.length}:{selected[0]}"
+		getScroller={() => host?.querySelector('[data-row="0"]')?.closest('.overflow-auto') ?? null}
+	/>
 </div>

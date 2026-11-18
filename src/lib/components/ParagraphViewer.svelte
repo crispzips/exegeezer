@@ -38,9 +38,11 @@
 	/** @type {HTMLDivElement | undefined} */
 	let miniEl = $state(); // scrolling overview column
 	/** @type {HTMLDivElement | undefined} */
-	let miniContent = $state(); // overview content (taller than miniEl when scrollable)
+	let miniContent = $state(); // overview content, at its real (scaled-down) size
+	/** @type {HTMLDivElement | undefined} */
+	let miniInner = $state(); // full-size copy of the text, scaled down to fit the overview
 
-	let m = $state({ top: 0, sh: 1, ch: 1, mmH: 1, mTop: 0, mH: 0 });
+	let m = $state({ top: 0, sh: 1, ch: 1, mmH: 1, mTop: 0, mH: 0, w: 1, k: 1 });
 
 	// Paragraph boundaries (px) in the main text and in the overview, same count.
 	// The overview wraps its tiny text differently, so positions are mapped
@@ -129,27 +131,31 @@
 	let draggingSyn = false;
 
 	function update() {
-		if (!mainEl || !miniEl || !miniContent) return;
+		if (!mainEl || !miniEl || !miniContent || !miniInner) return;
 		// Read from the DOM into locals (never read `m` here: this runs inside an
 		// $effect, and reading state it also writes causes an infinite loop)
 		const top = mainEl.scrollTop;
 		const sh = Math.max(mainEl.scrollHeight, 1);
 		const ch = mainEl.clientHeight;
-		const mmH = Math.max(miniContent.offsetHeight, 1);
+		// The overview lays the text out at the main text's own width (same fonts,
+		// same line breaks) and is then scaled down by k to fit the narrow column.
+		const w = Math.max(mainContent?.offsetWidth ?? 1, 1);
+		const k = miniEl.clientWidth / w;
+		const mmH = Math.max(miniInner.offsetHeight * k, 1);
 
 		// Boundaries: each paragraph's top (the first starts at 0), then the very end
 		const rowEls = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
-		const miniEls = /** @type {HTMLElement[]} */ (Array.from(miniContent.querySelectorAll(':scope > p')));
+		const miniEls = /** @type {HTMLElement[]} */ (Array.from(miniInner.children));
 		if (rowEls.length === miniEls.length && rowEls.length > 0) {
 			mainB = [0, ...rowEls.slice(1).map((r) => r.offsetTop), sh];
-			miniB = [0, ...miniEls.slice(1).map((r) => r.offsetTop), mmH];
+			miniB = [0, ...miniEls.slice(1).map((r) => r.offsetTop * k), mmH];
 		} else {
 			mainB = [0, sh];
 			miniB = [0, mmH];
 		}
 		const mTop = mapPos(top, mainB, miniB);
 		const mBottom = mapPos(top + ch, mainB, miniB);
-		m = { top, sh, ch, mmH, mTop, mH: mBottom - mTop };
+		m = { top, sh, ch, mmH, mTop, mH: mBottom - mTop, w, k };
 		markerColor = sectionColorAt(top + ch / 2);
 
 		// Synoptic blips: one per paragraph row, sized by its real rendered height
@@ -229,11 +235,11 @@
 
 	// Re-measure whenever sizes change (new text, window or pane resize)
 	$effect(() => {
-		if (!mainEl || !mainContent || !miniContent) return;
+		if (!mainEl || !mainContent || !miniContent || !miniInner) return;
 		const ro = new ResizeObserver(update);
 		ro.observe(mainEl);
 		ro.observe(mainContent);
-		ro.observe(miniContent);
+		if (miniInner) ro.observe(miniInner);
 		update();
 		return () => ro.disconnect();
 	});
@@ -317,10 +323,21 @@
 			onpointercancel={() => (draggingMini = false)}
 			class="w-24 shrink-0 cursor-pointer touch-none select-none overflow-hidden border-l border-taupe2 bg-taupe1"
 		>
-			<div bind:this={miniContent} class="relative p-1">
-				{#each paragraphs as para (para.id)}
-					<p class="mb-[3px] break-words text-[3px] leading-[4px] text-dark">{para.text}</p>
-				{/each}
+			<div bind:this={miniContent} class="relative overflow-hidden" style="height: {m.mmH}px">
+				<!-- Same markup and width as the main text, so every line wraps identically,
+				     then shrunk to fit the column -->
+				<div
+					bind:this={miniInner}
+					class="absolute top-0 left-0 origin-top-left space-y-2 p-3"
+					style="width: {m.w}px; transform: scale({m.k})"
+				>
+					{#each paragraphs as para (para.id)}
+						<div class="flex gap-2">
+							<span class="text-xs text-gray-500">{para.originalIndex}</span>
+							<p class="flex-1 whitespace-pre-wrap">{para.text}</p>
+						</div>
+					{/each}
+				</div>
 
 				<!-- Marker showing what the main area currently displays -->
 				<div

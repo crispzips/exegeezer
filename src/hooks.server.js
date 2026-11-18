@@ -1,5 +1,5 @@
 import { building } from '$app/env';
-import { auth } from '#lib/server/auth.js';
+import { auth } from '#lib/server/auth.ts';
 import { svelteKitHandler } from 'better-auth/svelte-kit';
 
 /** @type {import('@sveltejs/kit/hooks').Handle} */ const handleBetterAuth = async ({

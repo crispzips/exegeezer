@@ -1,6 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 
-import { auth } from '#lib/server/auth.js';
+import { auth } from '#lib/server/auth.ts';
 
 export const load = (event) => {
 	if (!event.locals.user) {

@@ -120,7 +120,7 @@
 </script>
 
 <!-- Main pane -->
-<div class="flex h-screen bg-taupe1">
+<div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="min-w-0 flex-1">
         {#if view === 'linear'}
             <ParagraphViewer paragraphs={mainText} empty="No main text yet." synopsis />

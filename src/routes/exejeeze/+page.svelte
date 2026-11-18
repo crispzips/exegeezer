@@ -42,6 +42,7 @@
             originalIndex: 0,
             text: `${'#'.repeat(level)} Frontmatter`,
             level,
+            frontmatter: true,
             children: []
         };
         return [header, ...list].map((p, i) => ({ ...p, originalIndex: i }));

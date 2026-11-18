@@ -132,10 +132,24 @@
 	}
 </script>
 
+<!-- A paragraph bubble. In the front-matter column it keeps its natural height (the column
+     scrolls); elsewhere it is a fixed-width box that scrolls on its own. -->
+{#snippet paragraphBubble(/** @type {import('#lib/utilities/buildSections.js').ParagraphNode} */ node, /** @type {boolean} */ stacked)}
+	<div data-node={node.paragraph.id} class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 {stacked ? '' : 'overflow-y-auto'}">
+		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
+		<p class="flex-1 whitespace-pre-wrap">{node.paragraph.text}</p>
+	</div>
+{/snippet}
+
 {#snippet row(/** @type {number} */ d)}
 	{@const r = rows[d]}
 	{@const tint = r.parent ? colors.get(r.parent.id) : null}
 	{@const lvl = rowLevel(r)}
+	<!-- Front matter: the paragraphs before the first section. In every row, open beneath
+	     or not, they collapse into a single vertical column that clips at the bottom of the row
+	     and scrolls. -->
+	{@const firstSection = r.nodes.findIndex((n) => n.kind === 'section')}
+	{@const front = firstSection === -1 ? [] : r.nodes.slice(0, firstSection)}
 	<div
 		data-row={d}
 		style={tint ? `--c: ${tint}` : ''}
@@ -147,7 +161,14 @@
 		</div>
 
 		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
-			{#each r.nodes as node (node.kind === 'section' ? node.id : node.paragraph.id)}
+			{#if front.length}
+				<div data-front class="flex h-full min-h-0 w-80 shrink-0 flex-col gap-2 overflow-y-auto">
+					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
+						{#if node.kind === 'paragraph'}{@render paragraphBubble(node, true)}{/if}
+					{/each}
+				</div>
+			{/if}
+			{#each r.nodes.slice(front.length) as node (node.kind === 'section' ? node.id : node.paragraph.id)}
 				{#if node.kind === 'section'}
 					{@const isOpen = selected[d] === node.id}
 					{@const t = splitTitle(node.title)}
@@ -161,9 +182,13 @@
 						style="--c: {colors.get(node.id)}"
 						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left font-semibold {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
 					>
-						<svg class="mt-1 h-5 w-5 shrink-0 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
-							<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
-						</svg>
+						<!-- section label stacked above the caret, so the title starts at the very top -->
+						<span class="flex shrink-0 flex-col items-center gap-0.5">
+							<span class="text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">§{node.hierarchicalIndex}</span>
+							<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+								<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
+							</svg>
+						</span>
 						<!-- wraps inside the container and clips at the bottom; an open container
 						     grows wide enough to show the whole title and subtitle -->
 						<span class="min-w-0 flex-1 {isOpen ? 'whitespace-nowrap' : 'break-words'}">
@@ -172,16 +197,12 @@
 								<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">{t.subtitle}</span>
 							{/if}
 						</span>
-						<span class="shrink-0 text-xs font-normal opacity-70">{node.children.length}</span>
 					</button>
 				{:else}
-					<div data-node={node.paragraph.id} class="flex w-80 shrink-0 gap-2 overflow-y-auto rounded-md border border-taupe2 bg-taupe1 p-2">
-						<span class="text-xs text-gray-500">{node.paragraph.originalIndex}</span>
-						<p class="flex-1 whitespace-pre-wrap">{node.paragraph.text}</p>
-					</div>
+					{@render paragraphBubble(node, false)}
 				{/if}
 			{:else}
-				<p class="self-center text-sm text-gray-500">{r.parent ? 'This section is empty.' : empty}</p>
+				{#if !front.length}<p class="self-center text-sm text-gray-500">{r.parent ? 'This section is empty.' : empty}</p>{/if}
 			{/each}
 		</div>
 	</div>

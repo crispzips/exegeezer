@@ -1,6 +1,14 @@
 <script>
 	import MinimapTooltip from '#lib/components/MinimapTooltip.svelte';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
+	import EditMenu from '#lib/components/EditMenu.svelte';
+	import { EditHover } from '#lib/utilities/editHover.svelte.js';
+	import { caretOffsetAt, editable } from '#lib/utilities/editable.js';
+	import GapMenu from '#lib/components/GapMenu.svelte';
+	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
+	import DropTip from '#lib/components/DropTip.svelte';
+	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { dropAllowed } from '#lib/utilities/editText.js';
 
 	/**
 	 * A scrolling list of paragraphs with a minimap-style overview column.
@@ -11,7 +19,9 @@
 	 * @type {{
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
 	 *   empty?: string,
-	 *   synopsis?: boolean
+	 *   synopsis?: boolean,
+	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
+	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
@@ -33,8 +43,81 @@
 	 * tabbed in further and led by a turn-right icon.
 	 * The overview column's marker takes the colour of the top-level section the
 	 * visible text is currently in (taupe2 at 50% opacity when outside any section).
+	 *
+	 * With `ondelete`, the main text is editable: hovering a paragraph (or a header, which
+	 * is a section) outlines it in violet and floats an editor menu above it. The request
+	 * goes to `ondelete`, which asks for confirmation.
+	 *
+	 * With `onmove`, rows can be dragged: onto the space between rows (a violet line) to move
+	 * them there, or onto the first or second half of a row of the same kind to prepend or
+	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
+
+	/** id of the paragraph being edited in place (double-click), or null */
+	/** @type {string | null} */
+	let editing = $state(null);
+	/** where the caret goes when editing starts: the character nearest the double-click */
+	let editCaret = $state(0);
+
+	// Leaving editing mode (the edit props go away) drops any open editor, menu or highlight
+	$effect(() => {
+		if (!onedit) editing = null;
+		if (!ondelete) editHover.clear();
+		if (!oninject) gap.clear();
+		if (!onmove) dd.end();
+	});
+
+	/** @param {string} id @param {string | null} text */
+	function finishEdit(id, text) {
+		if (editing === id) editing = null;
+		if (text !== null) onedit?.({ id, text });
+	}
+
+	const editHover = new EditHover();
+	const dd = new DragDrop();
+	const gap = new GapHover();
+
+	/**
+	 * Hovering a gap between rows (the space or the padding at a row's edge) lights it
+	 * magenta and offers the inject menu; anywhere else on a row shows its own edit menu.
+	 * @param {PointerEvent} e
+	 */
+	function hoverMove(e) {
+		if (!oninject || dd.dragId || editing) return;
+		const zone = locateGap(e);
+		gap.set(zone, e);
+		if (zone) editHover.clear();
+		else if (ondelete && !editHover.target && e.target instanceof Element) {
+			const el = e.target.closest('[data-drop]');
+			if (el instanceof HTMLElement) editHover.enter({ id: el.dataset.drop ?? '', kind: el.dataset.kind === 'section' ? 'section' : 'paragraph', el });
+		}
+	}
+
+	/** @param {DragEvent} e */
+	function dragOver(e) {
+		if (!onmove) return;
+		if (dd.over(e, (id, target, place) => dropAllowed(paragraphs, id, target, place, true))) {
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		}
+		// scroll when dragging near the top or bottom of the text
+		if (mainEl) {
+			const r = mainEl.getBoundingClientRect();
+			if (e.clientY < r.top + 40) mainEl.scrollTop -= 12;
+			else if (e.clientY > r.bottom - 40) mainEl.scrollTop += 12;
+		}
+	}
+
+	/** @param {DragEvent} e */
+	function drop(e) {
+		const d = dd.drop;
+		const id = dd.dragId;
+		dd.end();
+		if (!onmove || !d || !id) return;
+		e.preventDefault();
+		onmove({ id, targetId: d.id, place: d.place });
+	}
 
 	/** @type {HTMLDivElement | undefined} */
 	let mainEl = $state(); // scrolling paragraph area
@@ -308,14 +391,63 @@
 	}
 </script>
 
+{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
+<DropTip {dd} />
+{#if oninject}<GapMenu {gap} {oninject} />{/if}
+
 <div class="flex h-full min-h-0">
 	<!-- Main paragraph area (scrolls independently) -->
 	<div bind:this={mainEl} onscroll={update} class="min-w-0 flex-1 overflow-y-auto">
-		<div bind:this={mainContent} class="relative space-y-2 p-3">
+		<!-- svelte-ignore a11y_no_static_element_interactions -->
+			<div
+				bind:this={mainContent}
+				onpointermove={hoverMove}
+				onpointerleave={() => gap.leave()}
+				ondragover={dragOver}
+				ondrop={drop}
+				ondragleave={(e) => {
+					if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
+				}}
+				class="relative p-3"
+			>
 			{#each paragraphs as para (para.id)}
-				<div class="flex gap-2">
+				<!-- svelte-ignore a11y_no_static_element_interactions -->
+				<div
+					data-para={para.id}
+					data-drop={onmove ? para.id : undefined}
+					data-kind={(para.level ?? 0) > 0 ? 'section' : 'paragraph'}
+					data-axis="y"
+					draggable={onmove && editing !== para.id ? 'true' : undefined}
+					ondragstart={onmove
+						? (e) => {
+								editHover.clear();
+								dd.start(para.id, (para.level ?? 0) > 0 ? 'section' : 'paragraph', e);
+							}
+						: undefined}
+					ondragend={onmove ? () => dd.end() : undefined}
+					ondblclick={onedit && (para.level ?? 0) === 0
+						? (e) => {
+								editCaret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
+								editHover.clear();
+								gap.clear();
+								editing = para.id;
+							}
+						: undefined}
+					onpointerenter={ondelete && !editing
+						? (e) => editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
+						: undefined}
+					onpointerleave={ondelete ? () => editHover.leave() : undefined}
+					class="flex gap-2 rounded px-1 py-1.5 {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-grey2' : '')}"
+				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
-					<p class="flex-1 whitespace-pre-wrap">{para.text}</p>
+					{#if editing === para.id}
+						<p
+							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t) }}
+							class="flex-1 whitespace-pre-wrap outline-none"
+						></p>
+					{:else}
+						<p class="flex-1 whitespace-pre-wrap">{#if para.text}{para.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+					{/if}
 				</div>
 			{:else}
 				<p class="text-sm text-gray-500">{empty}</p>
@@ -341,13 +473,13 @@
 				     then shrunk to fit the column -->
 				<div
 					bind:this={miniInner}
-					class="absolute top-0 left-0 origin-top-left space-y-2 p-3"
+					class="absolute top-0 left-0 origin-top-left p-3"
 					style="width: {m.w}px; transform: scale({m.k})"
 				>
 					{#each paragraphs as para (para.id)}
-						<div class="flex gap-2">
+						<div class="flex gap-2 px-1 py-1.5">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>
-							<p class="flex-1 whitespace-pre-wrap">{para.text}</p>
+							<p class="flex-1 whitespace-pre-wrap">{#if para.text}{para.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
 						</div>
 					{/each}
 				</div>

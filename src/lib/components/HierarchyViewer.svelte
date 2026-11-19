@@ -3,7 +3,7 @@
 	import { buildSections } from '#lib/utilities/buildSections.js';
 	import SplitPane from '#lib/components/SplitPane.svelte';
 	import HierarchyMinimap from '#lib/components/HierarchyMinimap.svelte';
-	import { sectionColor } from '#lib/utilities/sectionColor.js';
+	import { colorSections } from '#lib/utilities/sectionColor.js';
 	import EditMenu from '#lib/components/EditMenu.svelte';
 	import { EditHover } from '#lib/utilities/editHover.svelte.js';
 	import { caretOffsetAt, editable } from '#lib/utilities/editable.js';
@@ -140,22 +140,7 @@
 	let tree = $derived(buildSections(paragraphs));
 
 	/** section id -> colour (top-level sections cycle the accents, deeper ones darken) */
-	let colors = $derived.by(() => {
-		/** @type {Map<string, string>} */
-		const map = new Map();
-		let top = 0;
-		/** @param {SectionChild[]} list @param {number} topIdx @param {number} depth */
-		function walk(list, topIdx, depth) {
-			for (const node of list) {
-				if (node.kind !== 'section') continue;
-				const idx = depth === 0 ? top++ : topIdx;
-				map.set(node.id, sectionColor(idx, depth));
-				walk(node.children, idx, depth + 1);
-			}
-		}
-		walk(tree, 0, 0);
-		return map;
-	});
+	let colors = $derived(colorSections(tree));
 
 	/** the open section at each level: selected[0] is open in the first row, and so on */
 	/** @type {string[]} */
@@ -369,7 +354,7 @@
 	 * minimap.
 	 * @param {string[]} ids
 	 */
-	async function openPath(ids) {
+	export async function openPath(ids) {
 		selected = ids;
 		await tick();
 		ids.forEach((id, d) => {

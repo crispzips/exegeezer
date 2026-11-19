@@ -1,9 +1,9 @@
 <script>
-    import { onMount } from 'svelte';
+    import { onMount, tick } from 'svelte';
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, Queue, Reading, Redo, Sitemap, Undo } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
@@ -11,6 +11,7 @@
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
+    import MapModal from '#lib/components/MapModal.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
     import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
@@ -30,7 +31,12 @@
             paragraphs = splitParagraphs(isMarkdown ? cleanMarkdown(latest.text) : latest.text);
             // Headers present but text above the first one: ask what to do with it
             const hasHeaders = paragraphs.some((p) => p.level > 0);
-            if (hasHeaders && paragraphs[0].level === 0) frontmatterDialog?.showModal();
+            // Text above the first header goes into a Frontmatter section (chosen as front matter
+            // in the next step); then the front and back matter question
+            if (hasHeaders) {
+                if (paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
+                askMatter();
+            }
         }
         open = false;
     }
@@ -39,9 +45,6 @@
     let previewMarkdown = $state(false);
     /** whether the main text is Markdown, so the linear view renders it */
     let markdown = $state(false);
-
-    /** @type {HTMLDialogElement | undefined} */
-    let frontmatterDialog;
 
     /**
      * Put the text above the first header into a section called "Frontmatter".
@@ -61,9 +64,16 @@
         return [header, ...list].map((p, i) => ({ ...p, originalIndex: i }));
     }
 
-    function wrapFrontmatter() {
-        paragraphs = withFrontmatter(paragraphs);
-        frontmatterDialog?.close();
+    // ---- Front and back matter question: after import, which top-level sections (if any) are which ----
+    let matterOpen = $state(false);
+
+    function askMatter() {
+        if (paragraphs.some((p) => p.level > 0)) matterOpen = true;
+    }
+
+    /** @param {{ front: string[], back: string[] }} choice */
+    function applyMatter({ front, back }) {
+        paragraphs = paragraphs.map((p) => (p.level > 0 ? { ...p, frontmatter: front.includes(p.id), backmatter: back.includes(p.id) } : p));
     }
 
     // TEMPORARY fallback: when nothing is saved yet, load Dissertation.md into the main
@@ -75,7 +85,7 @@
     /** id of the saved text the main pane shows (null until it has been saved once) */
     /** @type {string | null} */
     let textId = null;
-    let textTitle = 'Untitled';
+    let textTitle = $state('Untitled');
     /** autosave starts once the saved text (if any) has been loaded */
     let ready = $state(false);
     /** the list last loaded or saved, as JSON, so an unchanged text is not saved again */
@@ -83,8 +93,8 @@
     /** saves run one after another */
     let queue = Promise.resolve();
 
-    /** @param {{ id: string, text: string, level: number, frontmatter?: boolean }[]} list */
-    const toItems = (list) => list.map(({ id, text, level, frontmatter }) => ({ id, text, level, frontmatter: !!frontmatter }));
+    /** @param {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean }[]} list */
+    const toItems = (list) => list.map(({ id, text, level, frontmatter, backmatter }) => ({ id, text, level, frontmatter: !!frontmatter, backmatter: !!backmatter }));
 
     /** Show the most recently changed saved text, if there is one. */
     async function loadSaved() {
@@ -295,7 +305,7 @@
     function inject(where) {
         if (paragraphs.length === 0) return;
         // Copy with fresh ids so keys stay unique if the same text is injected twice
-        const added = paragraphs.map((p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level }));
+        const added = paragraphs.map((p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}) }));
         const combined =
             injectGap !== null
                 ? insertAt(mainText, injectGap, added)
@@ -341,6 +351,21 @@
         mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
     }
 
+    // ---- Map modal: a navigable map of the text's sections ----
+    let mapOpen = $state(false);
+    /** @type {HTMLDivElement | undefined} */
+    let mainPane;
+    /** @type {HierarchyViewer | undefined} */
+    let hierarchy;
+
+    /** Bring a section (the last of `ids`, outermost first) into view in the current view. */
+    /** @param {string[]} ids */
+    async function goToSection(ids) {
+        if (view === 'hierarchical') return void hierarchy?.openPath(ids);
+        await tick();
+        mainPane?.querySelector(`[data-para="${CSS.escape(ids[ids.length - 1])}"]`)?.scrollIntoView({ block: 'start' });
+    }
+
     // ---- Main pane view menu ----
     /** @type {'linear' | 'hierarchical'} */
     let view = $state('linear');
@@ -363,11 +388,11 @@
 
 <!-- Main pane -->
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
-    <div class="min-w-0 flex-1">
+    <div class="min-w-0 flex-1" bind:this={mainPane}>
         {#if view === 'linear'}
             <ParagraphViewer paragraphs={mainText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer bind:this={hierarchy} paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
     </div>
 
@@ -425,6 +450,15 @@
         </div>
 
         <button
+            onclick={() => (mapOpen = true)}
+            aria-label="Map"
+            use:tip={'Map'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+        >
+            <MapIcon />
+        </button>
+
+        <button
             onclick={cycleMode}
             aria-label="Mode"
             use:tip={`${mode[0].toUpperCase() + mode.slice(1)} mode`}
@@ -449,6 +483,8 @@
 
 <MenuTip />
 <ConfirmDialog bind:request={deleteRequest} />
+<MapModal bind:open={mapOpen} title={textTitle} paragraphs={mainText} onnavigate={goToSection} />
+<MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={uploadedfiles.at(-1)?.name.replace(/\.[^.]+$/, '') ?? ''} paragraphs={paragraphs} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 
 <!-- Load Text modal -->
@@ -538,31 +574,6 @@
         </div>
     </section>
     {/if}
-</dialog>
-
-<!-- Frontmatter question -->
-<dialog
-    bind:this={frontmatterDialog}
-    class="m-auto w-[min(92vw,26rem)] rounded-lg border border-taupe2 bg-taupe1 p-5 text-dark backdrop:bg-black/40"
->
-    <h2 class="text-base font-semibold">Content above the first section</h2>
-    <p class="mt-2 text-sm">
-        This file has text before its first section header. Place that content in a section called "Frontmatter"?
-    </p>
-    <div class="mt-4 flex justify-end gap-2">
-        <button
-            onclick={() => frontmatterDialog?.close()}
-            class="rounded-md px-3 py-1.5 text-sm hover:bg-taupe2"
-        >
-            No, leave it
-        </button>
-        <button
-            onclick={wrapFrontmatter}
-            class="rounded-md bg-violet px-3 py-1.5 text-sm font-medium text-white hover:bg-violet/90"
-        >
-            Yes, create Frontmatter
-        </button>
-    </div>
 </dialog>
 
 <svelte:window onclick={onWindowClick} onkeydown={(e) => {

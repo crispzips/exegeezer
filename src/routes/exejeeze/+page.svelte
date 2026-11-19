@@ -3,7 +3,7 @@
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, Queue, Reading, Sitemap } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, Queue, Reading, Redo, Sitemap, Undo } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
@@ -11,6 +11,7 @@
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
+    import { History } from '#lib/utilities/history.svelte.js';
     import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** @type {{ name: string, text: string }[]} */
@@ -151,6 +152,40 @@
     /** @type {{ id: string, originalIndex: number, text: string, level: number }[]} */
     let mainText = $state([]);
 
+    // ---- Undo / redo: one step per edit; kept for the whole session (not reset by changing mode) ----
+    /** @type {History<typeof mainText>} */
+    const history = new History();
+
+    /** apply an edit to the main text, remembering the text it replaces */
+    /** @param {typeof mainText} next */
+    function commit(next) {
+        history.record(mainText);
+        mainText = next;
+    }
+
+    function undo() {
+        const prev = history.undo(mainText);
+        if (prev) mainText = prev;
+    }
+
+    function redo() {
+        const next = history.redo(mainText);
+        if (next) mainText = next;
+    }
+
+    /** Cmd/Ctrl+Z (undo) and Shift+Cmd/Ctrl+Z or Ctrl+Y (redo) in editing mode, leaving text fields to their own undo */
+    /** @param {KeyboardEvent} e */
+    function onKeydown(e) {
+        if (!editing || !(e.metaKey || e.ctrlKey) || e.altKey) return;
+        const t = /** @type {HTMLElement | null} */ (e.target);
+        if (t?.closest('input, textarea, select, [contenteditable]')) return;
+        const key = e.key.toLowerCase();
+        if (key === 'z' && !e.shiftKey) undo();
+        else if ((key === 'z' && e.shiftKey) || key === 'y') redo();
+        else return;
+        e.preventDefault();
+    }
+
     // ---- Editing: delete a paragraph or section, after confirmation ----
     /** @type {{ title: string, message: string, confirm: string, run: () => void } | null} */
     let deleteRequest = $state(null);
@@ -169,7 +204,7 @@
                 title: 'Delete this paragraph?',
                 message: `"${excerpt}"\n\nThis permanently deletes the paragraph.`,
                 confirm: 'Delete paragraph',
-                run: () => (mainText = removeParagraph(mainText, id))
+                run: () => commit(removeParagraph(mainText, id))
             };
             return;
         }
@@ -182,13 +217,13 @@
                       title: 'Delete section and all its descendants?',
                       message: `This permanently deletes the section "${info.title}" and everything inside it: ${inside}.`,
                       confirm: 'Delete section and descendants',
-                      run: () => (mainText = removeSection(mainText, id, true))
+                      run: () => commit(removeSection(mainText, id, true))
                   }
                 : {
                       title: 'Delete just this section?',
                       message: `This permanently deletes the section heading "${info.title}". Its ${inside} stay in place.`,
                       confirm: 'Delete section',
-                      run: () => (mainText = removeSection(mainText, id, false))
+                      run: () => commit(removeSection(mainText, id, false))
                   };
     }
 
@@ -200,17 +235,17 @@
     function saveEdit({ id, title, position }) {
         let next = mainText;
         if (title !== null && title.trim()) next = renameSection(next, id, title);
-        mainText = moveItem(next, id, position);
+        commit(moveItem(next, id, position));
     }
 
     /** @param {{ id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }} drop */
     function moveByDrag(drop) {
-        mainText = applyDrop(mainText, drop, view === 'linear');
+        commit(applyDrop(mainText, drop, view === 'linear'));
     }
 
     /** @param {{ id: string, text: string }} edit */
     function editParagraph({ id, text }) {
-        mainText = mainText.map((p) => (p.id === id ? { ...p, text } : p));
+        commit(mainText.map((p) => (p.id === id ? { ...p, text } : p)));
     }
 
     // ---- Editing: inject at an interstitial landing zone ----
@@ -223,7 +258,7 @@
         const gap = gapIndex(mainText, targetId, place, view === 'linear');
         if (gap === -1) return;
         if (mode === 'empty') {
-            mainText = insertAt(mainText, gap, [{ id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 }]);
+            commit(insertAt(mainText, gap, [{ id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 }]));
         } else {
             injectGap = gap;
             dialogEl?.showModal();
@@ -269,7 +304,7 @@
                 : where === 'prepend'
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
-        mainText = combined.map((p, i) => ({ ...p, originalIndex: i }));
+        commit(combined.map((p, i) => ({ ...p, originalIndex: i })));
         if (previewMarkdown) markdown = true;
 
         // Reset the load pane: drop the loaded text and close the modal
@@ -401,6 +436,14 @@
                 </span>
             {/key}
         </button>
+
+        {#if editing}
+            <!-- Editing helpers: shown under the mode button, only in editing mode -->
+            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
+                <button onclick={undo} disabled={!history.canUndo} aria-label="Undo" use:tip={'Undo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Undo /></button>
+                <button onclick={redo} disabled={!history.canRedo} aria-label="Redo" use:tip={'Redo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Redo /></button>
+            </div>
+        {/if}
     </nav>
 </div>
 
@@ -522,4 +565,7 @@
     </div>
 </dialog>
 
-<svelte:window onclick={onWindowClick} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
+<svelte:window onclick={onWindowClick} onkeydown={(e) => {
+        if (e.key === 'Escape') open = false;
+        onKeydown(e);
+    }} />

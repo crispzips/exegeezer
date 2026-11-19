@@ -405,16 +405,17 @@
     bind:this={dialogEl}
     onclick={onDialogClick}
     onclose={onModalClosed}
-    class="m-auto h-[80vh] w-[min(92vw,64rem)] overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
+    class="relative m-auto {paragraphs.length === 0 ? 'h-64 w-[min(92vw,26rem)]' : 'h-[80vh] w-[min(92vw,64rem)]'} overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
     <div class="flex shrink-0 items-start justify-between">
-        <!-- Load Text dropdown -->
-        <div class="relative z-50 inline-block" bind:this={importmenu}>
+        <!-- Load Text dropdown: centered until a text is loaded, then top-left -->
+        <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-0 z-40 flex items-center justify-center' : 'inline-block'}>
+        <div class="pointer-events-auto relative z-50 inline-block" bind:this={importmenu}>
             <button
                 onclick={() => (open = !open)}
                 aria-haspopup="menu"
                 aria-expanded={open}
-                class="inline-flex items-center gap-1 rounded-md px-3 py-2 text-sm font-medium text-dark hover:bg-taupe2"
+                class="inline-flex items-center gap-1 rounded-md bg-violet px-5 py-3 text-base font-medium text-white hover:bg-violet/90"
             >
                 Load Text
                 <svg class="h-4 w-4 transition-transform {open ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
@@ -425,23 +426,25 @@
             {#if open}
                 <div
                     role="menu"
-                    class="absolute left-0 z-50 mt-2 w-48 origin-top-left rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
+                    class="absolute left-0 z-50 mt-2 w-max origin-top-left rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
                 >
                     <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
                 </div>
             {/if}
         </div>
+        </div>
 
         <button
             onclick={() => dialogEl?.close()}
             aria-label="Close"
-            class="rounded-md px-2 py-1 text-lg leading-none text-dark hover:bg-taupe2"
+            class="relative z-50 ml-auto rounded-md px-2 py-1 text-lg leading-none text-dark hover:bg-taupe2"
         >
             ×
         </button>
     </div>
 
-    <!-- text preview pane -->
+    <!-- text preview pane: hidden until a text is loaded -->
+    {#if paragraphs.length > 0}
     <section class="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-taupe2">
         <header class="flex shrink-0 items-center justify-between border-b border-taupe2 bg-taupe2 px-3 py-2">
             <h2 class="text-sm font-semibold text-dark">
@@ -482,6 +485,7 @@
             <ParagraphViewer {paragraphs} empty="No text loaded yet." />
         </div>
     </section>
+    {/if}
 </dialog>
 
 <!-- Frontmatter question -->

@@ -1,11 +1,17 @@
 <script>
     import { onMount } from 'svelte';
-    import { ArrowOutDownCircleHalf, EyeAlt, Queue, Sitemap } from '@boxicons/svelte';
+    import MenuTip from '#lib/components/MenuTip.svelte';
+    import { tip } from '#lib/utilities/menuTip.svelte.js';
+    import { cubicOut } from 'svelte/easing';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, Queue, Reading, Sitemap } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
+    import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+    import EditModal from '#lib/components/EditModal.svelte';
+    import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** @type {{ name: string, text: string }[]} */
     let uploadedfiles = $state([]);
@@ -53,30 +59,175 @@
         frontmatterDialog?.close();
     }
 
-    // TEMPORARY: load Dissertation.md into the main pane when the page opens, with
-    // an automatic Frontmatter section (the file is gitignored, so this does
+    // TEMPORARY fallback: when nothing is saved yet, load Dissertation.md into the main
+    // pane with an automatic Frontmatter section (the file is gitignored, so this does
     // nothing where it is missing).
     const dissertationFiles = import.meta.glob('/src/lib/assets/Dissertation.md', { query: '?raw', import: 'default' });
+
+    // ---- Saving: the main text lives in the database ----
+    /** id of the saved text the main pane shows (null until it has been saved once) */
+    /** @type {string | null} */
+    let textId = null;
+    let textTitle = 'Untitled';
+    /** autosave starts once the saved text (if any) has been loaded */
+    let ready = $state(false);
+    /** the list last loaded or saved, as JSON, so an unchanged text is not saved again */
+    let lastSaved = '';
+    /** saves run one after another */
+    let queue = Promise.resolve();
+
+    /** @param {{ id: string, text: string, level: number, frontmatter?: boolean }[]} list */
+    const toItems = (list) => list.map(({ id, text, level, frontmatter }) => ({ id, text, level, frontmatter: !!frontmatter }));
+
+    /** Show the most recently changed saved text, if there is one. */
+    async function loadSaved() {
+        try {
+            const texts = await (await fetch('/api/texts')).json();
+            if (!texts.length) return false;
+            const saved = await (await fetch(`/api/texts/${texts[0].id}`)).json();
+            textId = saved.id;
+            textTitle = saved.title;
+            mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
+            lastSaved = JSON.stringify(toItems(mainText));
+            return true;
+        } catch (err) {
+            console.warn('Could not load the saved text', err);
+            return false;
+        }
+    }
+
+    /** Save the main text: create it the first time, replace its contents afterwards. */
+    function save() {
+        const items = toItems($state.snapshot(mainText));
+        const json = JSON.stringify(items);
+        if (json === lastSaved || (!items.length && !textId)) return;
+        queue = queue.then(async () => {
+            try {
+                const res = textId
+                    ? await fetch(`/api/texts/${textId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }) })
+                    : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, items }) });
+                if (!res.ok) throw new Error(`${res.status}`);
+                if (!textId) textId = (await res.json()).id;
+                lastSaved = json;
+            } catch (err) {
+                console.warn('Could not save the text', err);
+            }
+        });
+    }
+
+    // Save shortly after the text stops changing
+    $effect(() => {
+        if (!ready) return;
+        void JSON.stringify(mainText); // depend on every paragraph
+        const timer = setTimeout(save, 800);
+        return () => clearTimeout(timer);
+    });
+
     onMount(async () => {
-        const load = Object.values(dissertationFiles)[0];
-        if (!load || mainText.length > 0) return;
-        const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
-        const hasHeaders = list.some((p) => p.level > 0);
-        mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({
-            ...p,
-            originalIndex: i
-        }));
+        if (!(await loadSaved())) {
+            const load = Object.values(dissertationFiles)[0];
+            if (load) {
+                const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
+                const hasHeaders = list.some((p) => p.level > 0);
+                textTitle = 'Dissertation';
+                mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({
+                    ...p,
+                    originalIndex: i
+                }));
+            }
+        }
+        ready = true;
     });
 
     /** The main text shown in the main pane */
     /** @type {{ id: string, originalIndex: number, text: string, level: number }[]} */
     let mainText = $state([]);
 
+    // ---- Editing: delete a paragraph or section, after confirmation ----
+    /** @type {{ title: string, message: string, confirm: string, run: () => void } | null} */
+    let deleteRequest = $state(null);
+
+    /** @param {number} n @param {string} word */
+    const count = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+    /** @param {{ id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }} req */
+    function requestDelete({ id, kind, scope }) {
+        const para = mainText.find((p) => p.id === id);
+        if (!para) return;
+
+        if (kind === 'paragraph') {
+            const excerpt = para.text.length > 160 ? para.text.slice(0, 160) + '…' : para.text;
+            deleteRequest = {
+                title: 'Delete this paragraph?',
+                message: `"${excerpt}"\n\nThis permanently deletes the paragraph.`,
+                confirm: 'Delete paragraph',
+                run: () => (mainText = removeParagraph(mainText, id))
+            };
+            return;
+        }
+
+        const info = describeSection(mainText, id);
+        const inside = `${count(info.paragraphs, 'paragraph')} and ${count(info.sections, 'subsection')}`;
+        deleteRequest =
+            scope === 'tree'
+                ? {
+                      title: 'Delete section and all its descendants?',
+                      message: `This permanently deletes the section "${info.title}" and everything inside it: ${inside}.`,
+                      confirm: 'Delete section and descendants',
+                      run: () => (mainText = removeSection(mainText, id, true))
+                  }
+                : {
+                      title: 'Delete just this section?',
+                      message: `This permanently deletes the section heading "${info.title}". Its ${inside} stay in place.`,
+                      confirm: 'Delete section',
+                      run: () => (mainText = removeSection(mainText, id, false))
+                  };
+    }
+
+    // ---- Editing: expand a paragraph or section into the editor modal ----
+    /** @type {{ id: string, kind: 'paragraph' | 'section', from: DOMRect } | null} */
+    let editRequest = $state(null);
+
+    /** @param {{ id: string, title: string | null, position: number }} change */
+    function saveEdit({ id, title, position }) {
+        let next = mainText;
+        if (title !== null && title.trim()) next = renameSection(next, id, title);
+        mainText = moveItem(next, id, position);
+    }
+
+    /** @param {{ id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }} drop */
+    function moveByDrag(drop) {
+        mainText = applyDrop(mainText, drop, view === 'linear');
+    }
+
+    /** @param {{ id: string, text: string }} edit */
+    function editParagraph({ id, text }) {
+        mainText = mainText.map((p) => (p.id === id ? { ...p, text } : p));
+    }
+
+    // ---- Editing: inject at an interstitial landing zone ----
+    /** where the next injection from the Load Text modal goes (a gap in the main text), or null for the usual choice */
+    /** @type {number | null} */
+    let injectGap = $state(null);
+
+    /** @param {{ targetId: string, place: 'before' | 'after', mode: 'empty' | 'load' }} req */
+    function injectRequest({ targetId, place, mode }) {
+        const gap = gapIndex(mainText, targetId, place, view === 'linear');
+        if (gap === -1) return;
+        if (mode === 'empty') {
+            mainText = insertAt(mainText, gap, [{ id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 }]);
+        } else {
+            injectGap = gap;
+            dialogEl?.showModal();
+        }
+    }
+
     // ---- Load Text modal ----
     /** @type {HTMLDialogElement | undefined} */
     let dialogEl;
 
     function openModal() {
+        injectGap = null;
         dialogEl?.showModal();
     }
 
@@ -89,6 +240,7 @@
     function onModalClosed() {
         open = false;
         injectOpen = false;
+        injectGap = null;
     }
 
     /**
@@ -102,7 +254,9 @@
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level }));
         const combined =
-            mainText.length === 0 || where === 'replace'
+            injectGap !== null
+                ? insertAt(mainText, injectGap, added)
+                : mainText.length === 0 || where === 'replace'
                 ? added
                 : where === 'prepend'
                   ? [...added, ...mainText]
@@ -122,6 +276,26 @@
     let injectOpen = $state(false);
         /** @type {HTMLDivElement | undefined} */
         let injectmenu;
+
+    // ---- Mode: reading (default), editing, or commenting (the toggle's order) ----
+    /** @typedef {'reading' | 'editing' | 'commenting'} Mode */
+    /** @type {Mode} */
+    let mode = $state('reading');
+    /** @type {Mode[]} */
+    const MODES = ['reading', 'editing', 'commenting'];
+    const editing = $derived(mode === 'editing');
+
+    // The mode icon changes with a horizontal wipe: the new icon is revealed left to right
+    // while the old one is wiped away in the same direction.
+    /** @param {Element} _node */
+    const wipeIn = (_node) => ({ duration: 280, easing: cubicOut, css: (/** @type {number} */ t) => `clip-path: inset(0 ${(1 - t) * 100}% 0 0)` });
+    /** @param {Element} _node */
+    const wipeOut = (_node) => ({ duration: 280, easing: cubicOut, css: (/** @type {number} */ t) => `clip-path: inset(0 0 0 ${(1 - t) * 100}%)` });
+
+    /** the triple toggle (editing, reading, commenting): each click moves to the next mode */
+    function cycleMode() {
+        mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+    }
 
     // ---- Main pane view menu ----
     /** @type {'linear' | 'hierarchical'} */
@@ -147,9 +321,9 @@
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="min-w-0 flex-1">
         {#if view === 'linear'}
-            <ParagraphViewer paragraphs={mainText} empty="No main text yet." synopsis />
+            <ParagraphViewer paragraphs={mainText} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer paragraphs={mainText} empty="No main text yet." />
+            <HierarchyViewer paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
     </div>
 
@@ -158,7 +332,7 @@
         <button
             onclick={openModal}
             aria-label="Load text"
-            title="Load text"
+            use:tip={'Load text'}
             class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
         >
             <ArrowOutDownCircleHalf />
@@ -169,7 +343,7 @@
             <button
                 onclick={() => (viewOpen = !viewOpen)}
                 aria-label="Change view"
-                title="Change view"
+                use:tip={'Change view'}
                 aria-haspopup="menu"
                 aria-expanded={viewOpen}
                 class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {viewOpen ? 'bg-taupe2' : ''}"
@@ -186,7 +360,7 @@
                         role="menuitemradio"
                         aria-checked={view === 'linear'}
                         aria-label="Linear"
-                        title="Linear"
+                        use:tip={'Linear'}
                         onclick={() => chooseView('linear')}
                         class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'linear' ? 'bg-taupe2' : ''}"
                     >
@@ -196,7 +370,7 @@
                         role="menuitemradio"
                         aria-checked={view === 'hierarchical'}
                         aria-label="Hierarchical"
-                        title="Hierarchical"
+                        use:tip={'Hierarchical'}
                         onclick={() => chooseView('hierarchical')}
                         class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'hierarchical' ? 'bg-taupe2' : ''}"
                     >
@@ -205,8 +379,25 @@
                 </div>
             {/if}
         </div>
+
+        <button
+            onclick={cycleMode}
+            aria-label="Mode"
+            use:tip={`${mode[0].toUpperCase() + mode.slice(1)} mode`}
+            class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+        >
+            {#key mode}
+                <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">
+                    {#if mode === 'editing'}<Edit />{:else if mode === 'commenting'}<Discussion />{:else}<Reading />{/if}
+                </span>
+            {/key}
+        </button>
     </nav>
 </div>
+
+<MenuTip />
+<ConfirmDialog bind:request={deleteRequest} />
+<EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 
 <!-- Load Text modal -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -253,26 +444,28 @@
     <!-- text preview pane -->
     <section class="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-taupe2">
         <header class="flex shrink-0 items-center justify-between border-b border-taupe2 bg-taupe2 px-3 py-2">
-            <h2 class="text-sm font-semibold text-dark">Preview</h2>
+            <h2 class="text-sm font-semibold text-dark">
+                Preview{#if injectGap !== null}<span class="ml-2 font-normal text-grey3">— will be injected at the chosen location</span>{/if}
+            </h2>
 
             <!-- Inject Loaded Text dropdown -->
             <div class="relative" bind:this={injectmenu}>
                 <button
-                    onclick={() => (mainText.length === 0 ? inject('append') : (injectOpen = !injectOpen))}
+                    onclick={() => (mainText.length === 0 || injectGap !== null ? inject('append') : (injectOpen = !injectOpen))}
                     disabled={paragraphs.length === 0}
-                    aria-haspopup={mainText.length > 0 ? 'menu' : undefined}
-                    aria-expanded={mainText.length > 0 ? injectOpen : undefined}
+                    aria-haspopup={mainText.length > 0 && injectGap === null ? 'menu' : undefined}
+                    aria-expanded={mainText.length > 0 && injectGap === null ? injectOpen : undefined}
                     class="inline-flex items-center gap-1 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-violet"
                 >
                     Inject Loaded Text
-                    {#if mainText.length > 0}
+                    {#if mainText.length > 0 && injectGap === null}
                         <svg class="h-4 w-4 transition-transform {injectOpen ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
                             <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" />
                         </svg>
                     {/if}
                 </button>
 
-                {#if injectOpen && mainText.length > 0}
+                {#if injectOpen && mainText.length > 0 && injectGap === null}
                     <div
                         role="menu"
                         class="absolute right-0 z-10 mt-2 w-40 origin-top-right rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"

@@ -4,6 +4,14 @@
 	import SplitPane from '#lib/components/SplitPane.svelte';
 	import HierarchyMinimap from '#lib/components/HierarchyMinimap.svelte';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
+	import EditMenu from '#lib/components/EditMenu.svelte';
+	import { EditHover } from '#lib/utilities/editHover.svelte.js';
+	import { caretOffsetAt, editable } from '#lib/utilities/editable.js';
+	import GapMenu from '#lib/components/GapMenu.svelte';
+	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
+	import DropTip from '#lib/components/DropTip.svelte';
+	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { dropAllowed } from '#lib/utilities/editText.js';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -14,10 +22,95 @@
 	 *
 	 * @type {{
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
-	 *   empty?: string
+	 *   empty?: string,
+	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
+	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
+	 *
+	 * With `ondelete`, every bubble is editable: hovering a paragraph or section bubble
+	 * outlines it and floats an editor menu above it.
+	 *
+	 * With `onmove`, bubbles can be dragged: onto the edge of a bubble or the space between
+	 * bubbles (a violet line) to move them there, or onto the first or second half of a
+	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, empty = 'No text yet.' } = $props();
+	let { paragraphs, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
+
+	/** id of the paragraph being edited in place (double-click), or null */
+	/** @type {string | null} */
+	let editing = $state(null);
+	/** where the caret goes when editing starts: the character nearest the double-click */
+	let editCaret = $state(0);
+
+	// Leaving editing mode (the edit props go away) drops any open editor, menu or highlight
+	$effect(() => {
+		if (!onedit) editing = null;
+		if (!ondelete) editHover.clear();
+		if (!oninject) gap.clear();
+		if (!onmove) dd.end();
+	});
+
+	/** @param {string} id @param {string | null} text */
+	function finishEdit(id, text) {
+		if (editing === id) editing = null;
+		if (text !== null) onedit?.({ id, text });
+	}
+
+	const editHover = new EditHover();
+	const dd = new DragDrop();
+	const gap = new GapHover();
+
+	/**
+	 * Hovering the space between bubbles (or a bubble's thin edge) lights it magenta and
+	 * offers the inject menu; anywhere else on a bubble shows its own edit menu.
+	 * @param {PointerEvent} e
+	 */
+	function hoverMove(e) {
+		if (!oninject || dd.dragId || editing) return;
+		const zone = locateGap(e);
+		gap.set(zone, e);
+		if (zone) editHover.clear();
+		else if (ondelete && !editHover.target && e.target instanceof Element) {
+			const el = e.target.closest('[data-drop]');
+			if (el instanceof HTMLElement) editHover.enter({ id: el.dataset.drop ?? '', kind: el.dataset.kind === 'section' ? 'section' : 'paragraph', el });
+		}
+	}
+
+	/** @param {DragEvent} e */
+	function dragOver(e) {
+		if (!onmove) return;
+		if (dd.over(e, (id, target, place) => dropAllowed(paragraphs, id, target, place, false))) {
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		}
+	}
+
+	/** @param {DragEvent} e */
+	function drop(e) {
+		const d = dd.drop;
+		const id = dd.dragId;
+		dd.end();
+		if (!onmove || !d || !id) return;
+		e.preventDefault();
+		onmove({ id, targetId: d.id, place: d.place });
+	}
+
+	/** drag attributes shared by every bubble
+	 * @param {string} id @param {'paragraph' | 'section'} kind @param {'x' | 'y'} axis */
+	const dragAttrs = (id, kind, axis) =>
+		onmove
+			? {
+					'data-drop': id,
+					'data-kind': kind,
+					'data-axis': axis,
+					draggable: 'true',
+					ondragstart: (/** @type {DragEvent} */ e) => {
+						editHover.clear();
+						dd.start(id, kind, e);
+					},
+					ondragend: () => dd.end()
+				}
+			: {};
 
 	/** @typedef {import('#lib/utilities/buildSections.js').SectionChild} SectionChild */
 
@@ -135,9 +228,31 @@
 <!-- A paragraph bubble. In the front-matter column it keeps its natural height (the column
      scrolls); elsewhere it is a fixed-width box that scrolls on its own. -->
 {#snippet paragraphBubble(/** @type {import('#lib/utilities/buildSections.js').ParagraphNode} */ node, /** @type {boolean} */ stacked)}
-	<div data-node={node.paragraph.id} class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 {stacked ? '' : 'overflow-y-auto'}">
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div
+		data-node={node.paragraph.id}
+		{...(editing === node.paragraph.id ? {} : dragAttrs(node.paragraph.id, 'paragraph', stacked ? 'y' : 'x'))}
+		ondblclick={onedit
+			? (e) => {
+					editCaret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, node.paragraph.text);
+					editHover.clear();
+					gap.clear();
+					editing = node.paragraph.id;
+				}
+			: undefined}
+		onpointerenter={ondelete && !editing ? (e) => editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
+		onpointerleave={ondelete ? () => editHover.leave() : undefined}
+		class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 text-sm {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-grey2' : '')}"
+	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
-		<p class="flex-1 whitespace-pre-wrap">{node.paragraph.text}</p>
+		{#if editing === node.paragraph.id}
+			<p
+				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t) }}
+				class="flex-1 whitespace-pre-wrap outline-none"
+			></p>
+		{:else}
+			<p class="flex-1 whitespace-pre-wrap">{#if node.paragraph.text}{node.paragraph.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+		{/if}
 	</div>
 {/snippet}
 
@@ -162,7 +277,7 @@
 
 		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
 			{#if front.length}
-				<div data-front class="flex h-full min-h-0 w-80 shrink-0 flex-col gap-2 overflow-y-auto">
+				<div data-front class="flex h-full min-h-0 w-84 shrink-0 flex-col gap-2 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
 						{#if node.kind === 'paragraph'}{@render paragraphBubble(node, true)}{/if}
 					{/each}
@@ -175,12 +290,15 @@
 					<button
 						data-section
 						data-node={node.id}
+						{...dragAttrs(node.id, 'section', 'x')}
 						data-level={node.level}
 						data-open={isOpen}
 						onclick={(e) => toggle(d, node.id, e.currentTarget)}
+						onpointerenter={ondelete ? (e) => editHover.enter({ id: node.id, kind: 'section', el: e.currentTarget }) : undefined}
+						onpointerleave={ondelete ? () => editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left font-semibold {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
+						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-grey2' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -224,7 +342,22 @@
 	{/if}
 {/snippet}
 
-<div bind:this={host} class="flex h-full min-h-0 flex-col">
+{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
+<DropTip {dd} />
+{#if oninject}<GapMenu {gap} {oninject} />{/if}
+
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+	bind:this={host}
+	onpointermove={hoverMove}
+	onpointerleave={() => gap.leave()}
+	ondragover={dragOver}
+	ondrop={drop}
+	ondragleave={(e) => {
+		if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
+	}}
+	class="flex h-full min-h-0 flex-col"
+>
 	<div class="min-h-0 flex-1">
 		{@render stack(0)}
 	</div>

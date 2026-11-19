@@ -7,7 +7,7 @@
  * "##" section holds the "###" sections beneath it. Paragraphs before the first
  * header stay at the top level.
  *
- * @typedef {{ id: string, originalIndex: number, text: string, level?: number, frontmatter?: boolean }} Paragraph
+ * @typedef {{ id: string, originalIndex: number, text: string, level?: number, frontmatter?: boolean, backmatter?: boolean }} Paragraph
  * @typedef {{ kind: 'paragraph', paragraph: Paragraph, paragraphIndex: number }} ParagraphNode
  * @typedef {{ kind: 'section', id: string, sectionIndex: number, hierarchicalIndex: string, level: number, title: string, header: Paragraph, children: SectionChild[] }} Section
  * @typedef {ParagraphNode | Section} SectionChild

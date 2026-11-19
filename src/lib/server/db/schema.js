@@ -142,9 +142,11 @@ export const textItem = pgTable(
     // exactly one of these is set, matching the kind of item at this position
     paragraphId: uuid("paragraph_id").references(() => paragraph.id, { onDelete: "cascade" }),
     sectionId: uuid("section_id").references(() => section.id, { onDelete: "cascade" }),
-    // sections only: header level in this text (1-6), and whether it is the Frontmatter
+    // sections only: header level in this text (1-6), and whether it is the Frontmatter (or, below, back matter)
     level: integer("level"),
     frontmatter: boolean("frontmatter").default(false).notNull(),
+    // top-level sections only: whether the section is back matter (bibliography, appendices...)
+    backmatter: boolean("backmatter").default(false).notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.textId, table.position] }),

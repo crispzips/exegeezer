@@ -5,7 +5,7 @@ import { paragraph, section, text_, textItem } from '#lib/server/db/schema.js';
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
  * paragraph; a level of 1-6 is a section header (`text` is "## Title").
- * @typedef {{ id: string, text: string, level: number, frontmatter?: boolean }} Item
+ * @typedef {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean }} Item
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,11 +23,11 @@ export function parseItems(raw) {
 	const items = [];
 	for (const it of raw) {
 		if (!it || typeof it !== 'object') return null;
-		const { id, text, level, frontmatter } = /** @type {Record<string, unknown>} */ (it);
+		const { id, text, level, frontmatter, backmatter } = /** @type {Record<string, unknown>} */ (it);
 		if (typeof id !== 'string' || !UUID.test(id) || seen.has(id)) return null;
 		if (typeof text !== 'string' || !Number.isInteger(level) || /** @type {number} */ (level) < 0 || /** @type {number} */ (level) > 6) return null;
 		seen.add(id);
-		items.push({ id, text, level: /** @type {number} */ (level), frontmatter: frontmatter === true });
+		items.push({ id, text, level: /** @type {number} */ (level), frontmatter: frontmatter === true, backmatter: backmatter === true });
 	}
 	return items;
 }
@@ -81,7 +81,8 @@ export async function loadText(id, locals) {
 			body: paragraph.body,
 			title: section.title,
 			level: textItem.level,
-			frontmatter: textItem.frontmatter
+			frontmatter: textItem.frontmatter,
+			backmatter: textItem.backmatter
 		})
 		.from(textItem)
 		.leftJoin(paragraph, eq(paragraph.id, textItem.paragraphId))
@@ -91,7 +92,7 @@ export async function loadText(id, locals) {
 	/** @type {Item[]} */
 	const items = rows.map((r) =>
 		r.sectionId
-			? { id: r.sectionId, text: `${'#'.repeat(r.level ?? 1)} ${r.title}`, level: r.level ?? 1, frontmatter: r.frontmatter ?? false }
+			? { id: r.sectionId, text: `${'#'.repeat(r.level ?? 1)} ${r.title}`, level: r.level ?? 1, frontmatter: r.frontmatter ?? false, backmatter: r.backmatter ?? false }
 			: { id: /** @type {string} */ (r.paragraphId), text: r.body ?? '', level: 0 }
 	);
 	return { id: row.id, title: row.title, items };
@@ -128,7 +129,8 @@ async function writeItems(id, items) {
 			paragraphId: i.level === 0 ? i.id : null,
 			sectionId: i.level > 0 ? i.id : null,
 			level: i.level > 0 ? i.level : null,
-			frontmatter: i.level > 0 && i.frontmatter === true
+			frontmatter: i.level > 0 && i.frontmatter === true,
+			backmatter: i.level > 0 && i.backmatter === true
 		}));
 
 		// rows this text already had are rewritten (edits); new ids are created; ids that

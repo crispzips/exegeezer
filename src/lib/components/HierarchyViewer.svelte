@@ -12,6 +12,8 @@
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
+	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
+	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -46,7 +48,10 @@
 	$effect(() => {
 		if (!onedit) editing = null;
 		if (!ondelete) editHover.clear();
-		if (!oninject) gap.clear();
+		if (!oninject) {
+			gap.clear();
+			if (cursor?.type === 'gap') cursor = null; // interstices exist only in editing mode
+		}
 		if (!onmove) dd.end();
 	});
 
@@ -56,6 +61,15 @@
 		if (text !== null) onedit?.({ id, text });
 	}
 
+	let lastX = -1;
+	let lastY = -1;
+	/**
+	 * Whether the pointer itself caused this event. A layout shift under a resting pointer (the
+	 * keyboard scrolling, a bubble widening) fires enter and leave events at the old coordinates;
+	 * those must not undo a menu the keyboard opened.
+	 * @param {PointerEvent} e
+	 */
+	const pointerMoved = (e) => e.clientX !== lastX || e.clientY !== lastY;
 	const editHover = new EditHover();
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -66,6 +80,11 @@
 	 * @param {PointerEvent} e
 	 */
 	function hoverMove(e) {
+		// a layout shift under a resting pointer fires a pointer move with the same coordinates:
+		// not the pointer's doing, so it must not undo a menu the keyboard opened
+		if (e.clientX === lastX && e.clientY === lastY) return;
+		lastX = e.clientX;
+		lastY = e.clientY;
 		if (!oninject || dd.dragId || editing) return;
 		const zone = locateGap(e);
 		gap.set(zone, e);
@@ -113,6 +132,7 @@
 			: {};
 
 	/** @typedef {import('#lib/utilities/buildSections.js').SectionChild} SectionChild */
+	/** @typedef {import('#lib/utilities/readerNav.js').Stop} Stop */
 
 	/** @type {HTMLDivElement | undefined} */
 	let host = $state();
@@ -163,6 +183,158 @@
 		return out;
 	});
 
+	// ---- Keyboard navigation ----
+	// The cursor rests on one bubble or interstice (an interstice is named by the bubble it sits
+	// before). Clicking a bubble puts the cursor on it; the arrow keys move it.
+	/** @type {Stop | null} */
+	let cursor = $state(null);
+	let navRows = $derived(allRows(tree));
+	/** the bubble that is tabbable when the cursor is nowhere */
+	let firstId = $derived.by(() => {
+		const n = tree[0];
+		return n ? (n.kind === 'section' ? n.id : n.paragraph.id) : '';
+	});
+
+	/** @param {string} id */
+	const isCursor = (id) => (cursor ? cursor.id === id : id === firstId);
+	/** the magenta line of the interstice the cursor is on, drawn on the bubble it sits before
+	 * @param {string} id */
+	const cursorLine = (id) =>
+		cursor?.type === 'gap' && cursor.id === id ? gapLineClass(cursor.place ?? 'before', cursor.axis ?? 'x') : '';
+
+	/** Keep a bubble that is coming into focus centred in its row (once it has finished resizing).
+	 * @param {Element} el */
+	function centreSoon(el) {
+		setTimeout(() => centreInRow(el), 0);
+	}
+
+	/** @param {string} id @param {'paragraph' | 'section'} type */
+	function setCursor(id, type) {
+		cursor = { type, id };
+	}
+
+	/** Focus the cursor's bubble; in editing mode show the menu that hovering it would. */
+	function focusCursor() {
+		const c = cursor;
+		const el = c && host?.querySelector(`.hv-rows [data-node="${CSS.escape(c.id)}"]`);
+		if (!c || !(el instanceof HTMLElement)) return;
+		editHover.clear();
+		gap.clear();
+		el.focus();
+		centreSoon(el); // (a gap and its bubble share an element, so focus alone may not fire)
+		// focusing may scroll, and a scroll drops the menus: show them once it has settled
+		setTimeout(() => {
+			if (cursor !== c) return;
+			if (c.type === 'gap') {
+				if (!oninject) return;
+				const r = el.getBoundingClientRect();
+				const y = c.axis === 'y';
+				gap.show(
+					{ id: c.id, place: c.place ?? 'before', axis: c.axis ?? 'x' },
+					y ? r.left + 24 : c.place === 'after' ? r.right : r.left,
+					y ? r.top : r.top + 24
+				);
+			} else if (ondelete) {
+				editHover.enter({ id: c.id, kind: c.type, el });
+			}
+		}, 80);
+	}
+
+	/**
+	 * Move the cursor to a stop, opening the sections around it first if its row is not on screen.
+	 * @param {{ row: import('#lib/utilities/readerNav.js').NavRow, stop: Stop } | null} to
+	 */
+	async function goTo(to) {
+		if (!to) return;
+		if ((rows[to.row.depth]?.parent?.id ?? null) !== to.row.parentId) selected = to.row.path;
+		cursor = to.stop;
+		await tick();
+		focusCursor();
+	}
+
+	/** @param {KeyboardEvent} e */
+	function onKeydown(e) {
+		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !(e.target instanceof Element)) return;
+		if (e.target.closest('[contenteditable]')) return;
+		const el = e.target.closest('.hv-rows [data-node]');
+		if (!(el instanceof HTMLElement)) return;
+		const id = el.dataset.node ?? '';
+		const type = el.hasAttribute('data-section') ? 'section' : 'paragraph';
+		/** @type {Stop} */
+		const cur = cursor?.id === id ? cursor : { type, id };
+
+		if (e.key === 'Enter' || e.key === ' ') {
+			if (cur.type === 'gap') {
+				// on an interstice, Enter opens its menu rather than the bubble it sits before
+				e.preventDefault();
+				if (oninject) gap.open = true;
+			} else if (e.key === 'Enter' && onedit && type === 'paragraph' && e.target === el) {
+				e.preventDefault();
+				editCaret = paragraphs.find((p) => p.id === id)?.text.length ?? 0;
+				editHover.clear();
+				gap.clear();
+				editing = id;
+			}
+			return;
+		}
+
+		// Down on a closed section that has contents opens it, as Enter does
+		if (
+			e.key === 'ArrowDown' &&
+			cur.type === 'section' &&
+			!selected.includes(id) &&
+			navRows.find((r) => r.parentId === id)?.nodes.length
+		) {
+			e.preventDefault();
+			el.click();
+			return;
+		}
+
+		// Left and Right leave a stack of paragraphs for the next bubble in the row; on a paragraph
+		// bubble, Up and Down instead step to the previous and next bubble (within a stack, the
+		// previous and next paragraph)
+		const step = cur.type === 'paragraph';
+		const to =
+			e.key === 'ArrowLeft'
+				? moveOut(navRows, cur, -1, !!oninject)
+				: e.key === 'ArrowRight'
+					? moveOut(navRows, cur, 1, !!oninject)
+					: e.key === 'ArrowUp'
+						? step
+							? moveAlong(navRows, cur, -1, !!oninject)
+							: moveAcross(navRows, cur, -1, selected)
+						: e.key === 'ArrowDown'
+							? step
+								? moveAlong(navRows, cur, 1, !!oninject)
+								: moveAcross(navRows, cur, 1, selected)
+							: undefined;
+		if (to === undefined) return;
+		e.preventDefault(); // the arrows are ours: no scrolling
+		goTo(to);
+	}
+
+	/** An arrow key with nothing focused starts from the topmost bubble in view.
+	 * @param {KeyboardEvent} e */
+	function onWindowKeydown(e) {
+		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.target !== document.body || !host) return;
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key)) return;
+		const el = topmostInView(Array.from(host.querySelectorAll('.hv-rows [data-node]')).filter((n) => n instanceof HTMLElement), host);
+		if (!el) return;
+		e.preventDefault();
+		cursor = { type: el.hasAttribute('data-section') ? 'section' : 'paragraph', id: el.dataset.node ?? '' };
+		focusCursor();
+	}
+
+	/** leaving the bubbles for somewhere else drops the menus the cursor opened
+	 * @param {FocusEvent} e */
+	function onFocusout(e) {
+		const to = e.relatedTarget;
+		if (to instanceof Element && !to.closest('[role="toolbar"]') && !host?.contains(to)) {
+			editHover.clear();
+			gap.clear();
+		}
+	}
+
 	/**
 	 * Scroll a container to the middle of its row (the row's own scroller).
 	 * @param {Element} el
@@ -172,7 +344,9 @@
 		if (!scroller) return;
 		const box = el.getBoundingClientRect();
 		const view = scroller.getBoundingClientRect();
-		scroller.scrollBy({ left: box.left + box.width / 2 - (view.left + view.width / 2), behavior: 'smooth' });
+		// the level marker is pinned over the left of the row: centre in the space beside it
+		const pinned = scroller.querySelector('[data-gutter]')?.getBoundingClientRect().width ?? 0;
+		scroller.scrollBy({ left: box.left + box.width / 2 - (view.left + pinned + (view.width - pinned) / 2), behavior: 'smooth' });
 	}
 
 	/**
@@ -231,6 +405,12 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		data-node={node.paragraph.id}
+		tabindex={isCursor(node.paragraph.id) ? 0 : -1}
+		onfocus={(e) => {
+			if (cursor?.id !== node.paragraph.id) setCursor(node.paragraph.id, 'paragraph');
+			centreSoon(e.currentTarget);
+		}}
+		onclick={() => setCursor(node.paragraph.id, 'paragraph')}
 		{...(editing === node.paragraph.id ? {} : dragAttrs(node.paragraph.id, 'paragraph', stacked ? 'y' : 'x'))}
 		ondblclick={onedit
 			? (e) => {
@@ -240,9 +420,9 @@
 					editing = node.paragraph.id;
 				}
 			: undefined}
-		onpointerenter={ondelete && !editing ? (e) => editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
-		onpointerleave={ondelete ? () => editHover.leave() : undefined}
-		class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 text-sm {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-grey2' : '')}"
+		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
+		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
+		class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-violet/40 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(node.paragraph.id)} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-grey2' : '')}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -271,13 +451,18 @@
 		class="flex h-full min-w-full w-max items-stretch gap-2 {tint ? 'border-t-2 border-(--c) bg-[color-mix(in_srgb,var(--c)_8%,transparent)]' : ''}"
 	>
 		<!-- level marker: small grey pound signs, pinned to the left while scrolling -->
-		<div class="sticky left-0 z-10 flex w-8 shrink-0 items-start justify-center pt-3 text-xs font-semibold text-grey1 select-none" title="Level {lvl}">
+		<!-- opaque, with a divider on its right, so the row's contents scroll out of sight behind it rather than showing through -->
+		<div
+			data-gutter
+			class="sticky left-0 z-10 flex w-8 shrink-0 items-start justify-center border-r border-taupe2 pt-3 text-xs font-semibold text-grey1 select-none {tint ? 'bg-[color-mix(in_srgb,var(--c)_8%,var(--color-taupe1))]' : 'bg-taupe1'}"
+			title="Level {lvl}"
+		>
 			{'#'.repeat(lvl)}
 		</div>
 
 		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
 			{#if front.length}
-				<div data-front class="flex h-full min-h-0 w-84 shrink-0 flex-col gap-2 overflow-y-auto p-1">
+				<div data-front class="flex h-full min-h-0 w-84 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-162 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-2 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
 						{#if node.kind === 'paragraph'}{@render paragraphBubble(node, true)}{/if}
 					{/each}
@@ -290,15 +475,26 @@
 					<button
 						data-section
 						data-node={node.id}
+						tabindex={isCursor(node.id) ? 0 : -1}
+						onfocus={(e) => {
+							if (cursor?.id !== node.id) setCursor(node.id, 'section');
+							centreSoon(e.currentTarget);
+						}}
 						{...dragAttrs(node.id, 'section', 'x')}
 						data-level={node.level}
 						data-open={isOpen}
-						onclick={(e) => toggle(d, node.id, e.currentTarget)}
-						onpointerenter={ondelete ? (e) => editHover.enter({ id: node.id, kind: 'section', el: e.currentTarget }) : undefined}
-						onpointerleave={ondelete ? () => editHover.leave() : undefined}
+						onclick={(e) => {
+							setCursor(node.id, 'section');
+							// opening or closing rebuilds the rows beneath, so take focus back afterwards
+							toggle(d, node.id, e.currentTarget).then(() => {
+								if (cursor?.id === node.id) focusCursor();
+							});
+						}}
+						onpointerenter={ondelete ? (e) => pointerMoved(e) && editHover.enter({ id: node.id, kind: 'section', el: e.currentTarget }) : undefined}
+						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-grey2' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
+						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {cursorLine(node.id)} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-grey2' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -342,6 +538,8 @@
 	{/if}
 {/snippet}
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
@@ -350,7 +548,9 @@
 <div
 	bind:this={host}
 	onpointermove={hoverMove}
-	onpointerleave={() => gap.leave()}
+	onpointerleave={(e) => pointerMoved(e) && gap.leave()}
+	onkeydown={onKeydown}
+	onfocusout={onFocusout}
 	ondragover={dragOver}
 	ondrop={drop}
 	ondragleave={(e) => {
@@ -358,7 +558,7 @@
 	}}
 	class="flex h-full min-h-0 flex-col"
 >
-	<div class="min-h-0 flex-1">
+	<div class="hv-rows min-h-0 flex-1">
 		{@render stack(0)}
 	</div>
 

@@ -271,7 +271,7 @@
 		class="flex h-full min-w-full w-max items-stretch gap-2 {tint ? 'border-t-2 border-(--c) bg-[color-mix(in_srgb,var(--c)_8%,transparent)]' : ''}"
 	>
 		<!-- level marker: small grey pound signs, pinned to the left while scrolling -->
-		<div class="sticky left-0 z-10 flex w-8 shrink-0 items-start justify-center bg-taupe1 pt-3 text-xs font-semibold text-grey1 select-none" title="Level {lvl}">
+		<div class="sticky left-0 z-10 flex w-8 shrink-0 items-start justify-center pt-3 text-xs font-semibold text-grey1 select-none" title="Level {lvl}">
 			{'#'.repeat(lvl)}
 		</div>
 

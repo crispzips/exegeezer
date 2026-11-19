@@ -25,6 +25,7 @@
         if (latest) {
             // Markdown: drop the table of contents and its {#anchor} header links first
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
+            previewMarkdown = isMarkdown;
             paragraphs = splitParagraphs(isMarkdown ? cleanMarkdown(latest.text) : latest.text);
             // Headers present but text above the first one: ask what to do with it
             const hasHeaders = paragraphs.some((p) => p.level > 0);
@@ -32,6 +33,11 @@
         }
         open = false;
     }
+
+    /** whether the text loaded in the preview is Markdown */
+    let previewMarkdown = $state(false);
+    /** whether the main text is Markdown, so the linear view renders it */
+    let markdown = $state(false);
 
     /** @type {HTMLDialogElement | undefined} */
     let frontmatterDialog;
@@ -86,6 +92,7 @@
             if (!texts.length) return false;
             const saved = await (await fetch(`/api/texts/${texts[0].id}`)).json();
             textId = saved.id;
+            markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
             textTitle = saved.title;
             mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
             lastSaved = JSON.stringify(toItems(mainText));
@@ -130,6 +137,7 @@
                 const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
                 const hasHeaders = list.some((p) => p.level > 0);
                 textTitle = 'Dissertation';
+                markdown = true;
                 mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({
                     ...p,
                     originalIndex: i
@@ -262,6 +270,7 @@
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
         mainText = combined.map((p, i) => ({ ...p, originalIndex: i }));
+        if (previewMarkdown) markdown = true;
 
         // Reset the load pane: drop the loaded text and close the modal
         paragraphs = [];
@@ -321,7 +330,7 @@
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="min-w-0 flex-1">
         {#if view === 'linear'}
-            <ParagraphViewer paragraphs={mainText} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer paragraphs={mainText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
             <HierarchyViewer paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
@@ -482,7 +491,7 @@
         </header>
 
         <div class="min-h-0 flex-1">
-            <ParagraphViewer {paragraphs} empty="No text loaded yet." />
+            <ParagraphViewer {paragraphs} markdown={previewMarkdown} empty="No text loaded yet." />
         </div>
     </section>
     {/if}

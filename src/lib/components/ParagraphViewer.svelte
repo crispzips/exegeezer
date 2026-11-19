@@ -9,6 +9,7 @@
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
+	import { definitionsOf, isDefinition, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * A scrolling list of paragraphs with a minimap-style overview column.
@@ -52,7 +53,10 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, markdown = false } = $props();
+
+	/** reference definitions ("[image1]: url") shared by every paragraph */
+	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -72,6 +76,30 @@
 	function finishEdit(id, text) {
 		if (editing === id) editing = null;
 		if (text !== null) onedit?.({ id, text });
+	}
+
+	// Footnote tooltip: hovering (or focusing) an in-text note mark shows the note's text.
+	// It stays open while the pointer is on it, so links inside the note can be clicked.
+	/** @type {{ html: string, x: number, y: number, above: boolean } | null} */
+	let note = $state(null);
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let noteTimer;
+	function closeNote() {
+		clearTimeout(noteTimer);
+		noteTimer = setTimeout(() => (note = null), 150);
+	}
+	/** @param {Event} e */
+	function noteOver(e) {
+		const mark = e.target instanceof Element ? e.target.closest('.footnote-ref') : null;
+		if (!(mark instanceof HTMLElement)) return;
+		clearTimeout(noteTimer);
+		const r = mark.getBoundingClientRect();
+		const above = r.bottom + 280 > window.innerHeight;
+		note = { html: mark.dataset.note ?? '', x: r.left + r.width / 2, y: above ? r.top : r.bottom, above };
+	}
+	/** @param {Event} e */
+	function noteOut(e) {
+		if (e.target instanceof Element && e.target.closest('.footnote-ref')) closeNote();
 	}
 
 	const editHover = new EditHover();
@@ -212,6 +240,10 @@
 		for (let k = 0; k <= at; k++) if ((paragraphs[k].level ?? 0) === topLevel) topIndex++;
 		return topIndex < 0 ? null : sectionColor(topIndex, 0);
 	}
+
+	// Space around the text (of the pane's width): above/below the scrolling area, and left/right inside it
+	const PAGE_PAD_Y = '5cqw'; // above and below the scrolling text, always visible
+	const PAGE_PAD_X = '15%'; // left and right, inside the text
 
 	// Synopsis column geometry (px): blip width, gap between lanes, side padding
 	const LANE_W = 8;
@@ -373,8 +405,9 @@
 	/** @param {number} y the blip's top in px within the text */
 	function goToBlip(y) {
 		if (!mainEl) return;
-		// the text has p-3 (12px) of padding above the first paragraph; keep that margin
-		mainEl.scrollTop = Math.max(0, y - 12);
+		// keep the text's top padding above the paragraph
+		const pad = mainContent ? parseFloat(getComputedStyle(mainContent).paddingTop) : 0;
+		mainEl.scrollTop = Math.max(0, y - pad);
 	}
 
 	/** @param {PointerEvent} e */
@@ -391,24 +424,58 @@
 	}
 </script>
 
+{#snippet body(/** @type {{ id: string, text: string }} */ para, /** @type {string} */ scope)}
+	{#if !para.text}
+		<p class="flex-1 whitespace-pre-wrap"><span class="italic text-grey3">empty paragraph</span></p>
+	{:else if markdown && isDefinition(para.text)}
+		<!-- a reference or footnote definition: shown as plain text; its content appears where it is used -->
+		<p class="flex-1 whitespace-pre-wrap text-xs text-grey3">{para.text}</p>
+	{:else if markdown}
+		<div class="md min-w-0 flex-1">{@html renderMarkdown(para.text, defs, scope + para.id)}</div>
+	{:else}
+		<p class="flex-1 whitespace-pre-wrap">{para.text}</p>
+	{/if}
+{/snippet}
+
+{#if note}
+	<!-- Footnote tooltip: taupe1 with dark text, under (or over) the note mark -->
+	<div
+		role="tooltip"
+		onpointerenter={() => clearTimeout(noteTimer)}
+		onpointerleave={closeNote}
+		class="md fixed z-40 w-max max-w-sm rounded-2xl border border-taupe2 bg-taupe1 text-sm text-dark shadow-lg"
+		style="padding: 2rem; left: clamp(8px, calc({note.x}px - 12rem), calc(100vw - 24.5rem)); {note.above ? `bottom: ${window.innerHeight - note.y + 4}px` : `top: ${note.y + 4}px`}"
+	>
+		{@html note.html}
+	</div>
+{/if}
+
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
 <div class="flex h-full min-h-0">
 	<!-- Main paragraph area (scrolls independently) -->
-	<div bind:this={mainEl} onscroll={update} class="min-w-0 flex-1 overflow-y-auto">
+	<!-- The text frame: a buffer of space above and below the scrolling text (cqw = the frame's width) -->
+	<div class="min-w-0 flex-1 [container-type:inline-size]">
+	<div class="h-full" style="padding-block: {PAGE_PAD_Y}">
+	<div bind:this={mainEl} onscroll={update} class="h-full overflow-x-hidden overflow-y-auto">
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				bind:this={mainContent}
 				onpointermove={hoverMove}
+				onpointerover={noteOver}
+				onpointerout={noteOut}
+				onfocusin={noteOver}
+				onfocusout={noteOut}
 				onpointerleave={() => gap.leave()}
 				ondragover={dragOver}
 				ondrop={drop}
 				ondragleave={(e) => {
 					if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
 				}}
-				class="relative p-3"
+				class="relative"
+				style="padding: 0 {PAGE_PAD_X}"
 			>
 			{#each paragraphs as para (para.id)}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -446,12 +513,14 @@
 							class="flex-1 whitespace-pre-wrap outline-none"
 						></p>
 					{:else}
-						<p class="flex-1 whitespace-pre-wrap">{#if para.text}{para.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+						{@render body(para, 'main-')}
 					{/if}
 				</div>
 			{:else}
 				<p class="text-sm text-gray-500">{empty}</p>
 			{/each}
+		</div>
+		</div>
 		</div>
 	</div>
 
@@ -473,13 +542,13 @@
 				     then shrunk to fit the column -->
 				<div
 					bind:this={miniInner}
-					class="absolute top-0 left-0 origin-top-left p-3"
-					style="width: {m.w}px; transform: scale({m.k})"
+					class="absolute top-0 left-0 origin-top-left"
+					style="width: {m.w}px; padding: 0 {PAGE_PAD_X}; transform: scale({m.k})"
 				>
 					{#each paragraphs as para (para.id)}
 						<div class="flex gap-2 px-1 py-1.5">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>
-							<p class="flex-1 whitespace-pre-wrap">{#if para.text}{para.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+							{@render body(para, 'mini-')}
 						</div>
 					{/each}
 				</div>

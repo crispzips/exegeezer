@@ -1,4 +1,5 @@
 <script>
+	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { ArrowInDownRightSquare, TrashX } from '@boxicons/svelte';
 
 	/**
@@ -73,7 +74,7 @@
 			<button
 				type="button"
 				aria-label={target.kind === 'section' ? 'Expand section' : 'Expand paragraph'}
-				title="Expand"
+				use:tip={'Expand'}
 				onclick={expand}
 				class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
 			>
@@ -84,7 +85,7 @@
 			<button
 				type="button"
 				aria-label={target.kind === 'section' ? 'Delete section' : 'Delete paragraph'}
-				title="Delete"
+				use:tip={'Delete'}
 				aria-haspopup={target.kind === 'section' ? 'menu' : undefined}
 				aria-expanded={target.kind === 'section' ? menuOpen : undefined}
 				onclick={() => (target.kind === 'section' ? (menuOpen = !menuOpen) : choose(undefined))}

@@ -8,6 +8,7 @@ body {
 /* `static` always emits every theme colour as a CSS variable, not only the ones
    used by a Tailwind class (the synopsis blips read the accents via var()). */
 @theme static {
+  --font-sans: "Labrada", ui-serif, Georgia, serif;
   --color-dark: #002b36;
   --color-lessdark: #073642;
   --color-grey4: #586e75;

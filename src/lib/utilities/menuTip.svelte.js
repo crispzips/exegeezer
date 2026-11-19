@@ -1,5 +1,5 @@
 /**
- * Tooltips for the vertical menu, styled and behaving like the minimap tooltips: a dark
+ * Tooltips for the vertical menu, styled and behaving like the minimap tooltips: a taupe
  * bubble to the left of the hovered button that appears at once, stays level with the
  * pointer while it moves over the button, and goes when it leaves.
  */
@@ -23,6 +23,8 @@ export const menuTip = new MenuTip();
 export function tip(node, text) {
 	/** @param {PointerEvent} e */
 	function show(e) {
+		// a button whose pop-out is open has its tooltip closed, so it does not cover the pop-out
+		if (node.getAttribute('aria-expanded') === 'true') return hide();
 		menuTip.owner = node;
 		menuTip.text = text;
 		menuTip.x = node.getBoundingClientRect().left;
@@ -37,6 +39,7 @@ export function tip(node, text) {
 	node.addEventListener('pointerenter', show);
 	node.addEventListener('pointermove', show);
 	node.addEventListener('pointerleave', hide);
+	if (node.hasAttribute('aria-haspopup')) node.addEventListener('click', hide); // opening a pop-out closes the tooltip at once
 	return {
 		/** @param {string} next */
 		update(next) {
@@ -48,6 +51,7 @@ export function tip(node, text) {
 			node.removeEventListener('pointerenter', show);
 			node.removeEventListener('pointermove', show);
 			node.removeEventListener('pointerleave', hide);
+			node.removeEventListener('click', hide);
 		}
 	};
 }

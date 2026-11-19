@@ -305,7 +305,7 @@
 		{#if tipLines.length > 0}
 			<div
 				role="tooltip"
-				class="pointer-events-none absolute bottom-full z-30 mb-2 w-max max-w-64 -translate-x-1/2 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+				class="pointer-events-none absolute bottom-full z-30 mb-2 w-max max-w-64 -translate-x-1/2 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg"
 				style="left: {tipX}px"
 			>
 				<MinimapTooltip lines={tipLines} />

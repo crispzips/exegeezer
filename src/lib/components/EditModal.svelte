@@ -245,7 +245,7 @@
 						type="button"
 						onclick={save}
 						disabled={!dirty}
-						class="rounded-md bg-dark px-3 py-1.5 text-sm font-medium text-taupe1 hover:bg-lessdark disabled:cursor-not-allowed disabled:opacity-40"
+						class="rounded-md bg-dark px-3 py-1.5 text-sm font-medium text-taupe1 hover:bg-taupe5 disabled:cursor-not-allowed disabled:opacity-40"
 					>
 						Save
 					</button>

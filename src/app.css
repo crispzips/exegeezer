@@ -14,8 +14,11 @@ body {
   --color-grey3: #657b83;
   --color-grey2:  #839496;
   --color-grey1:  #93a1a1;
+  --color-taupe5:  #3e2415; /* dark chocolate */
+  --color-taupe4:  #9a7b55;
+  --color-taupe3:  #d3c3a1;
   --color-taupe2:  #eee8d5;
-  --color-taupe1:  #fdf6e3;
+  --color-taupe1:  #fdf6e3; /* lightest */
 
   /* Official Solarized Accent Colors */
   --color-yellow:  #b58900;

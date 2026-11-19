@@ -9,6 +9,8 @@
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
+	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
+	import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
 	import { definitionsOf, isDefinition, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
@@ -68,7 +70,10 @@
 	$effect(() => {
 		if (!onedit) editing = null;
 		if (!ondelete) editHover.clear();
-		if (!oninject) gap.clear();
+		if (!oninject) {
+			gap.clear();
+			if (cursor?.type === 'gap') cursor = null; // interstices exist only in editing mode
+		}
 		if (!onmove) dd.end();
 	});
 
@@ -102,6 +107,15 @@
 		if (e.target instanceof Element && e.target.closest('.footnote-ref')) closeNote();
 	}
 
+	let lastX = -1;
+	let lastY = -1;
+	/**
+	 * Whether the pointer itself caused this event. A layout shift under a resting pointer (the
+	 * keyboard scrolling, a bubble widening) fires enter and leave events at the old coordinates;
+	 * those must not undo a menu the keyboard opened.
+	 * @param {PointerEvent} e
+	 */
+	const pointerMoved = (e) => e.clientX !== lastX || e.clientY !== lastY;
 	const editHover = new EditHover();
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -112,6 +126,11 @@
 	 * @param {PointerEvent} e
 	 */
 	function hoverMove(e) {
+		// a layout shift under a resting pointer fires a pointer move with the same coordinates:
+		// not the pointer's doing, so it must not undo a menu the keyboard opened
+		if (e.clientX === lastX && e.clientY === lastY) return;
+		lastX = e.clientX;
+		lastY = e.clientY;
 		if (!oninject || dd.dragId || editing) return;
 		const zone = locateGap(e);
 		gap.set(zone, e);
@@ -145,6 +164,101 @@
 		if (!onmove || !d || !id) return;
 		e.preventDefault();
 		onmove({ id, targetId: d.id, place: d.place });
+	}
+
+	// ---- Keyboard navigation ----
+	// The cursor rests on one row or interstice (an interstice is named by the row it sits
+	// before). Clicking a row puts the cursor on it; the up and down arrows move it.
+	/** @type {import('#lib/utilities/readerNav.js').Stop | null} */
+	let cursor = $state(null);
+	let stops = $derived(linearStops(paragraphs, !!oninject));
+	/** the row that is tabbable when the cursor is nowhere */
+	let firstId = $derived(paragraphs[0]?.id ?? '');
+	/** @param {string} id */
+	const isCursor = (id) => (cursor ? cursor.id === id : id === firstId);
+	/** the line of the interstice the cursor is on, drawn on the row it sits before
+	 * @param {string} id */
+	const cursorLine = (id) =>
+		cursor?.type === 'gap' && cursor.id === id ? gapLineClass(cursor.place ?? 'before', 'y') : '';
+
+	/** Focus the cursor's row; in editing mode show the menu that hovering it would. */
+	function focusCursor() {
+		const c = cursor;
+		const el = c && mainContent?.querySelector(`[data-para="${CSS.escape(c.id)}"]`);
+		if (!c || !(el instanceof HTMLElement)) return;
+		editHover.clear();
+		gap.clear();
+		el.focus();
+		// focusing may scroll, and a scroll drops the menus: show them once it has settled
+		setTimeout(() => {
+			if (cursor !== c) return;
+			if (c.type === 'gap') {
+				if (!oninject) return;
+				const r = el.getBoundingClientRect();
+				gap.show({ id: c.id, place: c.place ?? 'before', axis: 'y' }, r.left + 24, c.place === 'after' ? r.bottom : r.top);
+			} else if (ondelete) {
+				editHover.enter({ id: c.id, kind: c.type, el });
+			}
+		}, 80);
+	}
+
+	/** @param {KeyboardEvent} e */
+	function onKeydown(e) {
+		if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || !(e.target instanceof Element)) return;
+		if (e.target.closest('[contenteditable]')) return;
+		const el = e.target.closest('[data-para]');
+		if (!(el instanceof HTMLElement)) return;
+		const id = el.dataset.para ?? '';
+		const para = paragraphs.find((p) => p.id === id);
+		if (!para) return;
+		/** @type {import('#lib/utilities/readerNav.js').Stop} */
+		const cur =
+			cursor?.id === id ? cursor : { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id };
+
+		if (e.key === 'Enter') {
+			if (cur.type === 'gap') {
+				// on an interstice, Enter opens its menu
+				e.preventDefault();
+				if (oninject) gap.open = true;
+			} else if (onedit && cur.type === 'paragraph' && e.target === el) {
+				e.preventDefault();
+				editCaret = para.text.length;
+				editHover.clear();
+				gap.clear();
+				editing = id;
+			}
+			return;
+		}
+		if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return;
+		e.preventDefault(); // the arrows are ours: no scrolling
+		const next = moveLinear(stops, cur, e.key === 'ArrowUp' ? -1 : 1);
+		if (!next) return;
+		cursor = next;
+		focusCursor();
+	}
+
+	/** An arrow key with nothing focused starts from the topmost row in view (the main text only,
+	 * not the load preview).
+	 * @param {KeyboardEvent} e */
+	function onWindowKeydown(e) {
+		if (!synopsis || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey || e.target !== document.body) return;
+		if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(e.key) || !mainEl || !mainContent) return;
+		const el = topmostInView(Array.from(mainContent.querySelectorAll('[data-para]')).filter((n) => n instanceof HTMLElement), mainEl);
+		if (!el) return;
+		e.preventDefault();
+		const para = paragraphs.find((p) => p.id === el.dataset.para);
+		cursor = { type: (para?.level ?? 0) > 0 ? 'section' : 'paragraph', id: el.dataset.para ?? '' };
+		focusCursor();
+	}
+
+	/** leaving the rows for somewhere else drops the menus the cursor opened
+	 * @param {FocusEvent} e */
+	function onFocusout(e) {
+		const to = e.relatedTarget;
+		if (to instanceof Element && !to.closest('[role="toolbar"]') && !mainContent?.contains(to)) {
+			editHover.clear();
+			gap.clear();
+		}
 	}
 
 	/** @type {HTMLDivElement | undefined} */
@@ -244,6 +358,7 @@
 	// Space around the text (of the pane's width): above/below the scrolling area, and left/right inside it
 	const PAGE_PAD_Y = '5cqw'; // above and below the scrolling text, always visible
 	const PAGE_PAD_X = '15%'; // left and right, inside the text
+	const PAGE_PAD_TOP = '4px'; // above and below the first and last rows, so their focus outline is not clipped
 
 	// Synopsis column geometry (px): blip width, gap between lanes, side padding
 	const LANE_W = 8;
@@ -437,6 +552,8 @@
 	{/if}
 {/snippet}
 
+<svelte:window onkeydown={onWindowKeydown} />
+
 {#if note}
 	<!-- Footnote tooltip: taupe1 with dark text, under (or over) the note mark -->
 	<div
@@ -467,20 +584,29 @@
 				onpointerover={noteOver}
 				onpointerout={noteOut}
 				onfocusin={noteOver}
-				onfocusout={noteOut}
-				onpointerleave={() => gap.leave()}
+				onfocusout={(e) => {
+					noteOut(e);
+					onFocusout(e);
+				}}
+				onkeydown={onKeydown}
+				onpointerleave={(e) => pointerMoved(e) && gap.leave()}
 				ondragover={dragOver}
 				ondrop={drop}
 				ondragleave={(e) => {
 					if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
 				}}
 				class="relative"
-				style="padding: 0 {PAGE_PAD_X}"
+				style="padding: {PAGE_PAD_TOP} {PAGE_PAD_X}"
 			>
 			{#each paragraphs as para (para.id)}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					data-para={para.id}
+					tabindex={isCursor(para.id) ? 0 : -1}
+					onfocus={() => {
+						if (cursor?.id !== para.id) cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id };
+					}}
+					onclick={() => (cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id })}
 					data-drop={onmove ? para.id : undefined}
 					data-kind={(para.level ?? 0) > 0 ? 'section' : 'paragraph'}
 					data-axis="y"
@@ -501,10 +627,10 @@
 							}
 						: undefined}
 					onpointerenter={ondelete && !editing
-						? (e) => editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
+						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
-					onpointerleave={ondelete ? () => editHover.leave() : undefined}
-					class="flex gap-2 rounded px-1 py-1.5 {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-grey2' : '')}"
+					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
+					class="flex gap-2 rounded px-1 py-1.5 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-grey2' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -543,7 +669,7 @@
 				<div
 					bind:this={miniInner}
 					class="absolute top-0 left-0 origin-top-left"
-					style="width: {m.w}px; padding: 0 {PAGE_PAD_X}; transform: scale({m.k})"
+					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; transform: scale({m.k})"
 				>
 					{#each paragraphs as para (para.id)}
 						<div class="flex gap-2 px-1 py-1.5">

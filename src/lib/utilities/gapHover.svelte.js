@@ -12,6 +12,8 @@ export class GapHover {
 	target = $state(null);
 	/** whether the magenta line is shown: only while the pointer is in the zone or on its menu */
 	lit = $state(false);
+	/** whether the menu's dropdown is open (the keyboard opens it with Enter) */
+	open = $state(false);
 	/** where the pointer entered the zone (the menu is placed beside this point) */
 	x = $state(0);
 	y = $state(0);
@@ -31,6 +33,21 @@ export class GapHover {
 		this.target = zone;
 		this.x = e.clientX;
 		this.y = e.clientY;
+	}
+
+	/**
+	 * Show a zone at a point without a pointer (keyboard navigation).
+	 * @param {GapTarget} zone
+	 * @param {number} x
+	 * @param {number} y
+	 */
+	show(zone, x, y) {
+		clearTimeout(this.#timer);
+		this.#timer = undefined;
+		this.target = zone;
+		this.lit = true;
+		this.x = x;
+		this.y = y;
 	}
 
 	leave() {

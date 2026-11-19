@@ -15,21 +15,19 @@
 	let { gap, oninject } = $props();
 
 	const target = $derived(gap.target);
-	let open = $state(false);
 	let innerWidth = $state(0);
 
 	// a new zone starts with the dropdown closed
 	$effect(() => {
 		void target?.id;
 		void target?.place;
-		open = false;
+		gap.open = false;
 	});
 
 	/** @param {'empty' | 'load'} mode */
 	function choose(mode) {
 		if (!target) return;
 		const { id, place } = target;
-		open = false;
 		gap.clear();
 		oninject({ targetId: id, place, mode });
 	}
@@ -52,14 +50,14 @@
 			aria-label="Inject"
 			title="Inject"
 			aria-haspopup="menu"
-			aria-expanded={open}
-			onclick={() => (open = !open)}
-			class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {open ? 'bg-taupe2' : ''}"
+			aria-expanded={gap.open}
+			onclick={() => (gap.open = !gap.open)}
+			class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {gap.open ? 'bg-taupe2' : ''}"
 		>
 			{#if target.axis === 'y'}<BetweenHorizontalEnd />{:else}<BetweenVerticalEnd />{/if}
 		</button>
 
-		{#if open}
+		{#if gap.open}
 			<div role="menu" class="absolute left-0 top-full z-50 mt-1 w-max rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg">
 				<button role="menuitem" onclick={() => choose('empty')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">
 					inject empty

@@ -1,4 +1,6 @@
 <script>
+	import { Computer } from '@boxicons/svelte';
+	import SourceButton from '#lib/components/SourceButton.svelte';
 	import { docxToText } from '#lib/utilities/docxToText.js';
 
 	/** @type {HTMLInputElement | undefined} */
@@ -34,9 +36,6 @@
 	class="hidden"
 />
 
-<button
-	onclick={() => fileInput?.click()}
-	class="rounded-md px-3 py-2 text-sm font-medium text-dark hover:bg-taupe2"
->
-	Browse Computer
-</button>
+<SourceButton name="Browse Computer" onclick={() => fileInput?.click()}>
+	<Computer width={40} height={40} />
+</SourceButton>

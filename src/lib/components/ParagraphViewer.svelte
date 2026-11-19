@@ -555,12 +555,12 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 {#if note}
-	<!-- Footnote tooltip: taupe1 with dark text, under (or over) the note mark -->
+	<!-- Footnote tooltip: taupe1 with taupe5 text, under (or over) the note mark -->
 	<div
 		role="tooltip"
 		onpointerenter={() => clearTimeout(noteTimer)}
 		onpointerleave={closeNote}
-		class="md fixed z-40 w-max max-w-sm rounded-2xl border border-taupe2 bg-taupe1 text-sm text-dark shadow-lg"
+		class="md fixed z-40 w-max max-w-sm rounded-2xl border border-taupe3 bg-taupe1 text-sm text-taupe5 shadow-lg"
 		style="padding: 2rem; left: clamp(8px, calc({note.x}px - 12rem), calc(100vw - 24.5rem)); {note.above ? `bottom: ${window.innerHeight - note.y + 4}px` : `top: ${note.y + 4}px`}"
 	>
 		{@html note.html}
@@ -630,7 +630,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded px-1 py-1.5 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-grey2' : '')}"
+					class="flex gap-2 rounded px-1 py-1.5 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -739,7 +739,7 @@
 				{@const half = tipLines.length * 11 + 6}
 				<div
 					role="tooltip"
-					class="pointer-events-none absolute right-full z-30 mr-2 w-max max-w-64 -translate-y-1/2 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+					class="pointer-events-none absolute right-full z-30 mr-2 w-max max-w-64 -translate-y-1/2 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg"
 					style="top: clamp({half}px, {tipY}px, calc(100% - {half}px))"
 				>
 					<MinimapTooltip lines={tipLines} />

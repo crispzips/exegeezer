@@ -12,7 +12,7 @@
 	 * leave and enter level, which smooths each link into an S; a parent sits at the
 	 * midpoint of its children, as in a family tree.
 	 *
-	 * Drag to pan, scroll to zoom, "Fit" to see the whole tree. Hovering a bubble shows
+	 * Drag to pan, scroll to zoom (the map opens fitted to the whole tree). Hovering a bubble shows
 	 * its name preceded by its ancestors'; clicking it calls `onnavigate` with the
 	 * section and its ancestors' ids (outermost first) and closes the map.
 	 *
@@ -153,6 +153,9 @@
 			const [lo, hi] = n.depth === 1 ? [R_MIN_TOP, R_MAX_TOP] : [R_MIN, R_MAX];
 			n.r = lo + (hi - lo) * Math.pow(n.own / (rowMax.get(n.depth) || 1), CURVE);
 		}
+		// the top-level bubbles hang from one line: their bottoms (and so their labels) are level
+		const topR = Math.max(0, ...nodes.filter((n) => n.depth === 1).map((n) => n.r));
+		for (const n of nodes) if (n.depth === 1) n.y += topR - n.r;
 		// percentages are shares of the text without the back matter
 		const margin = nodes.filter((n) => n.depth === 1 && n.backmatter).reduce((n, x) => n + x.size, 0);
 		const counted = Math.max(1, total - margin);
@@ -195,6 +198,19 @@
 	let stage = $state();
 
 	/** Scale and centre the whole tree in the stage. */
+	/**
+	 * Forced perspective, as in the hierarchical view: a bubble's drop shadow falls away from
+	 * the vertical centre line of the map pane, further the further the bubble is from it.
+	 * Sizes are divided by the zoom so the shadow keeps the same size on screen.
+	 * @param {number} x the bubble's centre, in map units
+	 */
+	const SHADOW_SPREAD = 4; // sideways offset (px) at the edge of the pane
+	function shadow(x) {
+		const t = Math.max(-1, Math.min(1, (view.x + x * view.k - box.w / 2) / ((box.w || 1) / 2)));
+		const u = 1 / view.k;
+		return `drop-shadow(${(t * SHADOW_SPREAD * u).toFixed(2)}px ${(2 * u).toFixed(2)}px ${(1.5 * u).toFixed(2)}px var(--color-taupe4))`;
+	}
+
 	function fit() {
 		if (!box.w || !box.h || graph.empty) return;
 		const xs = graph.nodes.map((n) => n.x);
@@ -307,11 +323,8 @@
 	class="m-auto h-[85vh] w-[min(94vw,80rem)] overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
 	<div class="flex shrink-0 items-center justify-between">
-		<h2 class="text-base font-semibold">{picking ? (step === 'front' ? 'Front matter (1 of 2)' : 'Back matter (2 of 2)') : 'Map'}</h2>
+		<h2 class="text-base font-semibold">{picking ? (step === 'front' ? 'Front matter (1 of 2)' : 'Back matter (2 of 2)') : 'Map of ' + rootTitle}</h2>
 		<div class="flex items-center gap-1">
-			<button onclick={fit} class="rounded-md px-2 py-1 text-sm hover:bg-taupe2">Fit</button>
-			<button onclick={() => zoomAt(box.w / 2, box.h / 2, 1.3)} aria-label="Zoom in" class="rounded-md px-2 py-1 text-lg leading-none hover:bg-taupe2">+</button>
-			<button onclick={() => zoomAt(box.w / 2, box.h / 2, 1 / 1.3)} aria-label="Zoom out" class="rounded-md px-2 py-1 text-lg leading-none hover:bg-taupe2">−</button>
 			<button onclick={() => dialogEl?.close()} aria-label="Close" class="rounded-md px-2 py-1 text-lg leading-none hover:bg-taupe2">×</button>
 		</div>
 	</div>
@@ -349,11 +362,11 @@
 					{/each}
 
 					<!-- the root: the text as a whole -->
-					<rect x={graph.root.x - graph.root.r} y={graph.root.y - graph.root.r} width={graph.root.r * 2} height={graph.root.r * 2} rx={graph.root.r * 0.7} class="fill-dark" />
+					<rect x={graph.root.x - graph.root.r} y={graph.root.y - graph.root.r} width={graph.root.r * 2} height={graph.root.r * 2} rx={graph.root.r * 0.7} class="fill-dark" style="filter: {shadow(graph.root.x)}" />
 					{#if fits('100', graph.root.r)}
 						<text x={graph.root.x} y={graph.root.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">100</text>
 					{/if}
-					<text x={graph.root.x} y={graph.root.y - graph.root.r - 10} text-anchor="middle" font-size="15" class="pointer-events-none fill-dark font-semibold" stroke="var(--color-taupe1)" stroke-width="3" paint-order="stroke">{clip(graph.root.title)}</text>
+					<text x={graph.root.x} y={graph.root.y - graph.root.r - 18} text-anchor="middle" font-size="22" class="pointer-events-none fill-dark font-semibold" stroke="var(--color-taupe1)" stroke-width="3" paint-order="stroke">{clip(graph.root.title)}</text>
 
 					{#each graph.nodes as n (n.id)}
 						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -364,22 +377,22 @@
 							onclick={() => pick(n)}
 							class="cursor-pointer"
 						>
-							<rect x={n.x - n.r} y={n.y - n.r} width={n.r * 2} height={n.r * 2} rx={n.r * 0.7} style="fill: {colors.get(n.id ?? '')}" class={hover === n || (picking && chosen.includes(n.id ?? '')) ? 'stroke-violet' : 'stroke-taupe1'} stroke-width={picking && chosen.includes(n.id ?? '') ? 4 : hover === n ? 2.5 : 1.5} opacity={picking && step === 'back' && frontSel.includes(n.id ?? '') ? 0.4 : 1} />
+							<rect x={n.x - n.r} y={n.y - n.r} width={n.r * 2} height={n.r * 2} rx={n.r * 0.7} style="fill: {colors.get(n.id ?? '')}; filter: {shadow(n.x)}" class={hover === n || (picking && chosen.includes(n.id ?? '')) ? 'stroke-violet' : 'stroke-taupe1'} stroke-width={picking && chosen.includes(n.id ?? '') ? 4 : hover === n ? 2.5 : 1.5} opacity={picking && step === 'back' && frontSel.includes(n.id ?? '') ? 0.4 : 1} />
 							{#if !n.backmatter && fits(percent(n.size, graph.total), n.r)}
 								<text x={n.x} y={n.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">{percent(n.size, graph.total)}</text>
 							{/if}
 							{#if n.depth <= 1 || view.k >= 1}
 								<text
 									x={n.x}
-									y={n.y + n.r + 14}
+									y={n.y + n.r + (n.depth <= 1 ? 26 : 14)}
 									text-anchor={n.depth <= 1 ? 'middle' : 'start'}
 									transform={n.depth <= 1 ? undefined : `rotate(90 ${n.x} ${n.y + n.r + 14})`}
-									font-size={n.depth <= 1 ? 13 : 11}
+									font-size={n.depth <= 1 ? 20 : 11}
 									dominant-baseline={n.depth <= 1 ? undefined : 'central'}
 									class="pointer-events-none fill-dark {n.depth <= 1 ? 'font-semibold' : ''}" stroke="var(--color-taupe1)" stroke-width="3" paint-order="stroke">{clip(n.title)}</text>
 							{/if}
 							{#if picking && (n.backmatter || n.frontmatter)}
-								<text x={n.x} y={n.y + n.r + 30} text-anchor="middle" font-size="11" font-style="italic" class="pointer-events-none fill-grey3">{n.backmatter ? 'back matter' : 'front matter'}</text>
+								<text x={n.x} y={n.y + n.r + 50} text-anchor="middle" font-size="11" font-style="italic" class="pointer-events-none fill-grey3">{n.backmatter ? 'back matter' : 'front matter'}</text>
 							{/if}
 						</g>
 					{/each}
@@ -389,7 +402,7 @@
 			{#if hover}
 				<div
 					role="tooltip"
-					class="pointer-events-none absolute z-10 w-max max-w-64 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+					class="pointer-events-none absolute z-10 w-max max-w-64 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg"
 					style="left: {Math.min(tip.x + 14, Math.max(box.w - 270, 0))}px; top: {tip.y + 14}px"
 				>
 					<MinimapTooltip lines={hover.trail} />

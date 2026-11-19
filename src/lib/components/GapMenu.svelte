@@ -1,4 +1,5 @@
 <script>
+	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { BetweenHorizontalEnd, BetweenVerticalEnd } from '@boxicons/svelte';
 
 	/**
@@ -48,7 +49,7 @@
 		<button
 			type="button"
 			aria-label="Inject"
-			title="Inject"
+			use:tip={'Inject'}
 			aria-haspopup="menu"
 			aria-expanded={gap.open}
 			onclick={() => (gap.open = !gap.open)}

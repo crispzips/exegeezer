@@ -11,6 +11,7 @@
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
@@ -321,6 +322,38 @@
 	}
 
 	/**
+	 * Forced perspective for the bubbles' drop shadows: each shadow falls away from the
+	 * centre line of the pane, further the further the bubble is from it (straight down on
+	 * the line itself). Set as --sx on the bubble, and recalculated whenever the rows
+	 * scroll, the pane resizes or the bubbles change.
+	 */
+	const SHADOW_SPREAD = 4; // sideways offset (px) of a shadow for a bubble at the edge of the pane
+	let shadowFrame = 0;
+	function castShadows() {
+		if (!host) return;
+		const pane = host.getBoundingClientRect();
+		const mid = pane.left + pane.width / 2;
+		for (const el of host.querySelectorAll('.hv-rows [data-node]')) {
+			if (!(el instanceof HTMLElement)) continue;
+			const r = el.getBoundingClientRect();
+			if (r.right < pane.left - 300 || r.left > pane.right + 300) continue;
+			const t = Math.max(-1, Math.min(1, (r.left + r.width / 2 - mid) / (pane.width / 2)));
+			el.style.setProperty('--sx', `${(t * SHADOW_SPREAD).toFixed(1)}px`);
+		}
+	}
+	function scheduleShadows() {
+		cancelAnimationFrame(shadowFrame);
+		shadowFrame = requestAnimationFrame(castShadows);
+	}
+	$effect(() => {
+		if (!host) return;
+		const mo = new MutationObserver(scheduleShadows);
+		mo.observe(host, { childList: true, subtree: true });
+		scheduleShadows();
+		return () => mo.disconnect();
+	});
+
+	/**
 	 * Scroll a container to the middle of its row (the row's own scroller).
 	 * @param {Element} el
 	 */
@@ -407,7 +440,7 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="flex w-80 shrink-0 gap-2 rounded-md border border-taupe2 bg-taupe1 p-2 {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-violet/40 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(node.paragraph.id)} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-grey2' : '')}"
+		class="m-2 flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-2 py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(node.paragraph.id)} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -440,14 +473,14 @@
 		<div
 			data-gutter
 			class="sticky left-0 z-10 flex w-8 shrink-0 items-start justify-center border-r border-taupe2 pt-3 text-xs font-semibold text-grey1 select-none {tint ? 'bg-[color-mix(in_srgb,var(--c)_8%,var(--color-taupe1))]' : 'bg-taupe1'}"
-			title="Level {lvl}"
+			use:tip={`Level ${lvl}`}
 		>
 			{'#'.repeat(lvl)}
 		</div>
 
 		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
 			{#if front.length}
-				<div data-front class="flex h-full min-h-0 w-84 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-162 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-2 overflow-y-auto p-1">
+				<div data-front class="flex h-full min-h-0 w-86 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
 						{#if node.kind === 'paragraph'}{@render paragraphBubble(node, true)}{/if}
 					{/each}
@@ -479,7 +512,7 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {cursorLine(node.id)} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-grey2' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe2 text-dark hover:bg-grey1/30'}"
+						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {cursorLine(node.id)} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -523,7 +556,7 @@
 	{/if}
 {/snippet}
 
-<svelte:window onkeydown={onWindowKeydown} />
+<svelte:window onkeydown={onWindowKeydown} onresize={scheduleShadows} />
 
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
@@ -536,6 +569,8 @@
 	onpointerleave={(e) => pointerMoved(e) && gap.leave()}
 	onkeydown={onKeydown}
 	onfocusout={onFocusout}
+	onfocusin={scheduleShadows}
+	onscrollcapture={scheduleShadows}
 	ondragover={dragOver}
 	ondrop={drop}
 	ondragleave={(e) => {

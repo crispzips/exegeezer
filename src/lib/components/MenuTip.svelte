@@ -11,7 +11,7 @@
 {#if menuTip.text}
 	<div
 		role="tooltip"
-		class="pointer-events-none fixed z-50 w-max max-w-64 -translate-y-1/2 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+		class="pointer-events-none fixed z-50 w-max max-w-64 -translate-y-1/2 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg"
 		style="right: {innerWidth - menuTip.x + 8}px; top: clamp(14px, {menuTip.y}px, calc(100vh - 14px))"
 	>
 		<MinimapTooltip lines={[menuTip.text]} />

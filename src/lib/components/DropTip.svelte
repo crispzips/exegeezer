@@ -18,7 +18,7 @@
 	<div
 		bind:clientWidth={width}
 		role="tooltip"
-		class="pointer-events-none fixed z-50 rounded bg-dark px-2 py-1 text-xs text-taupe1 shadow-lg"
+		class="pointer-events-none fixed z-50 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg"
 		style="{flip ? `left: ${dd.x + 14}px` : `right: ${innerWidth - dd.x + 58}px`}; bottom: {innerHeight - dd.y - 6}px"
 	>
 		{dd.label}

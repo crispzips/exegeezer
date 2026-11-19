@@ -3,8 +3,9 @@
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
+    import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
@@ -38,7 +39,6 @@
                 askMatter();
             }
         }
-        open = false;
     }
 
     /** whether the text loaded in the preview is Markdown */
@@ -287,11 +287,11 @@
     /** @param {MouseEvent} e */
     function onDialogClick(e) {
         // A click on the dialog element itself (not its contents) is a backdrop click
-        if (e.target === dialogEl) dialogEl?.close();
+        // with a drop-down open, a click outside only closes the drop-down (the window's click handler does that)
+        if (e.target === dialogEl && !injectOpen) dialogEl?.close();
     }
 
     function onModalClosed() {
-        open = false;
         injectOpen = false;
         injectGap = null;
     }
@@ -323,9 +323,6 @@
         dialogEl?.close();
     }
 
-    let open = $state(false);
-        /** @type {HTMLDivElement | undefined} */
-        let importmenu;
 
     let injectOpen = $state(false);
         /** @type {HTMLDivElement | undefined} */
@@ -381,7 +378,6 @@
 
         function onWindowClick(e) {
             if (viewOpen && viewmenu && !viewmenu.contains(e.target)) viewOpen = false;
-            if (open && importmenu && !importmenu.contains(e.target)) open = false;
             if (injectOpen && injectmenu && !injectmenu.contains(e.target)) injectOpen = false;
         }
 </script>
@@ -496,30 +492,13 @@
     class="relative m-auto {paragraphs.length === 0 ? 'h-64 w-[min(92vw,26rem)]' : 'h-[80vh] w-[min(92vw,64rem)]'} overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
     <div class="flex shrink-0 items-start justify-between">
-        <!-- Load Text dropdown: centered until a text is loaded, then top-left -->
+        <!-- Load sources: each is its own button, centered until a text is loaded, then top-left -->
         <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-0 z-40 flex items-center justify-center' : 'inline-block'}>
-        <div class="pointer-events-auto relative z-50 inline-block" bind:this={importmenu}>
-            <button
-                onclick={() => (open = !open)}
-                aria-haspopup="menu"
-                aria-expanded={open}
-                class="inline-flex items-center gap-1 rounded-md bg-violet px-5 py-3 text-base font-medium text-white hover:bg-violet/90"
-            >
-                Load Text
-                <svg class="h-4 w-4 transition-transform {open ? 'rotate-180' : ''}" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M5.23 7.21a.75.75 0 011.06.02L10 11.17l3.71-3.94a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" />
-                </svg>
-            </button>
-
-            {#if open}
-                <div
-                    role="menu"
-                    class="absolute left-0 z-50 mt-2 w-max origin-top-left rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
-                >
-                    <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
-                </div>
-            {/if}
-        </div>
+            <div class="pointer-events-auto relative z-50 inline-flex gap-5">
+                <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
+                <SourceButton name="From Your Texts"><Swatch width={40} height={40} /></SourceButton>
+                <SourceButton name="From Other Exegeezers"><Mesh width={40} height={40} /></SourceButton>
+            </div>
         </div>
 
         <button
@@ -577,6 +556,5 @@
 </dialog>
 
 <svelte:window onclick={onWindowClick} onkeydown={(e) => {
-        if (e.key === 'Escape') open = false;
         onKeydown(e);
     }} />

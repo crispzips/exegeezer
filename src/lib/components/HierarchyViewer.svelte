@@ -1,6 +1,6 @@
 <script>
-	import { tick } from 'svelte';
-	import { buildSections } from '#lib/utilities/buildSections.js';
+	import { tick, untrack } from 'svelte';
+	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
 	import SplitPane from '#lib/components/SplitPane.svelte';
 	import HierarchyMinimap from '#lib/components/HierarchyMinimap.svelte';
 	import { colorSections } from '#lib/utilities/sectionColor.js';
@@ -10,7 +10,8 @@
 	import GapMenu from '#lib/components/GapMenu.svelte';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import DropTip from '#lib/components/DropTip.svelte';
-	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import MatterBubble from '#lib/components/MatterBubble.svelte';
+	import { DragDrop, locateGap, gapBox } from '#lib/utilities/dragDrop.svelte.js';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
@@ -27,6 +28,11 @@
 	 *
 	 * @type {{
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
+	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
+	 *   focusId?: string | null,
+	 *   onfocusitem?: (id: string) => void,
+	 *   startEditId?: string | null,
+	 *   onstartedit?: () => void,
 	 *   empty?: string,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
@@ -39,7 +45,7 @@
 	 * bubbles (a violet line) to move them there, or onto the first or second half of a
 	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
+	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -75,7 +81,13 @@
 	const pointerMoved = (e) => e.clientX !== lastX || e.clientY !== lastY;
 	const editHover = new EditHover();
 	const dd = new DragDrop();
-	const gap = new GapHover();
+	dd.gapBar = true;
+	/** while dragging over a gap: the interstitial space, drawn as a taupe3 bar */
+	const dropBar = $derived.by(() => {
+		const d = dd.drop;
+		return d && (d.place === 'before' || d.place === 'after') ? gapBox({ id: d.id, place: d.place }, 8) : null;
+	});
+	const gap = new GapHover({ nudge: true });
 
 	/**
 	 * Hovering the space between bubbles (or a bubble's thin edge) lights it magenta and
@@ -202,6 +214,47 @@
 	function setCursor(id, type) {
 		cursor = { type, id };
 	}
+
+	// ---- Synced with the other views: report the focused bubble, and open centred on the shared one ----
+	$effect(() => {
+		const c = cursor;
+		if (c && c.type !== 'gap') untrack(() => onfocusitem?.(c.id));
+	});
+	let revealed = false;
+	$effect(() => {
+		if (revealed || !host || tree.length === 0 || !focusId) return;
+		const id = untrack(() => focusId) ?? '';
+		const anc = ancestorsOf(tree, id);
+		if (!anc) return;
+		revealed = true;
+		const isSection = paragraphs.some((p) => p.id === id && (p.level ?? 0) > 0);
+		selected = isSection ? [...anc, id] : anc;
+		tick().then(() => {
+			selected.forEach((sid, d) => {
+				const el = host?.querySelector(`[data-row="${d}"] [data-node="${CSS.escape(sid)}"]`);
+				if (el) centreInRow(el);
+			});
+			cursor = { type: isSection ? 'section' : 'paragraph', id };
+			focusCursor();
+		});
+	});
+
+	// ---- A just-injected empty paragraph opens straight into editing, the cursor in its body ----
+	$effect(() => {
+		const id = startEditId;
+		void paragraphs.length;
+		if (!id || !onedit) return;
+		tick().then(() => {
+			const el = host?.querySelector(`.hv-rows [data-node="${CSS.escape(id)}"]`);
+			if (!(el instanceof HTMLElement)) return;
+			editHover.clear();
+			gap.clear();
+			editCaret = 0;
+			editing = id;
+			el.scrollIntoView({ block: 'center', inline: 'center' });
+			onstartedit?.();
+		});
+	});
 
 	/** Focus the cursor's bubble; in editing mode show the menu that hovering it would. */
 	function focusCursor() {
@@ -398,6 +451,12 @@
 			const el = host?.querySelector(`[data-row="${d}"] [data-node="${id}"]`);
 			if (el) centreInRow(el);
 		});
+		// the section the minimap went to becomes the focused one
+		const last = ids[ids.length - 1];
+		if (last) {
+			cursor = { type: 'section', id: last };
+			focusCursor();
+		}
 	}
 
 	/**
@@ -484,6 +543,8 @@
 		</div>
 
 		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
+			<!-- front matter: small bubbles, first in the top row -->
+			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
 				<div data-front class="flex h-full min-h-0 w-86 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
@@ -541,6 +602,8 @@
 			{:else}
 				{#if !front.length}<p class="self-center text-sm text-gray-500">{r.parent ? 'This section is empty.' : empty}</p>{/if}
 			{/each}
+			<!-- back matter: small bubbles, last in the top row -->
+			{#if d === 0 && matter}{#each matter.back as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 		</div>
 	</div>
 {/snippet}
@@ -567,6 +630,12 @@
 
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
+{#if dropBar}
+	{@const vertical = dropBar.width > dropBar.height}
+	<div class="pointer-events-none fixed z-40" style="left: {dropBar.left}px; top: {dropBar.top}px; width: {dropBar.width}px; height: {dropBar.height}px">
+		<div class="absolute rounded-full bg-taupe3 {vertical ? 'inset-x-0 top-1/2 h-1.5 -translate-y-1/2' : 'inset-y-0 left-1/2 w-1.5 -translate-x-1/2'}"></div>
+	</div>
+{/if}
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -596,6 +665,10 @@
 		{colors}
 		{selected}
 		onopen={openPath}
+		onjump={(id) => {
+			cursor = { type: 'section', id };
+			onfocusitem?.(id);
+		}}
 		layoutKey={selected.join('/')}
 		getHost={() => host ?? null}
 	/>

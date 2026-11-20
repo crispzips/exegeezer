@@ -1,7 +1,7 @@
 <script>
-	import { tick } from 'svelte';
+	import { tick, untrack } from 'svelte';
 	import { Minus, Plus } from '@boxicons/svelte';
-	import { buildSections } from '#lib/utilities/buildSections.js';
+	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
@@ -19,6 +19,9 @@
 	 *
 	 * @type {{
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
+	 *   onsettings?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect, focus: 'title' | 'text' }) => void,
+	 *   focusId?: string | null,
+	 *   onfocusitem?: (id: string) => void,
 	 *   empty?: string,
 	 *   exploded?: boolean,
 	 *   onmove?: (drop: { id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }) => void,
@@ -40,7 +43,7 @@
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined } = $props();
+	let { paragraphs, onsettings = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined } = $props();
 
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -138,6 +141,15 @@
 		await tick();
 		await new Promise((r) => setTimeout(r, 60));
 		host?.querySelector(`[data-node="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+		// the editing cursor goes straight into the new item: a paragraph's body, or a section's title
+		await new Promise((r) => setTimeout(r, 350));
+		if (kind === 'paragraph') {
+			await openModal(id, true);
+			bodyInput?.focus();
+		} else {
+			const from = bubbleRect(id);
+			if (from) onsettings?.({ id, kind: 'section', from, focus: 'title' });
+		}
 	}
 
 	/** drag attributes shared by every bubble: a bubble in a row moves along x, in a column along y
@@ -430,10 +442,24 @@
 	 * @param {number} depth @param {string} id @param {HTMLElement} el
 	 */
 	async function toggle(depth, id, el) {
+		onfocusitem?.(id);
 		selected = selected[depth] === id ? selected.slice(0, depth) : [...selected.slice(0, depth), id];
 		await tick();
 		reveal(el);
 	}
+
+	// ---- Synced with the other views: report the clicked bubble, and open centred on the shared one ----
+	let revealed = false;
+	$effect(() => {
+		if (revealed || !host || tree.length === 0 || !focusId) return;
+		const id = untrack(() => focusId) ?? '';
+		const anc = ancestorsOf(tree, id);
+		if (!anc) return;
+		revealed = true;
+		const isSection = paragraphs.some((p) => p.id === id && (p.level ?? 0) > 0);
+		selected = isSection ? [...anc, id] : anc;
+		tick().then(() => host?.querySelector(`[data-node="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: 'instant', block: 'center', inline: 'center' }));
+	});
 
 	/**
 	 * Open a section and every section around it (`ids`, outermost first), and bring it into view.
@@ -479,6 +505,8 @@
 	let draftBody = $state('');
 	/** @type {HTMLInputElement | undefined} */
 	let titleInput = $state();
+	/** @type {HTMLTextAreaElement | undefined} */
+	let bodyInput = $state();
 	/** the modal is a square this fraction of the window's shorter side, whatever the zoom */
 	const MODAL_FRACTION = 0.75;
 	const DURATION = 380;
@@ -691,7 +719,10 @@
 						tabindex="0"
 						role="button"
 						aria-label="Paragraph"
-						onclick={() => !onedit && openModal(pid)}
+						onclick={() => {
+							onfocusitem?.(pid);
+							if (!onedit) openModal(pid);
+						}}
 						ondblclick={onedit ? () => openModal(pid, true) : undefined}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
@@ -798,7 +829,7 @@
 					</label>
 					<label class="flex min-h-32 flex-1 flex-col gap-1 text-xs text-grey3">
 						Body
-						<textarea bind:value={draftBody} class="min-h-0 flex-1 resize-none rounded-xl border border-taupe3 bg-white/60 px-3 py-2 text-base leading-relaxed text-dark outline-none focus:border-grey2"></textarea>
+						<textarea bind:this={bodyInput} bind:value={draftBody} class="min-h-0 flex-1 resize-none rounded-xl border border-taupe3 bg-white/60 px-3 py-2 text-base leading-relaxed text-dark outline-none focus:border-grey2"></textarea>
 					</label>
 				</div>
 				<div class="mt-3 flex shrink-0 justify-center gap-2">

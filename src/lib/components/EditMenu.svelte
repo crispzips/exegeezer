@@ -1,6 +1,7 @@
 <script>
+	import { tick } from 'svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { ArrowInDownRightSquare, TrashX } from '@boxicons/svelte';
+	import { ArrowInDownRightSquare, FileCog, TrashX } from '@boxicons/svelte';
 
 	/**
 	 * The editor menu that floats above the paragraph or section under the pointer.
@@ -14,11 +15,12 @@
 	 *
 	 * @type {{
 	 *   hover: import('#lib/utilities/editHover.svelte.js').EditHover,
+	 *   inside?: boolean,
 	 *   ondelete: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
 	 */
-	let { hover, ondelete, onexpand = undefined } = $props();
+	let { hover, ondelete, onexpand = undefined, inside = false } = $props();
 
 	function expand() {
 		if (!target) return;
@@ -34,16 +36,23 @@
 	let menuEl = $state();
 	let pos = $state({ top: 0, left: 0 });
 
-	// Follow the target; close the drop-down when the target changes
+	// Follow the target; close the drop-down when the target changes. The item may grow to make room
+	// for the menu (`inside`), so it is measured once the page has settled.
 	$effect(() => {
 		if (!target) return;
 		menuOpen = false;
-		const r = target.el.getBoundingClientRect();
-		const h = menuEl?.offsetHeight ?? 32;
-		const w = menuEl?.offsetWidth ?? 40;
-		// above the item, aligned to its left edge (its right edge may be scrolled out of view);
-		// if there is no room above, overlap its top edge
-		pos = { top: Math.max(4, r.top - h), left: Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) };
+		const t = target;
+		tick().then(() => {
+			if (hover.target !== t) return;
+			const r = t.el.getBoundingClientRect();
+			const h = menuEl?.offsetHeight ?? 32;
+			const w = menuEl?.offsetWidth ?? 40;
+			// `inside`: stacked down the item's right-hand side, within its outline, so the pointer reaches it without leaving the item;
+			// otherwise above the item, aligned to its left edge (if there is no room above, overlapping its top edge)
+			pos = inside
+				? { top: Math.max(r.top + 4, 4), left: Math.max(4, Math.min(r.right - w - 4, window.innerWidth - w - 4)) }
+				: { top: Math.max(4, r.top - h), left: Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) };
+		});
 	});
 
 	/** @param {'only' | 'tree' | undefined} scope */
@@ -67,18 +76,18 @@
 		tabindex="-1"
 		onpointerenter={() => hover.hold()}
 		onpointerleave={() => hover.leave()}
-		class="fixed z-40 flex items-center gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
+		class="fixed z-40 flex {inside ? 'flex-col' : ''} items-center gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
 		style="top: {pos.top}px; left: {pos.left}px"
 	>
 		{#if onexpand}
 			<button
 				type="button"
-				aria-label={target.kind === 'section' ? 'Expand section' : 'Expand paragraph'}
-				use:tip={'Expand'}
+				aria-label={inside ? (target.kind === 'section' ? 'Section settings' : 'Paragraph settings') : target.kind === 'section' ? 'Expand section' : 'Expand paragraph'}
+				use:tip={inside ? 'Settings' : 'Expand'}
 				onclick={expand}
 				class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
 			>
-				<ArrowInDownRightSquare />
+				{#if inside}<FileCog />{:else}<ArrowInDownRightSquare />{/if}
 			</button>
 		{/if}
 		<div class="relative">

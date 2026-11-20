@@ -9,18 +9,47 @@ import { betterAuth } from 'better-auth/minimal';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
+import { count, isNull } from 'drizzle-orm';
+import { sendEmail } from '#lib/server/email.ts';
 import { db } from '#lib/server/db/index.js';
+import { text_, user } from '#lib/server/db/schema.js';
 
 export const auth = betterAuth({
 	baseURL: ORIGIN,
 	secret: BETTER_AUTH_SECRET,
 	database: drizzleAdapter(db, { provider: 'pg' }),
-	emailAndPassword: { enabled: true },
+	emailAndPassword: { enabled: true, requireEmailVerification: true },
+	emailVerification: {
+		sendOnSignUp: true,
+		sendOnSignIn: true,
+		autoSignInAfterVerification: true,
+		// better-auth builds the link; after clicking it the user lands in the app signed in
+		sendVerificationEmail: async ({ user, url }) => {
+			const link = url.replace(/callbackURL=[^&]*/, 'callbackURL=' + encodeURIComponent('/exejeeze'));
+			sendEmail({
+				to: user.email,
+				subject: 'Confirm your Exegeezer account',
+				text: `Hi ${user.name},\n\nConfirm your email to finish setting up Exegeezer:\n${link}\n\nIf you didn't sign up, ignore this message.`,
+				html: `<p>Hi ${user.name},</p><p><a href="${link}">Confirm your email</a> to finish setting up Exegeezer.</p><p>If you didn't sign up, ignore this message.</p>`
+			}).catch((e) => console.error('[email] failed to send verification email:', e.message));
+		}
+	},
 	socialProviders: {
 		google: { 
             clientId: GOOGLE_CLIENT_ID as string, 
             clientSecret: GOOGLE_CLIENT_SECRET as string, 
         }, 
+	},
+	databaseHooks: {
+		user: {
+			create: {
+				// the very first account adopts every text saved before accounts existed
+				after: async (created) => {
+					const [{ n }] = await db.select({ n: count() }).from(user);
+					if (n === 1) await db.update(text_).set({ userId: created.id }).where(isNull(text_.userId));
+				}
+			}
+		}
 	},
 	plugins: [
 		sveltekitCookies(getRequestEvent) // make sure this is the last plugin in the array

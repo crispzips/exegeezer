@@ -17,5 +17,11 @@ export const variables = defineEnvVars({
 	GOOGLE_CLIENT_SECRET: {
 		description:
 			'Google OAuth client secret. See [Better Auth Google provider](https://www.better-auth.com/docs/authentication/google).'
+	},
+	GMAIL_USER: {
+		description: 'Gmail address that sends confirmation emails.'
+	},
+	GMAIL_APP_PASSWORD: {
+		description: 'Google app password for GMAIL_USER (myaccount.google.com/apppasswords).'
 	}
 });

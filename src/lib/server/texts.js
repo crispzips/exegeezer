@@ -52,14 +52,16 @@ function owner(locals) {
 }
 
 /**
- * The text row if the requester may use it (its owner, or anyone when it has no owner).
+ * The text row if the requester may use it: only its owner (a signed-in user). Texts with no owner
+ * (saved before accounts existed) are reachable by nobody until someone claims them.
  * @param {string} id
  * @param {App.Locals} locals
  */
 async function accessible(id, locals) {
 	if (!UUID.test(id)) return null;
 	const [row] = await db.select().from(text_).where(eq(text_.id, id));
-	if (!row || (row.userId !== null && row.userId !== owner(locals))) return null;
+	const uid = owner(locals);
+	if (!row || !uid || row.userId !== uid) return null;
 	return row;
 }
 
@@ -70,7 +72,7 @@ async function accessible(id, locals) {
 export async function listTexts(locals) {
 	const uid = owner(locals);
 	return db
-		.select({ id: text_.id, title: text_.title, updatedAt: text_.updatedAt })
+		.select({ id: text_.id, title: text_.title, type: text_.type, createdAt: text_.createdAt, updatedAt: text_.updatedAt })
 		.from(text_)
 		.where(uid ? eq(text_.userId, uid) : isNull(text_.userId))
 		.orderBy(desc(text_.updatedAt));

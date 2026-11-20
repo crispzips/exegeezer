@@ -1,5 +1,6 @@
 <script>
     import { onMount, tick } from 'svelte';
+    import { EXAMPLE_ITEMS, EXAMPLE_TITLE } from '#lib/exampleText.js';
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
@@ -17,6 +18,10 @@
     import { History } from '#lib/utilities/history.svelte.js';
     import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
     import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
+
+    /** the layout's data: `user` is the signed-in user, or null (then the app shows the example text and nothing else works) */
+    let { data } = $props();
+    const authed = $derived(!!data.user);
 
     /** @type {{ name: string, text: string }[]} */
     let uploadedfiles = $state([]);
@@ -122,7 +127,10 @@
         try {
             const texts = await (await fetch('/api/texts')).json();
             if (!texts.length) return false;
-            const saved = await (await fetch(`/api/texts/${texts[0].id}`)).json();
+            // ?text=<id> (from the profile page) picks which text to open; otherwise the most recent
+            const wanted = new URLSearchParams(location.search).get('text');
+            const pick = texts.find((/** @type {any} */ t) => t.id === wanted) ?? texts[0];
+            const saved = await (await fetch(`/api/texts/${pick.id}`)).json();
             textId = saved.id;
             markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
             textTitle = saved.title;
@@ -163,6 +171,13 @@
     });
 
     onMount(async () => {
+        if (!authed) {
+            // signed out: the example text, read-only; nothing is loaded or saved (`ready` stays false)
+            textTitle = EXAMPLE_TITLE;
+            markdown = true;
+            mainText = EXAMPLE_ITEMS.map((p) => ({ ...p }));
+            return;
+        }
         if (!(await loadSaved())) {
             const load = Object.values(dissertationFiles)[0];
             if (load) {
@@ -339,6 +354,7 @@
     let dialogEl;
 
     function openModal() {
+        if (!authed) return;
         injectGap = null;
         dialogEl?.showModal();
     }
@@ -430,7 +446,10 @@
     const noText = $derived(ready && mainText.length === 0);
     $effect(() => {
         if (noText) mode = 'editing';
+        else if (!authed) mode = 'reading';
     });
+    /** the mode button is locked when there is no text (editing only) or nobody is signed in (reading only) */
+    const modeLocked = $derived(noText || !authed);
 
     // The mode icon changes with a horizontal wipe: the new icon is revealed left to right
     // while the old one is wiped away in the same direction.
@@ -441,7 +460,7 @@
 
     /** the triple toggle (editing, reading, commenting): each click moves to the next mode */
     function cycleMode() {
-        if (noText) return;
+        if (modeLocked) return;
         mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
     }
 
@@ -491,6 +510,11 @@
         <header class="flex shrink-0 items-center gap-2 border-b border-taupe2 bg-taupe1 px-6 py-2 text-dark">
             <Scroll class="shrink-0" />
             <h1 class="truncate text-lg font-semibold" title={textTitle}>{textTitle}</h1>
+            {#if !authed}
+                <span class="ml-auto flex shrink-0 items-center gap-3 text-sm text-grey3">
+                    <span class="hidden sm:inline">You're viewing an example text.</span>
+                </span>
+            {/if}
         </header>
         <div class="min-h-0 flex-1">
         {#if view === 'linear'}
@@ -508,8 +532,9 @@
         <button
             onclick={openModal}
             aria-label="Load text"
-            use:tip={'Load text'}
-            class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+            aria-disabled={!authed}
+            use:tip={authed ? 'Load text' : 'Load text (sign in first)'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
         >
             <ArrowOutDownCircleHalf />
         </button>
@@ -593,9 +618,9 @@
         <button
             onclick={cycleMode}
             aria-label="Mode"
-            use:tip={noText ? 'Editing mode (no text is loaded)' : `${mode[0].toUpperCase() + mode.slice(1)} mode`}
-            aria-disabled={noText}
-            class="inline-grid items-center justify-center rounded-md p-1 text-dark {noText ? 'cursor-not-allowed opacity-60' : 'hover:bg-taupe2'}"
+            use:tip={!authed ? 'Reading mode (sign in to edit)' : noText ? 'Editing mode (no text is loaded)' : `${mode[0].toUpperCase() + mode.slice(1)} mode`}
+            aria-disabled={modeLocked}
+            class="inline-grid items-center justify-center rounded-md p-1 text-dark {modeLocked ? 'cursor-not-allowed opacity-60' : 'hover:bg-taupe2'}"
         >
             {#key mode}
                 <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">

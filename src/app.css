@@ -8,6 +8,9 @@ body {
 /* `static` always emits every theme colour as a CSS variable, not only the ones
    used by a Tailwind class (the synopsis blips read the accents via var()). */
 @theme static {
+  /* Bubbly-square icons: radius as a share of the side, so the shape is the same at any size.
+     Use `rounded-bubble` on any square icon tile. */
+  --radius-bubble: 37.5%;
   --font-sans: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
   --color-dark: #002b36;
   --color-lessdark: #073642;
@@ -55,3 +58,6 @@ body {
 .md hr { border: 0; border-top: 1px solid var(--color-taupe2); }
 .md .footnote-ref { color: var(--color-violet); cursor: help; }
 .md p + p { margin-top: 0.5rem; }
+
+/* every icon is drawn in taupe5 (the icons paint with currentColor) */
+svg[fill="currentColor"] { color: var(--color-taupe5); }

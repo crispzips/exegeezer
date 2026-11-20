@@ -112,6 +112,8 @@ export const text_ = pgTable(
     // null = not tied to an account
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
     title: text("title").notNull().default("Untitled"),
+    // 'original' or 'commentary'
+    type: text("type").notNull().default("original"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

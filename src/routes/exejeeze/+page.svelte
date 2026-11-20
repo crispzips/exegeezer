@@ -3,10 +3,11 @@
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
+    import CascadingViewer from '#lib/components/CascadingViewer.svelte';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
@@ -358,19 +359,21 @@
     /** Bring a section (the last of `ids`, outermost first) into view in the current view. */
     /** @param {string[]} ids */
     async function goToSection(ids) {
-        if (view === 'hierarchical') return void hierarchy?.openPath(ids);
+        if (view !== 'linear') return void hierarchy?.openPath(ids);
         await tick();
         mainPane?.querySelector(`[data-para="${CSS.escape(ids[ids.length - 1])}"]`)?.scrollIntoView({ block: 'start' });
     }
 
     // ---- Main pane view menu ----
-    /** @type {'linear' | 'hierarchical'} */
+    /** @type {'linear' | 'hierarchical' | 'cascading'} */
     let view = $state('linear');
     let viewOpen = $state(false);
+    /** cascading view only: every section open at once, zoomed all the way out, colours only */
+    let exploded = $state(false);
         /** @type {HTMLDivElement | undefined} */
         let viewmenu;
 
-    /** @param {'linear' | 'hierarchical'} v */
+    /** @param {'linear' | 'hierarchical' | 'cascading'} v */
     function chooseView(v) {
         view = v;
         viewOpen = false;
@@ -387,6 +390,8 @@
     <div class="min-w-0 flex-1" bind:this={mainPane}>
         {#if view === 'linear'}
             <ParagraphViewer paragraphs={mainText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+        {:else if view === 'cascading'}
+            <CascadingViewer bind:this={hierarchy} {exploded} paragraphs={mainText} empty="No main text yet." />
         {:else}
             <HierarchyViewer bind:this={hierarchy} paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
@@ -441,9 +446,34 @@
                     >
                         <Sitemap />
                     </button>
+                    <button
+                        role="menuitemradio"
+                        aria-checked={view === 'cascading'}
+                        aria-label="Cascading"
+                        use:tip={'Cascading'}
+                        onclick={() => chooseView('cascading')}
+                        class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'cascading' ? 'bg-taupe2' : ''}"
+                    >
+                        <StepsDown />
+                    </button>
                 </div>
             {/if}
         </div>
+
+        {#if view === 'cascading'}
+            <!-- View-particular settings: shown under the view button, only in this view -->
+            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
+                <button
+                    onclick={() => (exploded = !exploded)}
+                    aria-label={exploded ? 'Unexplode' : 'Explode'}
+                    aria-pressed={exploded}
+                    use:tip={exploded ? 'Unexplode' : 'Explode'}
+                    class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {exploded ? 'bg-taupe2' : ''}"
+                >
+                    {#if exploded}<Explosion />{:else}<Bomb />{/if}
+                </button>
+            </div>
+        {/if}
 
         <button
             onclick={() => (mapOpen = true)}

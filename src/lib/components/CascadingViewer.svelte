@@ -3,6 +3,8 @@
 	import { Minus, Plus } from '@boxicons/svelte';
 	import { buildSections } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
+	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
+	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * Cascading view: every bubble is the same size and sits in one grid, inside one container.
@@ -42,6 +44,8 @@
 	/** @typedef {import('#lib/utilities/buildSections.js').SectionChild} SectionChild */
 
 	let tree = $derived(buildSections(paragraphs));
+	/** footnote and reference definitions shared by every paragraph */
+	let defs = $derived(definitionsOf(paragraphs));
 	/** section id -> colour */
 	let colors = $derived.by(() => {
 		// every section takes its top-level section's accent, undarkened at any depth
@@ -293,6 +297,121 @@
 		reveal(host?.querySelector(`[data-node="${CSS.escape(ids[ids.length - 1] ?? '')}"]`));
 	}
 
+	// ---- Reading modal ----
+	/** every paragraph in document order, with its section's colour (for previous / next in the modal) */
+	let flat = $derived.by(() => {
+		/** @type {{ id: string, text: string, index: string | number, color: string, path: string[] }[]} */
+		const out = [];
+		/** @param {SectionChild[]} list @param {string} color @param {string[]} path the sections around the list, outermost first */
+		const walk = (list, color, path) => {
+			for (const n of list) {
+				if (n.kind === 'section') walk(n.children, colors.get(n.id) ?? color, [...path, n.id]);
+				else out.push({ id: n.paragraph.id, text: n.paragraph.text, index: n.paragraphIndex, color, path });
+			}
+		};
+		walk(tree, 'var(--color-taupe3)', []);
+		return out;
+	});
+
+	/** paragraph id -> its text as HTML with hoverable footnote marks (only paragraphs that have any) */
+	let notes = $derived(new Map(flat.flatMap((f) => { const html = renderFootnoteMarks(f.text, defs, f.id); return html ? [[f.id, html]] : []; })));
+
+	/** the paragraph shown in the modal (its id), or null */
+	/** @type {string | null} */
+	let openId = $state(null);
+	let current = $derived(flat.find((f) => f.id === openId) ?? null);
+	let currentIdx = $derived(flat.findIndex((f) => f.id === openId));
+	/** @type {HTMLDivElement | undefined} */
+	let panel = $state();
+	let closing = false;
+	/** the modal is a square this fraction of the window's shorter side, whatever the zoom */
+	const MODAL_FRACTION = 0.75;
+	const DURATION = 380;
+	/** the modal's size, from the window rather than the bubble */
+	let modalW = $state(0);
+	let modalH = $state(0);
+	/** the bubble's corner radius (5rem on a SIZE bubble) kept in proportion at the modal's size */
+	let modalRadius = $derived((Math.min(modalW, modalH) * 80) / SIZE);
+	let modalPad = $derived(modalRadius * 0.4);
+
+	/** the text scrolls; an ellipsis shows at the foot while there is more below */
+	/** @type {HTMLDivElement | undefined} */
+	let textBox = $state();
+	let more = $state(false);
+	function measureMore() {
+		if (!textBox) return;
+		more = textBox.scrollTop + textBox.clientHeight < textBox.scrollHeight - 2;
+	}
+	$effect(() => {
+		// re-measure when the text or the modal's size changes
+		void [current?.id, modalW, modalH, textBox];
+		if (!textBox) return;
+		textBox.scrollTop = 0;
+		tick().then(measureMore);
+	});
+
+	/** @param {string} id */
+	function bubbleRect(id) {
+		return host?.querySelector(`[data-node="${CSS.escape(id)}"]`)?.getBoundingClientRect() ?? null;
+	}
+
+	/** Grow or shrink the panel between the bubble's rectangle and its own. @param {DOMRect | null} from @param {boolean} reverse */
+	function morph(from, reverse) {
+		if (!panel) return Promise.resolve();
+		const to = panel.getBoundingClientRect();
+		const frames = from
+			? [
+					{ transform: `translate(${from.left + from.width / 2 - (to.left + to.width / 2)}px, ${from.top + from.height / 2 - (to.top + to.height / 2)}px) scale(${from.width / to.width}, ${from.height / to.height})`, opacity: 0.6 },
+					{ transform: 'none', opacity: 1 }
+				]
+			: [{ transform: 'scale(0.6)', opacity: 0 }, { transform: 'none', opacity: 1 }];
+		const a = panel.animate(reverse ? frames.reverse() : frames, { duration: DURATION, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)', fill: 'both' });
+		return a.finished.catch(() => {});
+	}
+
+	/** @param {string} id */
+	async function openModal(id) {
+		if (openId) return;
+		const from = bubbleRect(id);
+		modalW = modalH = Math.min(window.innerWidth, window.innerHeight) * MODAL_FRACTION;
+		closing = false;
+		openId = id;
+		await tick();
+		panel?.focus();
+		morph(from, false);
+	}
+
+	async function closeModal() {
+		if (!openId || closing) return;
+		closing = true;
+		// open the sections around the paragraph and bring its bubble into view, so the modal shrinks into it
+		if (current) {
+			selected = current.path;
+			await tick();
+			host?.querySelector(`[data-node="${CSS.escape(openId)}"]`)?.scrollIntoView({ behavior: 'instant', block: 'nearest', inline: 'nearest' });
+			await tick();
+		}
+		await morph(bubbleRect(openId), true);
+		openId = null;
+		closing = false;
+	}
+
+	/** @param {number} dir */
+	function step(dir) {
+		const next = flat[currentIdx + dir];
+		if (next) openId = next.id;
+	}
+
+	/** @param {KeyboardEvent} e */
+	function onkeydown(e) {
+		if (!openId) return;
+		if (e.key === 'Escape') closeModal();
+		else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') step(-1);
+		else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') step(1);
+		else return;
+		e.preventDefault();
+	}
+
 	/** Split a section title at its first colon: the title keeps the colon, the rest is the subtitle. @param {string} text */
 	function splitTitle(text) {
 		const i = text.indexOf(':');
@@ -365,7 +484,7 @@
 						aria-expanded={p.open}
 						{style}
 						onclick={(e) => toggle(p.depth, node.id, e.currentTarget)}
-						class="absolute flex flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-8 border-(--c) px-6 py-4 text-center text-dark transition-[left,top] focus:outline-8 focus:-outline-offset-8 focus:outline-taupe0 {p.open
+						class="absolute flex flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-8 border-(--c) px-6 py-4 text-center text-dark transition-[left,top] focus:outline-none {p.open
 							? 'bg-[color-mix(in_srgb,var(--c)_28%,var(--color-taupe1))] font-semibold'
 							: 'bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] hover:bg-[color-mix(in_srgb,var(--c)_20%,var(--color-taupe1))]'}"
 					>
@@ -379,16 +498,24 @@
 						</svg>
 					</button>
 				{:else}
+					{@const pid = p.node.paragraph.id}
 					<div
-						data-node={p.node.paragraph.id}
+						data-node={pid}
 						tabindex="0"
-						role="group"
+						role="button"
 						aria-label="Paragraph"
+						onclick={() => openModal(pid)}
+						onkeydown={(e) => {
+							if (e.key === 'Enter' || e.key === ' ') {
+								e.preventDefault();
+								openModal(pid);
+							}
+						}}
 						{style}
-						class="absolute flex flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-8 focus:-outline-offset-8 focus:outline-taupe0"
+						class="absolute flex cursor-pointer flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none"
 					>
 						<span class="mb-3 text-xs text-gray-500">{p.node.paragraphIndex}</span>
-						<p class="whitespace-pre-wrap">{p.node.paragraph.text}</p>
+						<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
 					</div>
 				{/if}
 			{/each}
@@ -402,3 +529,29 @@
 		</div>
 	{/if}
 </div>
+
+<svelte:window {onkeydown} />
+
+<FootnoteTip />
+
+{#if current}
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-dark/40" role="presentation" onclick={(e) => e.target === e.currentTarget && closeModal()}>
+		<div
+			bind:this={panel}
+			role="dialog"
+			aria-modal="true"
+			aria-label="Paragraph {current.index}"
+			tabindex="-1"
+			style="width:{modalW}px;height:{modalH}px;border-radius:{modalRadius}px;padding:{modalPad}px;--c:{current.color}"
+			class="relative flex flex-col overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
+		>
+			<span class="mb-4 text-center text-sm text-gray-500">{current.index}</span>
+			<div bind:this={textBox} onscroll={measureMore} class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+				<p class="md whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html notes.get(current.id)}{:else}{current.text}{/if}</p>
+			</div>
+			{#if more}
+				<div class="pointer-events-none -mt-8 h-8 shrink-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] to-transparent text-center text-xl leading-8 text-grey2" aria-hidden="true">…</div>
+			{/if}
+		</div>
+	</div>
+{/if}

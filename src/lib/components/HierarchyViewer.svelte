@@ -15,6 +15,8 @@
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
+	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
+	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -139,6 +141,8 @@
 	let host = $state();
 
 	let tree = $derived(buildSections(paragraphs));
+	/** footnote and reference definitions shared by every paragraph */
+	let defs = $derived(definitionsOf(paragraphs));
 
 	/** section id -> colour (top-level sections cycle the accents, deeper ones darken) */
 	let colors = $derived(colorSections(tree));
@@ -449,7 +453,8 @@
 				class="flex-1 whitespace-pre-wrap outline-none"
 			></p>
 		{:else}
-			<p class="flex-1 whitespace-pre-wrap">{#if node.paragraph.text}{node.paragraph.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+			{@const withNotes = node.paragraph.text ? renderFootnoteMarks(node.paragraph.text, defs, node.paragraph.id) : null}
+			<p class="md flex-1 whitespace-pre-wrap">{#if withNotes}{@html withNotes}{:else if node.paragraph.text}{node.paragraph.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
 		{/if}
 	</div>
 {/snippet}
@@ -557,6 +562,8 @@
 {/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} onresize={scheduleShadows} />
+
+<FootnoteTip />
 
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />

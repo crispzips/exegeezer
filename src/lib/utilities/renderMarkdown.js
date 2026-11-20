@@ -134,3 +134,28 @@ export function renderMarkdown(text, definitions, scope) {
 		numbers: definitions?.numbers
 	});
 }
+
+/**
+ * A paragraph's text for the views that show plain text: everything is shown as written
+ * (escaped, line breaks kept) except the footnote marks, which become hoverable `.footnote-ref`
+ * marks carrying their note. Returns null when the text has no footnote mark to show.
+ * @param {string} text
+ * @param {Definitions} definitions from definitionsOf
+ * @param {string} [scope] makes this render's ids unique (the paragraph's id)
+ * @returns {string | null}
+ */
+export function renderFootnoteMarks(text, definitions, scope) {
+	if (DEFINITION.test(text)) return null;
+	let html = '';
+	let last = 0;
+	let found = false;
+	for (const m of text.matchAll(FOOTNOTE_MARK)) {
+		if (!definitions.defs.has(`^${m[1].toLowerCase()}`)) continue;
+		const mark = /<sup class="footnote-ref".*?<\/sup>/s.exec(renderMarkdown(m[0], definitions, scope));
+		if (!mark) continue;
+		html += md.utils.escapeHtml(text.slice(last, m.index)) + mark[0];
+		last = m.index + m[0].length;
+		found = true;
+	}
+	return found ? html + md.utils.escapeHtml(text.slice(last)) : null;
+}

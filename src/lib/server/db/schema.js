@@ -124,6 +124,9 @@ export const text_ = pgTable(
 export const paragraph = pgTable("paragraph", {
   id: uuid("id").primaryKey().defaultRandom(),
   body: text("body").notNull(),
+  // optional short title and longer description of the paragraph (null = none)
+  title: text("title"),
+  description: text("description"),
 });
 
 export const section = pgTable("section", {

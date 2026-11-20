@@ -5,7 +5,8 @@ import { paragraph, section, text_, textItem } from '#lib/server/db/schema.js';
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
  * paragraph; a level of 1-6 is a section header (`text` is "## Title").
- * @typedef {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean }} Item
+ * Paragraphs may also carry an optional `title` and `description`.
+ * @typedef {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean, title?: string, description?: string }} Item
  */
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -23,11 +24,21 @@ export function parseItems(raw) {
 	const items = [];
 	for (const it of raw) {
 		if (!it || typeof it !== 'object') return null;
-		const { id, text, level, frontmatter, backmatter } = /** @type {Record<string, unknown>} */ (it);
+		const { id, text, level, frontmatter, backmatter, title, description } = /** @type {Record<string, unknown>} */ (it);
 		if (typeof id !== 'string' || !UUID.test(id) || seen.has(id)) return null;
 		if (typeof text !== 'string' || !Number.isInteger(level) || /** @type {number} */ (level) < 0 || /** @type {number} */ (level) > 6) return null;
 		seen.add(id);
-		items.push({ id, text, level: /** @type {number} */ (level), frontmatter: frontmatter === true, backmatter: backmatter === true });
+		if ((title !== undefined && typeof title !== 'string') || (description !== undefined && typeof description !== 'string')) return null;
+		items.push({
+			id,
+			text,
+			level: /** @type {number} */ (level),
+			frontmatter: frontmatter === true,
+			backmatter: backmatter === true,
+			// only paragraphs have them; empty means none
+			...(level === 0 && title ? { title: /** @type {string} */ (title) } : {}),
+			...(level === 0 && description ? { description: /** @type {string} */ (description) } : {})
+		});
 	}
 	return items;
 }
@@ -79,6 +90,8 @@ export async function loadText(id, locals) {
 			paragraphId: textItem.paragraphId,
 			sectionId: textItem.sectionId,
 			body: paragraph.body,
+			paragraphTitle: paragraph.title,
+			description: paragraph.description,
 			title: section.title,
 			level: textItem.level,
 			frontmatter: textItem.frontmatter,
@@ -93,7 +106,13 @@ export async function loadText(id, locals) {
 	const items = rows.map((r) =>
 		r.sectionId
 			? { id: r.sectionId, text: `${'#'.repeat(r.level ?? 1)} ${r.title}`, level: r.level ?? 1, frontmatter: r.frontmatter ?? false, backmatter: r.backmatter ?? false }
-			: { id: /** @type {string} */ (r.paragraphId), text: r.body ?? '', level: 0 }
+			: {
+					id: /** @type {string} */ (r.paragraphId),
+					text: r.body ?? '',
+					level: 0,
+					...(r.paragraphTitle ? { title: r.paragraphTitle } : {}),
+					...(r.description ? { description: r.description } : {})
+				}
 	);
 	return { id: row.id, title: row.title, items };
 }
@@ -121,7 +140,7 @@ async function writeItems(id, items) {
 
 		await tx.delete(textItem).where(eq(textItem.textId, id));
 
-		const paragraphs = items.filter((i) => i.level === 0).map((i) => ({ id: i.id, body: i.text }));
+		const paragraphs = items.filter((i) => i.level === 0).map((i) => ({ id: i.id, body: i.text, title: i.title ?? null, description: i.description ?? null }));
 		const sections = items.filter((i) => i.level > 0).map((i) => ({ id: i.id, title: i.text.replace(/^#{1,6}\s*/, '') }));
 		const arranged = items.map((i, position) => ({
 			textId: id,
@@ -139,7 +158,7 @@ async function writeItems(id, items) {
 			const rows = paragraphs.slice(k, k + CHUNK);
 			const own = rows.filter((r) => hadParagraphs.has(r.id));
 			const rest = rows.filter((r) => !hadParagraphs.has(r.id));
-			if (own.length) await tx.insert(paragraph).values(own).onConflictDoUpdate({ target: paragraph.id, set: { body: sql`excluded.body` } });
+			if (own.length) await tx.insert(paragraph).values(own).onConflictDoUpdate({ target: paragraph.id, set: { body: sql`excluded.body`, title: sql`excluded.title`, description: sql`excluded.description` } });
 			if (rest.length) await tx.insert(paragraph).values(rest).onConflictDoNothing();
 		}
 		for (let k = 0; k < sections.length; k += CHUNK) {

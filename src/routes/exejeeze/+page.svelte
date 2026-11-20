@@ -15,6 +15,7 @@
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
+    import { withoutMatter } from '#lib/utilities/matter.js';
     import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** @type {{ name: string, text: string }[]} */
@@ -94,8 +95,17 @@
     /** saves run one after another */
     let queue = Promise.resolve();
 
-    /** @param {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean }[]} list */
-    const toItems = (list) => list.map(({ id, text, level, frontmatter, backmatter }) => ({ id, text, level, frontmatter: !!frontmatter, backmatter: !!backmatter }));
+    /** @param {{ id: string, text: string, level: number, frontmatter?: boolean, backmatter?: boolean, title?: string, description?: string }[]} list */
+    const toItems = (list) =>
+        list.map(({ id, text, level, frontmatter, backmatter, title, description }) => ({
+            id,
+            text,
+            level,
+            frontmatter: !!frontmatter,
+            backmatter: !!backmatter,
+            ...(level === 0 && title ? { title } : {}),
+            ...(level === 0 && description ? { description } : {})
+        }));
 
     /** Show the most recently changed saved text, if there is one. */
     async function loadSaved() {
@@ -162,6 +172,8 @@
     /** The main text shown in the main pane */
     /** @type {{ id: string, originalIndex: number, text: string, level: number }[]} */
     let mainText = $state([]);
+    /** the text as the views show it: front and back matter stay in the data but are never drawn or compared */
+    const shownText = $derived(withoutMatter(mainText));
 
     // ---- Undo / redo: one step per edit; kept for the whole session (not reset by changing mode) ----
     /** @type {History<typeof mainText>} */
@@ -254,9 +266,9 @@
         commit(applyDrop(mainText, drop, view === 'linear'));
     }
 
-    /** @param {{ id: string, text: string }} edit */
-    function editParagraph({ id, text }) {
-        commit(mainText.map((p) => (p.id === id ? { ...p, text } : p)));
+    /** @param {{ id: string, text: string, title?: string, description?: string }} edit only the fields given change */
+    function editParagraph({ id, ...fields }) {
+        commit(mainText.map((p) => (p.id === id ? { ...p, ...fields } : p)));
     }
 
     // ---- Editing: inject at an interstitial landing zone ----
@@ -274,6 +286,33 @@
             injectGap = gap;
             dialogEl?.showModal();
         }
+    }
+
+    /**
+     * Add an empty paragraph or section at a gap (the cascading view's plus). A new section's
+     * level is its sibling's, or one below the section the gap is inside (1 at the top);
+     * like any header it takes in what follows it up to the next header of its level or higher.
+     * @param {{ targetId: string, place: 'before' | 'after', kind: 'paragraph' | 'section' }} req
+     * @returns {string | undefined} the new item's id (the view centres its bubble)
+     */
+    function addAtGap({ targetId, place, kind }) {
+        const at = gapIndex(mainText, targetId, place, false);
+        if (at === -1) return;
+        /** @type {{ id: string, originalIndex: number, text: string, level: number }} */
+        let item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
+        if (kind === 'section') {
+            let level = 1;
+            for (let k = mainText.findIndex((p) => p.id === targetId); k >= 0; k--) {
+                const lv = mainText[k].level ?? 0;
+                if (lv > 0) {
+                    level = Math.min(6, k === mainText.findIndex((p) => p.id === targetId) ? lv : lv + 1);
+                    break;
+                }
+            }
+            item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
+        }
+        commit(insertAt(mainText, at, [item]));
+        return item.id;
     }
 
     // ---- Load Text modal ----
@@ -306,7 +345,7 @@
     function inject(where) {
         if (paragraphs.length === 0) return;
         // Copy with fresh ids so keys stay unique if the same text is injected twice
-        const added = paragraphs.map((p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}) }));
+        const added = paragraphs.map((/** @type {any} */ p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}), ...(p.title ? { title: p.title } : {}), ...(p.description ? { description: p.description } : {}) }));
         const combined =
             injectGap !== null
                 ? insertAt(mainText, injectGap, added)
@@ -389,11 +428,11 @@
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="min-w-0 flex-1" bind:this={mainPane}>
         {#if view === 'linear'}
-            <ParagraphViewer paragraphs={mainText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer paragraphs={shownText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'cascading'}
-            <CascadingViewer bind:this={hierarchy} {exploded} paragraphs={mainText} empty="No main text yet." />
+            <CascadingViewer bind:this={hierarchy} {exploded} paragraphs={shownText} empty="No main text yet." onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer bind:this={hierarchy} paragraphs={mainText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer bind:this={hierarchy} paragraphs={shownText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
     </div>
 
@@ -509,7 +548,7 @@
 
 <MenuTip />
 <ConfirmDialog bind:request={deleteRequest} />
-<MapModal bind:open={mapOpen} title={textTitle} paragraphs={mainText} onnavigate={goToSection} />
+<MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={uploadedfiles.at(-1)?.name.replace(/\.[^.]+$/, '') ?? ''} paragraphs={paragraphs} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 

@@ -24,10 +24,20 @@
     /** @type {{ id: string, originalIndex: number, text: string, level: number }[]} */
     let paragraphs = $state([]);
 
+    /** where the text in the preview came from: this computer, another exegeezer, or the user's own texts */
+    /** @type {'computer' | 'others' | 'own'} */
+    let loadSource = $state('computer');
+    /** the loaded file's name without its extension (names the new text and the ORIGINAL-- copy) */
+    let loadName = $state('');
+    /** the import question: keep an unaltered copy of the incoming text in the user's own texts (as `ORIGINAL--<name>`)? */
+    let keepCopy = $state(false);
+
     // Runs after a file is loaded: split the newest file into paragraphs
     function onFileLoaded() {
         const latest = uploadedfiles[uploadedfiles.length - 1];
         if (latest) {
+            loadSource = 'computer';
+            loadName = latest.name.replace(/\.[^.]+$/, '');
             // Markdown: drop the table of contents and its {#anchor} header links first
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
             previewMarkdown = isMarkdown;
@@ -340,10 +350,24 @@
      * Add the loaded text (the paragraphs in the preview) to the main text.
      * If the main text is empty, the loaded text simply becomes the main text.
      * 'replace' discards the existing main text and uses the loaded text instead.
+     *
+     * When the import makes a new text (the main text is empty, or it is replaced, and the
+     * text is not going into a gap), the new text is named after the incoming file (without its
+     * extension), and the old saved text is left as it is. If the user asked to keep an original
+     * copy, the unaltered incoming text is first saved as its own text called `ORIGINAL--<name>`.
      * @param {'prepend' | 'append' | 'replace'} where
      */
-    function inject(where) {
+    async function inject(where) {
         if (paragraphs.length === 0) return;
+        if (keepCopy && loadSource !== 'own') {
+            try {
+                await saveOriginalCopy();
+            } catch (err) {
+                console.warn('Could not save the original copy', err);
+                if (!confirm('The original copy could not be saved. Import the text anyway?')) return;
+            }
+        }
+        const makesNewText = injectGap === null && (mainText.length === 0 || where === 'replace');
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((/** @type {any} */ p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}), ...(p.title ? { title: p.title } : {}), ...(p.description ? { description: p.description } : {}) }));
         const combined =
@@ -354,8 +378,15 @@
                 : where === 'prepend'
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
+        if (makesNewText) {
+            // a new text: saved under the incoming file's name on the next autosave
+            textId = null;
+            textTitle = loadName || 'Untitled';
+            lastSaved = '';
+        }
         commit(combined.map((p, i) => ({ ...p, originalIndex: i })));
         if (previewMarkdown) markdown = true;
+        keepCopy = false; // asked afresh for every import
 
         // Reset the load pane: drop the loaded text and close the modal
         paragraphs = [];
@@ -363,6 +394,17 @@
         dialogEl?.close();
     }
 
+
+    /** Save the loaded text, unaltered, as a text of its own named `ORIGINAL--<file name>` (fresh ids, so it shares nothing with the working text). */
+    async function saveOriginalCopy() {
+        const items = toItems(paragraphs.map((/** @type {any} */ p) => ({ ...p, id: crypto.randomUUID() })));
+        const res = await fetch('/api/texts', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ title: `ORIGINAL--${loadName}`, items })
+        });
+        if (!res.ok) throw new Error(`${res.status}`);
+    }
 
     let injectOpen = $state(false);
         /** @type {HTMLDivElement | undefined} */
@@ -549,7 +591,7 @@
 <MenuTip />
 <ConfirmDialog bind:request={deleteRequest} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
-<MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={uploadedfiles.at(-1)?.name.replace(/\.[^.]+$/, '') ?? ''} paragraphs={paragraphs} />
+<MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 
 <!-- Load Text modal -->
@@ -587,6 +629,15 @@
                 Preview{#if injectGap !== null}<span class="ml-2 font-normal text-grey3">— will be injected at the chosen location</span>{/if}
             </h2>
 
+            <div class="flex items-center gap-4">
+            <!-- the import question (not asked for the user's own texts) -->
+            {#if loadSource !== 'own'}
+                <label class="flex items-center gap-1.5 text-xs text-dark" title="Saves an unaltered copy of the incoming text in your texts as ORIGINAL--{loadName}">
+                    <input type="checkbox" bind:checked={keepCopy} class="accent-violet" />
+                    Keep an original copy in my texts
+                </label>
+            {/if}
+
             <!-- Inject Loaded Text dropdown -->
             <div class="relative" bind:this={injectmenu}>
                 <button
@@ -614,6 +665,7 @@
                         <button role="menuitem" onclick={() => inject('replace')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Replace</button>
                     </div>
                 {/if}
+            </div>
             </div>
         </header>
 

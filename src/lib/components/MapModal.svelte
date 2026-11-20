@@ -205,11 +205,75 @@
 	 * @param {number} x the bubble's centre, in map units
 	 */
 	const SHADOW_SPREAD = 4; // sideways offset (px) at the edge of the pane
-	function shadow(x) {
+	/** @param {number} x @param {string} [color] @param {number} [dy] @param {number} [blur] */
+	function shadow(x, color = 'var(--color-taupe4)', dy = 2, blur = 1.5) {
 		const t = Math.max(-1, Math.min(1, (view.x + x * view.k - box.w / 2) / ((box.w || 1) / 2)));
 		const u = 1 / view.k;
-		return `drop-shadow(${(t * SHADOW_SPREAD * u).toFixed(2)}px ${(2 * u).toFixed(2)}px ${(1.5 * u).toFixed(2)}px var(--color-taupe4))`;
+		return `drop-shadow(${(t * SHADOW_SPREAD * u).toFixed(2)}px ${(dy * u).toFixed(2)}px ${(blur * u).toFixed(2)}px ${color})`;
 	}
+
+	// Labels are taupe5 with a taupe0 drop shadow that falls away from the centre line like the
+	// bubbles' shadows. They keep one size on screen however far the map is zoomed, and a label
+	// is cut short (or left out) rather than run into its neighbour's.
+	const LABEL_PX = 11;
+	const LABEL_PX_TOP = 13;
+	/** @param {number} x */
+	const labelShadow = (x) => shadow(x, 'var(--color-taupe0)', 1.5, 0.5);
+	/** room (px on screen) beside each bubble before the next one on its level */
+	let labelRoom = $derived.by(() => {
+		/** @type {Map<number, number[]>} */
+		const rows = new Map();
+		for (const n of graph.nodes) rows.set(n.depth, [...(rows.get(n.depth) ?? []), n.x]);
+		for (const xs of rows.values()) xs.sort((a, b) => a - b);
+		return new Map(
+			graph.nodes.map((n) => {
+				const xs = rows.get(n.depth) ?? [];
+				const i = xs.indexOf(n.x);
+				const gap = Math.min(i > 0 ? n.x - xs[i - 1] : Infinity, i < xs.length - 1 ? xs[i + 1] - n.x : Infinity);
+				return [n, gap * view.k];
+			})
+		);
+	});
+	const LABEL_LINES = 5;
+	const LABEL_LEADING = 1.2;
+	/**
+	 * A top-level label wrapped to the room it has: up to five rows, the last ending in an ellipsis
+	 * when the title does not fit. Words are kept whole where they can be.
+	 * @param {{ title: string }} n
+	 * @returns {string[]} the rows (none when there is no room for even a few letters)
+	 */
+	function labelLines(n) {
+		const room = Math.min(labelRoom.get(/** @type {any} */ (n)) ?? Infinity, 220) - 2;
+		const per = Math.floor(room / (LABEL_PX_TOP * 0.52));
+		if (per < 3) return [];
+		/** @type {string[]} */
+		const lines = [];
+		let line = '';
+		for (let word of n.title.split(/\s+/).filter(Boolean)) {
+			while (word.length > per) {
+				// a word longer than a row is broken
+				if (line) {
+					lines.push(line);
+					line = '';
+				}
+				lines.push(word.slice(0, per));
+				word = word.slice(per);
+			}
+			if (!line) line = word;
+			else if (line.length + 1 + word.length <= per) line += ' ' + word;
+			else {
+				lines.push(line);
+				line = word;
+			}
+		}
+		if (line) lines.push(line);
+		if (lines.length <= LABEL_LINES) return lines;
+		const kept = lines.slice(0, LABEL_LINES);
+		const last = kept[LABEL_LINES - 1];
+		kept[LABEL_LINES - 1] = (last.length >= per ? last.slice(0, per - 1) : last) + '…';
+		return kept;
+	}
+
 
 	function fit() {
 		if (!box.w || !box.h || graph.empty) return;
@@ -366,9 +430,10 @@
 					{#if fits('100', graph.root.r)}
 						<text x={graph.root.x} y={graph.root.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">100</text>
 					{/if}
-					<text x={graph.root.x} y={graph.root.y - graph.root.r - 18} text-anchor="middle" font-size="22" class="pointer-events-none fill-dark font-semibold" stroke="var(--color-taupe1)" stroke-width="3" paint-order="stroke">{clip(graph.root.title)}</text>
+					<text x={graph.root.x} y={graph.root.y - graph.root.r - 8 / view.k} text-anchor="middle" font-size={LABEL_PX_TOP / view.k} style="filter: {labelShadow(graph.root.x)}" class="pointer-events-none fill-taupe5 font-semibold">{clip(graph.root.title)}</text>
 
 					{#each graph.nodes as n (n.id)}
+						{@const rows = n.depth <= 1 ? labelLines(n) : []}
 						<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
 						<g
 							role="presentation"
@@ -381,18 +446,28 @@
 							{#if !n.backmatter && fits(percent(n.size, graph.total), n.r)}
 								<text x={n.x} y={n.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">{percent(n.size, graph.total)}</text>
 							{/if}
-							{#if n.depth <= 1 || view.k >= 1}
+							{#if rows.length}
 								<text
 									x={n.x}
-									y={n.y + n.r + (n.depth <= 1 ? 26 : 14)}
-									text-anchor={n.depth <= 1 ? 'middle' : 'start'}
-									transform={n.depth <= 1 ? undefined : `rotate(90 ${n.x} ${n.y + n.r + 14})`}
-									font-size={n.depth <= 1 ? 20 : 11}
-									dominant-baseline={n.depth <= 1 ? undefined : 'central'}
-									class="pointer-events-none fill-dark {n.depth <= 1 ? 'font-semibold' : ''}" stroke="var(--color-taupe1)" stroke-width="3" paint-order="stroke">{clip(n.title)}</text>
+									y={n.y + n.r + 6 / view.k}
+									text-anchor="middle"
+									dominant-baseline="hanging"
+									font-size={LABEL_PX_TOP / view.k}
+									style="filter: {labelShadow(n.x)}"
+									class="pointer-events-none fill-taupe5 font-semibold">{#each rows as row, k (k)}<tspan x={n.x} dy={k === 0 ? 0 : (LABEL_PX_TOP * LABEL_LEADING) / view.k}>{row}</tspan>{/each}</text>
+							{:else if n.depth > 1 && view.k >= 1}
+								<text
+									x={n.x}
+									y={n.y + n.r + 6 / view.k}
+									text-anchor="start"
+									transform="rotate(90 {n.x} {n.y + n.r + 6 / view.k})"
+									dominant-baseline="central"
+									font-size={LABEL_PX / view.k}
+									style="filter: {labelShadow(n.x)}"
+									class="pointer-events-none fill-taupe5">{clip(n.title)}</text>
 							{/if}
-							{#if picking && (n.backmatter || n.frontmatter)}
-								<text x={n.x} y={n.y + n.r + 50} text-anchor="middle" font-size="11" font-style="italic" class="pointer-events-none fill-grey3">{n.backmatter ? 'back matter' : 'front matter'}</text>
+							{#if picking && (n.backmatter || n.frontmatter) && n.depth <= 1}
+								<text x={n.x} y={n.y + n.r + (6 + Math.max(1, labelLines(n).length) * LABEL_PX_TOP * LABEL_LEADING + 4) / view.k} text-anchor="middle" dominant-baseline="hanging" font-size={LABEL_PX / view.k} font-style="italic" style="filter: {labelShadow(n.x)}" class="pointer-events-none fill-taupe5">{n.backmatter ? 'back matter' : 'front matter'}</text>
 							{/if}
 						</g>
 					{/each}

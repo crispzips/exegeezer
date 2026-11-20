@@ -8,7 +8,7 @@ body {
 /* `static` always emits every theme colour as a CSS variable, not only the ones
    used by a Tailwind class (the synopsis blips read the accents via var()). */
 @theme static {
-  --font-sans: "Labrada", ui-serif, Georgia, serif;
+  --font-sans: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
   --color-dark: #002b36;
   --color-lessdark: #073642;
   --color-grey4: #586e75;
@@ -19,7 +19,8 @@ body {
   --color-taupe4:  #9a7b55;
   --color-taupe3:  #d3c3a1;
   --color-taupe2:  #eee8d5;
-  --color-taupe1:  #fdf6e3; /* lightest */
+  --color-taupe1:  #fdf6e3;
+  --color-taupe0:  #fffcf4; /* lightest: between white and taupe1, close to white */
 
   /* Official Solarized Accent Colors */
   --color-yellow:  #b58900;

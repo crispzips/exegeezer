@@ -3,7 +3,7 @@
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -15,7 +15,7 @@
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
-    import { withoutMatter } from '#lib/utilities/matter.js';
+    import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
     import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** @type {{ name: string, text: string }[]} */
@@ -184,6 +184,8 @@
     let mainText = $state([]);
     /** the text as the views show it: front and back matter stay in the data but are never drawn or compared */
     const shownText = $derived(withoutMatter(mainText));
+    /** front and back matter, kept apart: the linear and hierarchical views offer them collapsed */
+    const matter = $derived(matterSections(mainText));
 
     // ---- Undo / redo: one step per edit; kept for the whole session (not reset by changing mode) ----
     /** @type {History<typeof mainText>} */
@@ -235,7 +237,7 @@
             const excerpt = para.text.length > 160 ? para.text.slice(0, 160) + '…' : para.text;
             deleteRequest = {
                 title: 'Delete this paragraph?',
-                message: `"${excerpt}"\n\nThis permanently deletes the paragraph.`,
+                message: `${excerpt.trim() ? `"${excerpt}"\n\n` : ''}This permanently deletes the paragraph.`,
                 confirm: 'Delete paragraph',
                 run: () => commit(removeParagraph(mainText, id))
             };
@@ -248,13 +250,13 @@
             scope === 'tree'
                 ? {
                       title: 'Delete section and all its descendants?',
-                      message: `This permanently deletes the section "${info.title}" and everything inside it: ${inside}.`,
+                      message: `This permanently deletes the section${info.title.trim() ? ` "${info.title}"` : ''} and everything inside it: ${inside}.`,
                       confirm: 'Delete section and descendants',
                       run: () => commit(removeSection(mainText, id, true))
                   }
                 : {
                       title: 'Delete just this section?',
-                      message: `This permanently deletes the section heading "${info.title}". Its ${inside} stay in place.`,
+                      message: `This permanently deletes the section heading${info.title.trim() ? ` "${info.title}"` : ''}. Its ${inside} stay in place.`,
                       confirm: 'Delete section',
                       run: () => commit(removeSection(mainText, id, false))
                   };
@@ -264,9 +266,10 @@
     /** @type {{ id: string, kind: 'paragraph' | 'section', from: DOMRect } | null} */
     let editRequest = $state(null);
 
-    /** @param {{ id: string, title: string | null, position: number }} change */
-    function saveEdit({ id, title, position }) {
+    /** @param {{ id: string, title: string | null, position: number, fields?: { text: string, title: string, description: string } }} change */
+    function saveEdit({ id, title, position, fields }) {
         let next = mainText;
+        if (fields) next = next.map((p) => (p.id === id ? { ...p, ...fields } : p));
         if (title !== null && title.trim()) next = renameSection(next, id, title);
         commit(moveItem(next, id, position));
     }
@@ -281,6 +284,10 @@
         commit(mainText.map((p) => (p.id === id ? { ...p, ...fields } : p)));
     }
 
+    /** a just-injected empty paragraph the view should start editing at once (its body field), or null */
+    /** @type {string | null} */
+    let startEditId = $state(null);
+
     // ---- Editing: inject at an interstitial landing zone ----
     /** where the next injection from the Load Text modal goes (a gap in the main text), or null for the usual choice */
     /** @type {number | null} */
@@ -291,7 +298,9 @@
         const gap = gapIndex(mainText, targetId, place, view === 'linear');
         if (gap === -1) return;
         if (mode === 'empty') {
-            commit(insertAt(mainText, gap, [{ id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 }]));
+            const item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
+            commit(insertAt(mainText, gap, [item]));
+            startEditId = item.id; // the editing cursor goes straight into the new paragraph
         } else {
             injectGap = gap;
             dialogEl?.showModal();
@@ -417,6 +426,11 @@
     /** @type {Mode[]} */
     const MODES = ['reading', 'editing', 'commenting'];
     const editing = $derived(mode === 'editing');
+    /** nothing loaded: the app can only be in editing mode (so there is a way to start a text) */
+    const noText = $derived(ready && mainText.length === 0);
+    $effect(() => {
+        if (noText) mode = 'editing';
+    });
 
     // The mode icon changes with a horizontal wipe: the new icon is revealed left to right
     // while the old one is wiped away in the same direction.
@@ -427,6 +441,7 @@
 
     /** the triple toggle (editing, reading, commenting): each click moves to the next mode */
     function cycleMode() {
+        if (noText) return;
         mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
     }
 
@@ -436,10 +451,13 @@
     let mainPane;
     /** @type {HierarchyViewer | undefined} */
     let hierarchy;
+    /** the paragraph or section last focused or clicked in any view (or by a minimap): every view opens centred on it */
+    let focusId = $state(/** @type {string | null} */ (null));
 
     /** Bring a section (the last of `ids`, outermost first) into view in the current view. */
     /** @param {string[]} ids */
     async function goToSection(ids) {
+        focusId = ids[ids.length - 1] ?? focusId;
         if (view !== 'linear') return void hierarchy?.openPath(ids);
         await tick();
         mainPane?.querySelector(`[data-para="${CSS.escape(ids[ids.length - 1])}"]`)?.scrollIntoView({ block: 'start' });
@@ -468,14 +486,21 @@
 
 <!-- Main pane -->
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
-    <div class="min-w-0 flex-1" bind:this={mainPane}>
+    <div class="flex min-w-0 flex-1 flex-col" bind:this={mainPane}>
+        <!-- the text's title: floats above every view, never part of the text -->
+        <header class="flex shrink-0 items-center gap-2 border-b border-taupe2 bg-taupe1 px-6 py-2 text-dark">
+            <Scroll class="shrink-0" />
+            <h1 class="truncate text-lg font-semibold" title={textTitle}>{textTitle}</h1>
+        </header>
+        <div class="min-h-0 flex-1">
         {#if view === 'linear'}
-            <ParagraphViewer paragraphs={shownText} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'cascading'}
-            <CascadingViewer bind:this={hierarchy} {exploded} paragraphs={shownText} empty="No main text yet." onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer bind:this={hierarchy} onsettings={(r) => (editRequest = r)} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="No main text yet." onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer bind:this={hierarchy} paragraphs={shownText} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
+        </div>
     </div>
 
     <!-- Vertical menu column -->
@@ -568,8 +593,9 @@
         <button
             onclick={cycleMode}
             aria-label="Mode"
-            use:tip={`${mode[0].toUpperCase() + mode.slice(1)} mode`}
-            class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+            use:tip={noText ? 'Editing mode (no text is loaded)' : `${mode[0].toUpperCase() + mode.slice(1)} mode`}
+            aria-disabled={noText}
+            class="inline-grid items-center justify-center rounded-md p-1 text-dark {noText ? 'cursor-not-allowed opacity-60' : 'hover:bg-taupe2'}"
         >
             {#key mode}
                 <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">

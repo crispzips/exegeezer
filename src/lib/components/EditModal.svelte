@@ -10,14 +10,15 @@
 	 *
 	 * The header holds the section title (or "Section # n" / "Paragraph # n" when there is
 	 * none) and a dark exit button, over a thin taupe2 divider. The body holds the
-	 * editable fields: the title (sections), and the item's indices. The indices are
+	 * editable fields: for a section its title; for a paragraph its title, the body (the paragraph's text)
+	 * and its description (in that order); then the item's indices. The indices are
 	 * linked: they all describe one position in the text, so changing one moves the
 	 * item and the others update to match. Nothing changes in the text until Save.
 	 *
 	 * @type {{
-	 *   request: { id: string, kind: 'paragraph' | 'section', from: DOMRect } | null,
+	 *   request: { id: string, kind: 'paragraph' | 'section', from: DOMRect, focus?: 'title' | 'text' } | null,
 	 *   list: { id: string, originalIndex: number, text: string, level?: number }[],
-	 *   onsave: (change: { id: string, title: string | null, position: number }) => void
+	 *   onsave: (change: { id: string, title: string | null, position: number, fields?: { text: string, title: string, description: string } }) => void
 	 * }}
 	 */
 	let { request = $bindable(null), list, onsave } = $props();
@@ -26,6 +27,10 @@
 	let dialogEl = $state();
 	/** @type {HTMLDivElement | undefined} */
 	let bodyEl = $state();
+	/** @type {HTMLInputElement | undefined} */
+	let titleEl = $state();
+	/** @type {HTMLTextAreaElement | undefined} */
+	let textEl = $state();
 
 	const DURATION = 260;
 	const EASE = 'cubic-bezier(0.2, 0.8, 0.2, 1)';
@@ -33,6 +38,9 @@
 	/** the item's draft position in the list (the one number every index derives from) */
 	let pos = $state(0);
 	let title = $state('');
+	/** a paragraph's own text and description (its title is `title`) */
+	let text = $state('');
+	let description = $state('');
 	/** @type {Record<string, string>} */
 	let errors = $state({});
 	let closing = false;
@@ -42,12 +50,12 @@
 	/** the indices the item would have at the draft position */
 	const preview = $derived(request ? indexInfo(moveItem(list, request.id, pos), request.id) : null);
 
-	// "Section # n" / "Paragraph # n" for items without a title
+	// The modal's title follows the Title field as you type; "Section # n" / "Paragraph # n" while it is empty
 	const heading = $derived.by(() => {
 		if (!current) return '';
-		const name = (current.title ?? '').trim();
-		if (current.kind === 'section') return name || `Section # ${current.sectionIndex}`;
-		return `Paragraph # ${current.paragraphIndex}`;
+		const name = title.trim();
+		if (name) return name;
+		return current.kind === 'section' ? `Section # ${current.sectionIndex}` : `Paragraph # ${current.paragraphIndex}`;
 	});
 
 	/** @param {DOMRect} to @param {DOMRect} from */
@@ -64,7 +72,10 @@
 		if (!request || !dialogEl || dialogEl.open) return;
 		const info = indexInfo(list, request.id);
 		pos = info?.originalIndex ?? 0;
-		title = info?.title ?? '';
+		const item = /** @type {any} */ (list.find((p) => p.id === request?.id));
+		title = info?.kind === 'paragraph' ? (item?.title ?? '') : (info?.title ?? '');
+		text = item?.text ?? '';
+		description = item?.description ?? '';
 		errors = {};
 		closing = false;
 		const from = request.from;
@@ -76,6 +87,9 @@
 			opts
 		);
 		bodyEl?.animate([{ opacity: 0 }, { opacity: 0, offset: 0.4 }, { opacity: 1 }], opts);
+		// a freshly injected item opens with the cursor in the field to fill first
+		const want = request.focus;
+		if (want) tick().then(() => (want === 'text' && textEl ? textEl : titleEl)?.focus());
 		try {
 			dialogEl.animate([{ opacity: 0 }, { opacity: 1 }], { ...opts, pseudoElement: '::backdrop' });
 		} catch {
@@ -171,12 +185,22 @@
 
 	function save() {
 		if (!request) return;
-		onsave({ id: request.id, title: request.kind === 'section' ? title : null, position: pos });
+		onsave({
+			id: request.id,
+			title: request.kind === 'section' ? title : null,
+			position: pos,
+			...(request.kind === 'paragraph' ? { fields: { text, title: title.trim(), description } } : {})
+		});
 		close();
 	}
 
 	const titleChanged = $derived(request?.kind === 'section' && title.trim() !== (current?.title ?? '') && title.trim() !== '');
-	const dirty = $derived(titleChanged || pos !== (current?.originalIndex ?? 0));
+	const original = $derived(/** @type {any} */ (request ? list.find((p) => p.id === request?.id) : null));
+	const fieldsChanged = $derived(
+		request?.kind === 'paragraph' &&
+			(text !== (original?.text ?? '') || title.trim() !== (original?.title ?? '') || description !== (original?.description ?? ''))
+	);
+	const dirty = $derived(titleChanged || fieldsChanged || pos !== (current?.originalIndex ?? 0));
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -202,15 +226,36 @@
 				</button>
 			</header>
 
-			<div class="flex flex-col gap-4 p-4">
-				{#if request.kind === 'section'}
+			<div class="flex max-h-[75vh] flex-col gap-4 overflow-y-auto p-4">
+				{#if request.kind === 'section' || request.kind === 'paragraph'}
 					<label class="flex flex-col gap-1 text-sm font-medium">
 						Title
 						<input
+							bind:this={titleEl}
 							type="text"
 							bind:value={title}
 							class="rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal text-dark outline-none focus:border-grey2"
 						/>
+					</label>
+				{/if}
+
+				{#if request.kind === 'paragraph'}
+					<label class="flex flex-col gap-1 text-sm font-medium">
+						Body
+						<textarea
+							bind:this={textEl}
+							bind:value={text}
+							rows="7"
+							class="resize-y rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal leading-relaxed text-dark outline-none focus:border-grey2"
+						></textarea>
+					</label>
+					<label class="flex flex-col gap-1 text-sm font-medium">
+						Description
+						<textarea
+							bind:value={description}
+							rows="3"
+							class="resize-y rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal text-dark outline-none focus:border-grey2"
+						></textarea>
 					</label>
 				{/if}
 

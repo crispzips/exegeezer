@@ -68,7 +68,7 @@ function normalizeGap(el, place) {
  * space between items or the thin edge of an item (the padding around its content).
  * @param {PointerEvent} e
  * @param {number} [reach] how far (px) from an item still counts as the space beside it
- * @returns {{ id: string, place: 'before' | 'after', axis: 'x' | 'y' } | null}
+ * @returns {{ id: string, place: 'before' | 'after', axis: 'x' | 'y', at: { x: number, y: number } } | null}
  */
 export function locateGap(e, reach = 8) {
 	const hit = findItem(e, reach);
@@ -76,7 +76,63 @@ export function locateGap(e, reach = 8) {
 	const edge = Math.min(6, hit.size * 0.25) / hit.size;
 	if (hit.f >= edge && hit.f <= 1 - edge) return null;
 	const gap = normalizeGap(hit.el, hit.f < 0.5 ? 'before' : 'after');
-	return { ...gap, axis: hit.vertical ? 'y' : 'x' };
+	return { ...gap, axis: hit.vertical ? 'y' : 'x', at: gapCentre(gap, hit.vertical) };
+}
+
+/** how wide (px) the hierarchical view opens an interstice while its inject menu is showing */
+export const GAP_ROOM = 48;
+
+/**
+ * The on-screen box of a gap as the hierarchical view opens it (see GapHover's `nudge`): the
+ * room made beside the bubble the gap is expressed on, out to its neighbour when there is one,
+ * and as long as the bubbles are (cut to the viewport).
+ * @param {{ id: string, place: 'before' | 'after', axis?: 'x' | 'y' }} gap
+ * @param {number} [room] how much room the gap has beside a bubble with no neighbour
+ * @returns {{ left: number, top: number, width: number, height: number } | null}
+ */
+export function gapBox(gap, room = GAP_ROOM) {
+	const b = document.querySelector(`[data-drop="${CSS.escape(gap.id)}"]`);
+	if (!(b instanceof HTMLElement)) return null;
+	const rb = b.getBoundingClientRect();
+	const a = gap.place === 'before' ? b.previousElementSibling : null;
+	const ra = a instanceof HTMLElement && a.dataset.drop && sameLine(a, b) ? a.getBoundingClientRect() : null;
+	const axis = gap.axis ?? (b.dataset.axis === 'x' ? 'x' : 'y');
+	const clip = (/** @type {number} */ lo, /** @type {number} */ hi, /** @type {number} */ max) => [Math.max(lo, 0), Math.min(hi, max)];
+	if (axis === 'y') {
+		const [l, r] = clip(rb.left, rb.right, window.innerWidth);
+		const t = gap.place === 'after' ? rb.bottom : ra ? ra.bottom : rb.top - room;
+		const bt = gap.place === 'after' ? rb.bottom + room : rb.top;
+		return { left: l, top: t, width: r - l, height: bt - t };
+	}
+	const [t, bt] = clip(rb.top, rb.bottom, window.innerHeight);
+	const l = gap.place === 'after' ? rb.right : ra ? ra.right : rb.left - room;
+	const r = gap.place === 'after' ? rb.right + room : rb.left;
+	return { left: l, top: t, width: r - l, height: bt - t };
+}
+
+/**
+ * The middle of a gap: halfway between the two bubbles either side of it (or at the single
+ * bubble's edge), and centred on the bubbles across the other axis, so the menu never
+ * depends on where the pointer happened to enter.
+ * @param {{ id: string, place: 'before' | 'after' }} gap
+ * @param {boolean} vertical whether the items are stacked vertically
+ */
+function gapCentre(gap, vertical) {
+	const b = document.querySelector(`[data-drop="${CSS.escape(gap.id)}"]`);
+	if (!(b instanceof HTMLElement)) return { x: 0, y: 0 };
+	const rb = b.getBoundingClientRect();
+	const a = gap.place === 'before' ? b.previousElementSibling : null;
+	const ra = a instanceof HTMLElement && a.dataset.drop && sameLine(a, b) ? a.getBoundingClientRect() : null;
+	const lo = Math.max(rb.top, 0);
+	const hi = Math.min(rb.bottom, window.innerHeight);
+	const lx = Math.max(rb.left, 0);
+	const hx = Math.min(rb.right, window.innerWidth);
+	if (vertical) {
+		const edge = gap.place === 'before' ? (ra ? (ra.bottom + rb.top) / 2 : rb.top) : rb.bottom;
+		return { x: (lx + hx) / 2, y: edge };
+	}
+	const edge = gap.place === 'before' ? (ra ? (ra.right + rb.left) / 2 : rb.left) : rb.right;
+	return { x: edge, y: (lo + hi) / 2 };
 }
 
 /**
@@ -98,6 +154,8 @@ export class DragDrop {
 	drop = $state(null);
 	/** how far (px) from an item the pointer still counts as in the space beside it */
 	reach = 8;
+	/** whether a gap drop is drawn as a bar in the space (by the viewer) rather than a line on the bubble */
+	gapBar = false;
 	/** pointer position (for the tooltip that follows it) */
 	x = $state(0);
 	y = $state(0);
@@ -141,7 +199,7 @@ export class DragDrop {
 	#icon(kind, dt) {
 		const el = document.createElement('div');
 		el.style.cssText =
-			'position:fixed;top:-200px;left:-200px;width:56px;height:56px;border-radius:12px;display:flex;align-items:center;justify-content:center;background:var(--color-dark, #222);color:var(--color-taupe1, #fff);';
+			'position:fixed;top:-200px;left:-200px;width:56px;height:56px;box-sizing:border-box;border:1px solid var(--color-taupe3);border-radius:16px;display:flex;align-items:center;justify-content:center;background:var(--color-taupe1);color:var(--color-taupe5);box-shadow:0 4px 6px -1px rgb(0 0 0 / 0.1);';
 		el.innerHTML =
 			kind === 'section'
 				? '<span style="font:600 36px/1 Georgia, serif">§</span>'
@@ -202,7 +260,7 @@ export class DragDrop {
 		switch (this.drop.place) {
 			case 'before':
 			case 'after':
-				return gapLineClass(this.drop.place, axis);
+				return this.gapBar ? '' : gapLineClass(this.drop.place, axis);
 			case 'merge-before':
 				return y
 					? 'outline-2 outline-violet bg-violet/10 shadow-[inset_0_3px_0_0] shadow-violet'

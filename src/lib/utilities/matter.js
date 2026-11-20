@@ -28,3 +28,33 @@ export function withoutMatter(paragraphs) {
 	}
 	return out;
 }
+
+/**
+ * The front and back matter sections themselves, for the views that show them apart from the
+ * text: each flagged top-level section with its title and everything inside it (sub-headers
+ * included), in the order they appear.
+ *
+ * @template {{ id: string, text: string, level?: number, frontmatter?: boolean, backmatter?: boolean, title?: string }} P
+ * @param {P[]} paragraphs
+ * @returns {{ front: { id: string, title: string, paragraphs: P[] }[], back: { id: string, title: string, paragraphs: P[] }[] }}
+ */
+export function matterSections(paragraphs) {
+	const front = /** @type {{ id: string, title: string, paragraphs: P[] }[]} */ ([]);
+	const back = /** @type {{ id: string, title: string, paragraphs: P[] }[]} */ ([]);
+	/** @type {{ id: string, title: string, paragraphs: P[] } | null} */
+	let current = null;
+	let hiding = 0;
+	for (const p of paragraphs) {
+		const level = p.level ?? 0;
+		if (hiding && level > 0 && level <= hiding) {
+			hiding = 0;
+			current = null;
+		}
+		if (!hiding && level > 0 && (p.frontmatter || p.backmatter)) {
+			hiding = level;
+			current = { id: p.id, title: p.title || p.text.replace(/^#+\s*/, '').trim() || 'Untitled', paragraphs: [] };
+			(p.frontmatter ? front : back).push(current);
+		} else if (hiding && current) current.paragraphs.push(p);
+	}
+	return { front, back };
+}

@@ -234,10 +234,11 @@
 			})
 		);
 	});
-	const LABEL_LINES = 5;
+	const LABEL_LINES = 5; // the import map's top-level labels run to this many rows
+	const LABEL_LINES_NAV = 1; // the main map's are clipped to a single row
 	const LABEL_LEADING = 1.2;
 	/**
-	 * A top-level label wrapped to the room it has: up to five rows, the last ending in an ellipsis
+	 * A top-level label wrapped to the room it has: up to five rows in the import map (one in the main map), the last ending in an ellipsis
 	 * when the title does not fit. Words are kept whole where they can be.
 	 * @param {{ title: string }} n
 	 * @returns {string[]} the rows (none when there is no room for even a few letters)
@@ -267,10 +268,11 @@
 			}
 		}
 		if (line) lines.push(line);
-		if (lines.length <= LABEL_LINES) return lines;
-		const kept = lines.slice(0, LABEL_LINES);
-		const last = kept[LABEL_LINES - 1];
-		kept[LABEL_LINES - 1] = (last.length >= per ? last.slice(0, per - 1) : last) + '…';
+		const max = picking ? LABEL_LINES : LABEL_LINES_NAV;
+		if (lines.length <= max) return lines;
+		const kept = lines.slice(0, max);
+		const last = kept[max - 1];
+		kept[max - 1] = (last.length >= per ? last.slice(0, per - 1) : last) + '…';
 		return kept;
 	}
 

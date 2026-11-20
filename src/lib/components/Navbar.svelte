@@ -12,7 +12,7 @@
 <svelte:window onclick={onWindowClick} onkeydown={(e) => e.key === 'Escape' && (open = false)} />
 
 <nav class="border-b border-taupe2 bg-taupe1">
-	<div class="mx-auto flex h-14 max-w-6xl items-center justify-between px-4">
+	<div class="flex h-14 items-center justify-between pr-2 pl-6">
 		<!-- Logo (left) -->
 		<a href="/" class="flex items-center gap-2">
 			<!-- <img src="/logo.svg" alt="Company logo" class="h-8 w-8" /> -->

@@ -1,4 +1,5 @@
 <script>
+	import { tick, untrack } from 'svelte';
 	import MinimapTooltip from '#lib/components/MinimapTooltip.svelte';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import EditMenu from '#lib/components/EditMenu.svelte';
@@ -7,6 +8,8 @@
 	import GapMenu from '#lib/components/GapMenu.svelte';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import DropTip from '#lib/components/DropTip.svelte';
+	import MatterBar from '#lib/components/MatterBar.svelte';
+	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
@@ -23,6 +26,11 @@
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
 	 *   empty?: string,
 	 *   synopsis?: boolean,
+	 *   focusId?: string | null,
+	 *   onfocusitem?: (id: string) => void,
+	 *   startEditId?: string | null,
+	 *   onstartedit?: () => void,
+	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
@@ -55,7 +63,7 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, markdown = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, markdown = false } = $props();
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -117,7 +125,10 @@
 	 */
 	const pointerMoved = (e) => e.clientX !== lastX || e.clientY !== lastY;
 	const editHover = new EditHover();
+	/** in editing mode the rows sit 20px apart; the whole space between them is the interstitial zone */
+	const GAP_REACH = 12;
 	const dd = new DragDrop();
+	dd.reach = GAP_REACH;
 	const gap = new GapHover();
 
 	/**
@@ -132,7 +143,7 @@
 		lastX = e.clientX;
 		lastY = e.clientY;
 		if (!oninject || dd.dragId || editing) return;
-		const zone = locateGap(e);
+		const zone = locateGap(e, GAP_REACH);
 		gap.set(zone, e);
 		if (zone) editHover.clear();
 		else if (ondelete && !editHover.target && e.target instanceof Element) {
@@ -180,6 +191,44 @@
 	 * @param {string} id */
 	const cursorLine = (id) =>
 		cursor?.type === 'gap' && cursor.id === id ? gapLineClass(cursor.place ?? 'before', 'y') : '';
+
+	// ---- Synced with the other views: report the focused row, and open centred on the shared one ----
+	$effect(() => {
+		const c = cursor;
+		if (c && c.type !== 'gap') untrack(() => onfocusitem?.(c.id));
+	});
+	let revealed = false;
+	$effect(() => {
+		void paragraphs.length; // the text may arrive after the view
+		if (revealed || !mainEl || !mainContent || !focusId) return;
+		const id = untrack(() => focusId) ?? '';
+		tick().then(() => {
+			const el = mainContent?.querySelector(`[data-para="${CSS.escape(id)}"]`);
+			if (revealed || !(el instanceof HTMLElement)) return;
+			revealed = true;
+			const para = paragraphs.find((p) => p.id === id);
+			cursor = { type: (para?.level ?? 0) > 0 ? 'section' : 'paragraph', id };
+			el.scrollIntoView({ block: 'center' });
+			el.focus({ preventScroll: true });
+		});
+	});
+
+	// ---- A just-injected empty paragraph opens straight into editing, the cursor in its body ----
+	$effect(() => {
+		const id = startEditId;
+		void paragraphs.length;
+		if (!id || !onedit) return;
+		tick().then(() => {
+			const el = mainContent?.querySelector(`[data-para="${CSS.escape(id)}"]`);
+			if (!(el instanceof HTMLElement)) return;
+			editHover.clear();
+			gap.clear();
+			editCaret = 0;
+			editing = id;
+			el.scrollIntoView({ block: 'center', inline: 'center' });
+			onstartedit?.();
+		});
+	});
 
 	/** Focus the cursor's row; in editing mode show the menu that hovering it would. */
 	function focusCursor() {
@@ -357,7 +406,9 @@
 
 	// Space around the text (of the pane's width): above/below the scrolling area, and left/right inside it
 	const PAGE_PAD_Y = '5cqw'; // above and below the scrolling text, always visible
-	const PAGE_PAD_X = '15%'; // left and right, inside the text
+	const PAGE_PAD_X = '12%'; // left and right, inside the text (the page's side margins)
+	const PAGE_MARGIN_TOP = '7.33cqw'; // the page's top margin, relative to the pane's width
+	const PAGE_MARGIN_BOTTOM = '11cqw'; // its bottom margin: about the same as its sides
 	const PAGE_PAD_TOP = '4px'; // above and below the first and last rows, so their focus outline is not clipped
 
 	// Synopsis column geometry (px): blip width, gap between lanes, side padding
@@ -377,6 +428,8 @@
 		const top = mainEl.scrollTop;
 		const sh = Math.max(mainEl.scrollHeight, 1);
 		const ch = mainEl.clientHeight;
+		// the text's rows start below any front matter in the same scrolling area
+		const lead = mainContent ? mainContent.getBoundingClientRect().top - mainEl.getBoundingClientRect().top + top : 0;
 		// The overview lays the text out at the main text's own width (same fonts,
 		// same line breaks) and is then scaled down by k to fit the narrow column.
 		const w = Math.max(mainContent?.offsetWidth ?? 1, 1);
@@ -387,7 +440,7 @@
 		const rowEls = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
 		const miniEls = /** @type {HTMLElement[]} */ (Array.from(miniInner.children));
 		if (rowEls.length === miniEls.length && rowEls.length > 0) {
-			mainB = [0, ...rowEls.slice(1).map((r) => r.offsetTop), sh];
+			mainB = [0, ...rowEls.slice(1).map((r) => r.offsetTop + lead), sh];
 			miniB = [0, ...miniEls.slice(1).map((r) => r.offsetTop * k), mmH];
 		} else {
 			mainB = [0, sh];
@@ -396,11 +449,11 @@
 		const mTop = mapPos(top, mainB, miniB);
 		const mBottom = mapPos(top + ch, mainB, miniB);
 		m = { top, sh, ch, mmH, mTop, mH: mBottom - mTop, w, k };
-		markerColor = sectionColorAt(top + ch / 2);
+		markerColor = sectionColorAt(top + ch / 2 - lead);
 
 		// Synoptic blips: one per paragraph row, sized by its real rendered height
 		if (synopsis) {
-			const total = Math.max(mainContent?.offsetHeight ?? 1, 1);
+			const total = sh; // blips are measured against the whole scrolling area, as the viewport marker is
 			const rows = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
 			const levels = paragraphs.map((p) => p.level ?? 0);
 			const deepest = Math.max(0, ...levels);
@@ -415,8 +468,8 @@
 				// Text before the first header (lighter blip in the first lane)
 				const firstHeader = levels.findIndex((lv) => lv > 0);
 				if (firstHeader > 0) {
-					const top = rows[0].offsetTop;
-					const bottom = rows[firstHeader - 1].offsetTop + rows[firstHeader - 1].offsetHeight;
+					const top = (lead + rows[0].offsetTop);
+					const bottom = (lead + rows[firstHeader - 1].offsetTop) + rows[firstHeader - 1].offsetHeight;
 					next.push({ top: (top / total) * 100, h: ((bottom - top) / total) * 100, lane: 0, minor: true, color: null, title: null, bandTop: 0, bandH: 0, bandY: 0, y: top, label: 'Text before the first section', path: ['Text before the first section'] });
 				}
 
@@ -434,8 +487,8 @@
 					trail.push({ level: lv, title: paragraphs[i].text.replace(/^#{1,6}\s+/, '') });
 					let end = i + 1;
 					while (end < levels.length && (levels[end] === 0 || levels[end] > lv)) end++;
-					const top = rows[i].offsetTop;
-					const bottom = rows[end - 1].offsetTop + rows[end - 1].offsetHeight;
+					const top = (lead + rows[i].offsetTop);
+					const bottom = (lead + rows[end - 1].offsetTop) + rows[end - 1].offsetHeight;
 					const topPct = (top / total) * 100;
 					const hPct = ((bottom - top) / total) * 100;
 					const title = paragraphs[i].text.replace(/^#{1,6}\s+/, '');
@@ -462,7 +515,7 @@
 			} else {
 				// Flat text: one blip per paragraph, sized by its real rendered height
 				blips = rows.map((row, i) => ({
-					top: (row.offsetTop / total) * 100,
+					top: ((lead + row.offsetTop) / total) * 100,
 					h: (row.offsetHeight / total) * 100,
 					lane: 0,
 					minor: false,
@@ -471,7 +524,7 @@
 					bandTop: 0,
 					bandH: 0,
 					bandY: 0,
-					y: row.offsetTop,
+					y: (lead + row.offsetTop),
 					label: `Paragraph ${i + 1}`,
 					path: [`Paragraph ${i + 1}`]
 				}));
@@ -523,6 +576,15 @@
 		// keep the text's top padding above the paragraph
 		const pad = mainContent ? parseFloat(getComputedStyle(mainContent).paddingTop) : 0;
 		mainEl.scrollTop = Math.max(0, y - pad);
+		// the row at that point becomes the focused one (and so the one the other views centre on)
+		const base = mainEl.getBoundingClientRect().top - mainEl.scrollTop;
+		const row = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? [])).find((r) => Math.abs(r.getBoundingClientRect().top - base - y) < 2);
+		const id = row?.dataset.para;
+		if (row && id) {
+			const para = paragraphs.find((p) => p.id === id);
+			cursor = { type: (para?.level ?? 0) > 0 ? 'section' : 'paragraph', id };
+			row.focus({ preventScroll: true });
+		}
 	}
 
 	/** @param {PointerEvent} e */
@@ -567,16 +629,19 @@
 	</div>
 {/if}
 
-{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
+{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} inside />{/if}
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
 <div class="flex h-full min-h-0">
 	<!-- Main paragraph area (scrolls independently) -->
 	<!-- The text frame: a buffer of space above and below the scrolling text (cqw = the frame's width) -->
-	<div class="min-w-0 flex-1 [container-type:inline-size]">
-	<div class="h-full" style="padding-block: {PAGE_PAD_Y}">
-	<div bind:this={mainEl} onscroll={update} class="h-full overflow-x-hidden overflow-y-auto">
+	<div class="flex min-h-0 min-w-0 flex-1 flex-col [container-type:inline-size]">
+	<div class="min-h-0 flex-1" style="padding: {PAGE_PAD_Y} 3cqw">
+	<!-- the page: a sheet of paper (same taupe1) lifted off the background by a border and a small shadow -->
+	<div bind:this={mainEl} onscroll={update} class="h-full overflow-x-hidden overflow-y-auto rounded-sm border border-taupe3 bg-taupe1 shadow-md" style="padding-top: {PAGE_MARGIN_TOP}; padding-bottom: {PAGE_MARGIN_BOTTOM}">
+		<!-- front matter scrolls away with the text (it is not one of its rows) -->
+		{#if matter}<MatterBar sections={matter.front} label="Front matter" edge="top" {markdown} />{/if}
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				bind:this={mainContent}
@@ -630,7 +695,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded px-1 py-1.5 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="flex gap-2 rounded py-1.5 pl-1 {oninject ? '[&:not(:first-child)]:mt-5' : ''} {ondelete ? 'pr-10' : 'pr-1'} {ondelete && editHover.is(para.id) ? 'min-h-[5.75rem]' : ''} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -646,6 +711,7 @@
 				<p class="text-sm text-gray-500">{empty}</p>
 			{/each}
 		</div>
+		{#if matter}<MatterBar sections={matter.back} label="Back matter" edge="bottom" {markdown} />{/if}
 		</div>
 		</div>
 	</div>
@@ -661,7 +727,7 @@
 			onpointermove={miniMove}
 			onpointerup={() => (draggingMini = false)}
 			onpointercancel={() => (draggingMini = false)}
-			class="w-24 shrink-0 cursor-pointer touch-none select-none overflow-hidden border-l border-taupe2 bg-taupe1"
+			class="w-24 shrink-0 cursor-pointer touch-none select-none overflow-x-hidden overflow-y-auto border-l border-taupe2 bg-taupe1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
 		>
 			<div bind:this={miniContent} class="relative overflow-hidden" style="height: {m.mmH}px">
 				<!-- Same markup and width as the main text, so every line wraps identically,
@@ -672,7 +738,7 @@
 					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; transform: scale({m.k})"
 				>
 					{#each paragraphs as para (para.id)}
-						<div class="flex gap-2 px-1 py-1.5">
+						<div class="flex gap-2 py-1.5 pl-1 {oninject ? '[&:not(:first-child)]:mt-5' : ''} {ondelete ? 'pr-10' : 'pr-1'}">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>
 							{@render body(para, 'mini-')}
 						</div>
@@ -690,6 +756,19 @@
 
 	<!-- Synopsis column: the whole text at once, no scrolling, as gray blips -->
 	{#if synopsis && paragraphs.length > 0}
+		{@const synW = PAD * 2 + laneCount * LANE_W + (laneCount - 1) * LANE_GAP}
+		<div class="flex shrink-0 flex-col border-l border-taupe2 bg-taupe1" style="width: {synW}px">
+		<!-- jump to the top: a small square caret spanning the column's width -->
+		<button
+			type="button"
+			aria-label="Jump to top"
+			use:tip={'Jump to top'}
+			onclick={() => mainEl?.scrollTo({ top: 0 })}
+			class="flex shrink-0 items-center justify-center text-taupe5 hover:bg-taupe2"
+			style="width: {synW}px; height: {synW}px"
+		>
+			<svg viewBox="0 0 20 20" fill="currentColor" class="h-3/5 w-3/5"><path d="M4 13l6-6 6 6-1.4 1.4L10 9.8l-4.6 4.6z" /></svg>
+		</button>
 		<div
 			bind:this={synEl}
 			role="presentation"
@@ -697,8 +776,7 @@
 			data-minimap="Global Linear Minimap"
 			aria-label="Global Linear Minimap"
 			onpointermove={synMove}
-			class="relative shrink-0 select-none border-l border-taupe2 bg-taupe1"
-			style="width: {PAD * 2 + laneCount * LANE_W + (laneCount - 1) * LANE_GAP}px"
+			class="relative min-h-0 w-full flex-1 select-none"
 		>
 			<!-- Hover areas: one per top-level section, the whole part of the column it covers -->
 			{#each regions as region (region.top)}
@@ -745,6 +823,18 @@
 					<MinimapTooltip lines={tipLines} />
 				</div>
 			{/if}
+		</div>
+		<!-- jump to the bottom -->
+		<button
+			type="button"
+			aria-label="Jump to bottom"
+			use:tip={'Jump to bottom'}
+			onclick={() => mainEl?.scrollTo({ top: mainEl.scrollHeight })}
+			class="flex shrink-0 items-center justify-center text-taupe5 hover:bg-taupe2"
+			style="width: {synW}px; height: {synW}px"
+		>
+			<svg viewBox="0 0 20 20" fill="currentColor" class="h-3/5 w-3/5"><path d="M4 7l1.4-1.4L10 10.2l4.6-4.6L16 7l-6 6z" /></svg>
+		</button>
 		</div>
 	{/if}
 </div>

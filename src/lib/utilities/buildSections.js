@@ -64,3 +64,23 @@ export function buildSections(paragraphs) {
 	}
 	return root;
 }
+
+/**
+ * The sections around a node (a section or a paragraph, by id), outermost first, not
+ * including the node itself; null when the id is not in the tree.
+ * @param {SectionChild[]} tree
+ * @param {string} id
+ * @returns {string[] | null}
+ */
+export function ancestorsOf(tree, id) {
+	for (const n of tree) {
+		if (n.kind === 'paragraph') {
+			if (n.paragraph.id === id) return [];
+		} else {
+			if (n.id === id) return [];
+			const inner = ancestorsOf(n.children, id);
+			if (inner) return [n.id, ...inner];
+		}
+	}
+	return null;
+}

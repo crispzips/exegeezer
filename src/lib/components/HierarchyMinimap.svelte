@@ -33,6 +33,7 @@
 	 *   colors: Map<string, string>,
 	 *   selected: string[],
 	 *   onopen: (ids: string[]) => void,
+	 *   onjump?: (id: string) => void,
 	 *   getHost: () => HTMLElement | null,
 	 *   layoutKey: string
 	 * }}
@@ -42,7 +43,7 @@
 	 * returns the element holding the rows of containers; rows are rebuilt as sections
 	 * open and close, so `layoutKey` changes then and the bar re-attaches.
 	 */
-	let { paragraphs, tree, colors, selected, onopen, getHost, layoutKey } = $props();
+	let { paragraphs, tree, colors, selected, onopen, onjump = undefined, getHost, layoutKey } = $props();
 
 	// Geometry (px): blip thickness, gap between lanes, padding around the lanes,
 	// and the gap left between neighbouring blips in a lane
@@ -226,6 +227,14 @@
 		const s = first.scroller;
 		const left = el.getBoundingClientRect().left - s.getBoundingClientRect().left + s.scrollLeft;
 		s.scrollLeft = left - 40; // 32px level marker + 8px gap
+		onjump?.(id);
+	}
+
+	/** Scroll the first row to the very start or end of the text
+	 * @param {'start' | 'end'} where */
+	function jumpTo(where) {
+		const s = rowsOnScreen()[0]?.scroller;
+		if (s) s.scrollTo({ left: where === 'start' ? 0 : s.scrollWidth });
 	}
 
 	let hover = $state(null);
@@ -245,15 +254,30 @@
 	}
 </script>
 
+{#snippet jump(/** @type {'start' | 'end'} */ where)}
+	<button
+		type="button"
+		aria-label="Jump to {where}"
+		onclick={() => jumpTo(where)}
+		class="group relative flex shrink-0 items-center justify-center text-taupe5 hover:bg-taupe2"
+		style="width: {barH}px; height: {barH}px"
+	>
+		<svg viewBox="0 0 20 20" fill="currentColor" class="h-3/5 w-3/5"><path d={where === 'start' ? 'M13 4l1.4 1.4L9.8 10l4.6 4.6L13 16l-6-6z' : 'M7 4L5.6 5.4 10.2 10l-4.6 4.6L7 16l6-6z'} /></svg>
+		<span role="tooltip" class="pointer-events-none absolute bottom-full z-30 mb-2 hidden w-max rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg group-hover:block {where === 'start' ? 'left-0' : 'right-0'}">Jump to {where}</span>
+	</button>
+{/snippet}
+
 {#if paragraphs.length > 0}
+	<div class="flex w-full shrink-0 border-t border-taupe2 bg-taupe1" style="height: {barH}px">
+	<!-- jump to the start: a small square caret spanning the bar's height -->
+	{@render jump('start')}
 	<div
 		bind:this={barEl}
 		role="presentation"
 		data-minimap="Global Hierarchical Minimap"
 		aria-label="Global Hierarchical Minimap"
 		onpointermove={trackTip}
-		class="relative w-full shrink-0 select-none border-t border-taupe2 bg-taupe1"
-		style="height: {barH}px"
+		class="relative h-full min-w-0 flex-1 select-none"
 	>
 		<!-- Hover areas: one per top-level section, the whole part of the bar it covers -->
 		{#each layout.regions as region (region.id)}
@@ -311,5 +335,7 @@
 				<MinimapTooltip lines={tipLines} />
 			</div>
 		{/if}
+	</div>
+	{@render jump('end')}
 	</div>
 {/if}

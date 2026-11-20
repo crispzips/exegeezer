@@ -10,18 +10,22 @@
  */
 /**
  * The draggable item under the pointer, or (when the pointer is in the space between
- * items) the neighbour within a few pixels along the item axis.
+ * items) the nearest neighbour within `reach` pixels along the item axis.
  * @param {PointerEvent | DragEvent} e
+ * @param {number} [reach]
  */
-function findItem(e) {
+function findItem(e, reach = 8) {
 	const { clientX: x, clientY: y } = e;
 	let el = e.target instanceof Element ? e.target.closest('[data-drop]') : null;
 	if (!el) {
-		for (const [dx, dy, axis] of /** @type {const} */ ([[0, -8, 'y'], [0, 8, 'y'], [-8, 0, 'x'], [8, 0, 'x']])) {
-			const c = document.elementFromPoint(x + dx, y + dy)?.closest('[data-drop]');
-			if (c instanceof HTMLElement && c.dataset.axis === axis) {
-				el = c;
-				break;
+		// nearest neighbour first, so a wide gap splits cleanly between the two bubbles beside it
+		search: for (let d = 8; d <= Math.max(reach, 8); d += 4) {
+			for (const [dx, dy, axis] of /** @type {const} */ ([[0, -d, 'y'], [0, d, 'y'], [-d, 0, 'x'], [d, 0, 'x']])) {
+				const c = document.elementFromPoint(x + dx, y + dy)?.closest('[data-drop]');
+				if (c instanceof HTMLElement && c.dataset.axis === axis) {
+					el = c;
+					break search;
+				}
 			}
 		}
 	}
@@ -30,6 +34,18 @@ function findItem(e) {
 	const vertical = el.dataset.axis !== 'x';
 	const size = Math.max(vertical ? r.height : r.width, 1);
 	return { el, vertical, size, f: (vertical ? y - r.top : x - r.left) / size };
+}
+
+/**
+ * Whether two items sit in the same row or column (DOM order alone is not enough where
+ * an open item's children are laid out between it and its next sibling).
+ * @param {HTMLElement} a @param {HTMLElement} b
+ */
+function sameLine(a, b) {
+	if (a.dataset.axis !== b.dataset.axis) return false;
+	const ra = a.getBoundingClientRect();
+	const rb = b.getBoundingClientRect();
+	return a.dataset.axis === 'x' ? Math.abs(ra.top - rb.top) < 2 : Math.abs(ra.left - rb.left) < 2;
 }
 
 /**
@@ -42,7 +58,7 @@ function findItem(e) {
 function normalizeGap(el, place) {
 	if (place === 'after') {
 		const next = el.nextElementSibling;
-		if (next instanceof HTMLElement && next.dataset.drop) return { id: next.dataset.drop, place: 'before' };
+		if (next instanceof HTMLElement && next.dataset.drop && sameLine(el, next)) return { id: next.dataset.drop, place: 'before' };
 	}
 	return { id: el.dataset.drop ?? '', place };
 }
@@ -51,10 +67,11 @@ function normalizeGap(el, place) {
  * The interstitial landing zone under the pointer when nothing is being dragged: the
  * space between items or the thin edge of an item (the padding around its content).
  * @param {PointerEvent} e
+ * @param {number} [reach] how far (px) from an item still counts as the space beside it
  * @returns {{ id: string, place: 'before' | 'after', axis: 'x' | 'y' } | null}
  */
-export function locateGap(e) {
-	const hit = findItem(e);
+export function locateGap(e, reach = 8) {
+	const hit = findItem(e, reach);
 	if (!hit) return null;
 	const edge = Math.min(6, hit.size * 0.25) / hit.size;
 	if (hit.f >= edge && hit.f <= 1 - edge) return null;
@@ -79,6 +96,8 @@ export class DragDrop {
 	dragKind = null;
 	/** @type {{ id: string, place: DropPlace } | null} */
 	drop = $state(null);
+	/** how far (px) from an item the pointer still counts as in the space beside it */
+	reach = 8;
 	/** pointer position (for the tooltip that follows it) */
 	x = $state(0);
 	y = $state(0);
@@ -148,7 +167,7 @@ export class DragDrop {
 		if (!this.dragId) return false;
 		this.x = e.clientX;
 		this.y = e.clientY;
-		const hit = findItem(e);
+		const hit = findItem(e, this.reach);
 		if (!hit) return this.#set(null);
 		const { el, size, f } = hit;
 		const edge = Math.min(0.5, Math.max(6, Math.min(16, size * 0.25)) / size);

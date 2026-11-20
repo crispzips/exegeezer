@@ -5,6 +5,10 @@
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import DropTip from '#lib/components/DropTip.svelte';
+	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
+	import { dropAllowed } from '#lib/utilities/editText.js';
 
 	/**
 	 * Cascading view: every bubble is the same size and sits in one grid, inside one container.
@@ -16,19 +20,144 @@
 	 * @type {{
 	 *   paragraphs: { id: string, originalIndex: number, text: string, level?: number }[],
 	 *   empty?: string,
-	 *   exploded?: boolean
+	 *   exploded?: boolean,
+	 *   onmove?: (drop: { id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }) => void,
+	 *   onadd?: (req: { targetId: string, place: 'before' | 'after', kind: 'paragraph' | 'section' }) => string | void,
+	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void
 	 * }}
+	 *
+	 * With `onmove` (editing mode), bubbles can be dragged within their row or column: onto the
+	 * edge of a sibling, or the space between, to interject; onto the middle of a bubble of the
+	 * same kind to prepend or append (merge). A section drags with its contents.
+	 *
+	 * With `onadd` (editing mode), hovering the space between bubbles shows the same line and a
+	 * plus; hovering the plus asks "Paragraph or section?" and adds an empty one there.
+	 *
+	 * With `onedit` (editing mode), double-clicking a paragraph opens its modal with fields for the
+	 * paragraph's title, description and body (a single click then does nothing).
 	 *
 	 * Exploded: every section is open at once (children may land on the same cell), the view is
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, empty = 'No text yet.', exploded = false } = $props();
+	let { paragraphs, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined } = $props();
+
+	const dd = new DragDrop();
+	const gap = new GapHover();
+	/** whether the plus is hovered (its "Paragraph or section?" popup is open) */
+	let plusOpen = $state(false);
+	// leaving editing mode (or exploding) drops any drag in progress
+	$effect(() => {
+		if (!onmove || exploded) dd.end();
+	});
+
+	/** @param {DragEvent} e */
+	function dragOver(e) {
+		if (!onmove || exploded) return;
+		if (dd.over(e, (id, target, place) => dropAllowed(paragraphs, id, target, place, false))) {
+			e.preventDefault();
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+		}
+	}
+
+	/** @param {DragEvent} e */
+	function drop(e) {
+		const d = dd.drop;
+		const id = dd.dragId;
+		dd.end();
+		if (!onmove || !d || !id) return;
+		e.preventDefault();
+		onmove({ id, targetId: d.id, place: d.place });
+	}
+
+	/** a bubble's merge highlight; an interjection is drawn as a line in the gap instead (see `gapLine`)
+	 * @param {string} id @param {boolean} horizontal */
+	const mergeClasses = (id, horizontal) => {
+		if (dd.drop?.id !== id) return '';
+		const base = 'outline-2 outline-taupe4 bg-taupe2!';
+		switch (dd.drop.place) {
+			case 'merge-before':
+				return `${base} ${horizontal ? 'shadow-[inset_3px_0_0_0]' : 'shadow-[inset_0_3px_0_0]'} shadow-taupe4`;
+			case 'merge-after':
+				return `${base} ${horizontal ? 'shadow-[inset_-3px_0_0_0]' : 'shadow-[inset_0_-3px_0_0]'} shadow-taupe4`;
+			default:
+				return '';
+		}
+	};
+
+	/** The interject marker: a straight taupe3 line across the gap, halfway between the two bubbles
+	 * (a cell boundary, as bubbles are centred in their cells), perpendicular to the row or column.
+	 * It shows for a drag's interject drop and for the gap the pointer hovers in editing mode; `cx`/`cy`
+	 * is its middle, where the plus goes. */
+	let gapLine = $derived.by(() => {
+		const d = dd.drop;
+		/** @type {{ id: string, place: 'before' | 'after' } | null} */
+		const z = d && (d.place === 'before' || d.place === 'after') ? { id: d.id, place: d.place } : onadd && gap.lit && !dd.dragId ? gap.target : null;
+		if (!z || exploded) return null;
+		const p = layout.find((q) => (q.node.kind === 'section' ? q.node.id : q.node.paragraph.id) === z.id);
+		if (!p) return null;
+		const LINE = 4;
+		const step = z.place === 'before' ? 0 : 1;
+		const [x, y] = p.horizontal ? [(p.col + step) * PITCH - LINE / 2, p.row * PITCH + GAP / 2] : [p.col * PITCH + GAP / 2, (p.row + step) * PITCH - LINE / 2];
+		const width = p.horizontal ? LINE : SIZE;
+		const height = p.horizontal ? SIZE : LINE;
+		return { id: z.id, place: z.place, left: x, top: y, width, height, cx: x + width / 2, cy: y + height / 2 };
+	});
+
+	/** Whether a paragraph can go in the hovered gap. In the text a paragraph belongs to the header above it,
+	 * so right after a section's bubble it would land inside that section, not beside it. */
+	let paragraphFits = $derived.by(() => {
+		const z = gapLine;
+		if (!z) return false;
+		const id = (/** @type {Placed} */ q) => (q.node.kind === 'section' ? q.node.id : q.node.paragraph.id);
+		const at = layout.findIndex((q) => id(q) === z.id);
+		if (at === -1) return false;
+		const parent = layout[at].parent?.id ?? null;
+		const sibs = layout.filter((q) => (q.parent?.id ?? null) === parent);
+		const prev = z.place === 'after' ? layout[at] : sibs[sibs.indexOf(layout[at]) - 1];
+		return !prev || prev.node.kind === 'paragraph';
+	});
+
+	/** hovering the space between bubbles (or a bubble's thin edge) offers to add something there
+	 * @param {PointerEvent} e */
+	function hoverMove(e) {
+		if (!onadd || exploded || dd.dragId) return;
+		// on the plus or its popup: keep the zone they belong to
+		if (e.target instanceof Element && e.target.closest('[data-gapctl]')) return gap.hold();
+		gap.set(locateGap(e, dd.reach), e);
+	}
+
+	/** @param {'paragraph' | 'section'} kind */
+	async function add(kind) {
+		const z = gapLine;
+		gap.clear();
+		plusOpen = false;
+		const id = z ? onadd?.({ targetId: z.id, place: z.place, kind }) : undefined;
+		if (!id) return;
+		// once the new bubble is laid out (the grid may grow and re-zoom), bring it to the middle of the view
+		await tick();
+		await new Promise((r) => setTimeout(r, 60));
+		host?.querySelector(`[data-node="${CSS.escape(id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' });
+	}
+
+	/** drag attributes shared by every bubble: a bubble in a row moves along x, in a column along y
+	 * @param {string} id @param {'paragraph' | 'section'} kind @param {boolean} horizontal */
+	const dragAttrs = (id, kind, horizontal) =>
+		onmove && !exploded
+			? {
+					'data-drop': id,
+					'data-kind': kind,
+					'data-axis': horizontal ? 'x' : 'y',
+					draggable: true,
+					ondragstart: (/** @type {DragEvent} */ e) => dd.start(id, kind, e),
+					ondragend: () => dd.end()
+				}
+			: {};
 
 	// The grid is laid out in unscaled units and drawn with CSS `zoom`, so bubbles, gaps, borders
 	// and text all scale together. A cell is PITCH wide; its bubble is SIZE, centred in it.
 	const SIZE = 224;
-	const PITCH = SIZE + 28;
+	const PITCH = SIZE + 80; // the gap is wide enough for the hover plus, with room around it
 	const GAP = PITCH - SIZE;
 	/** exploded: the tubes' thickness (half of what the exploded circles were) */
 	const TUBE = SIZE * 0.75 * 0.5;
@@ -76,7 +205,7 @@
 
 	/**
 	 * Place every visible bubble on the grid.
-	 * @typedef {{ node: SectionChild, row: number, col: number, color: string | null, open: boolean, depth: number, parent: { row: number, col: number, id: string } | null }} Placed
+	 * @typedef {{ node: SectionChild, row: number, col: number, color: string | null, open: boolean, horizontal: boolean, depth: number, parent: { row: number, col: number, id: string } | null }} Placed
 	 */
 	let layout = $derived.by(() => {
 		/** @type {Placed[]} */
@@ -102,7 +231,7 @@
 				const r = horizontal ? row : row + i;
 				const c = horizontal ? col + i : col;
 				const open = node.kind === 'section' && (exploded || selected[depth] === node.id);
-				out.push({ node, row: r, col: c, color: node.kind === 'section' ? (colors.get(node.id) ?? null) : color, open, depth, parent });
+				out.push({ node, row: r, col: c, color: node.kind === 'section' ? (colors.get(node.id) ?? null) : color, open, horizontal, depth, parent });
 				if (node.kind === 'section' && open) {
 					// children go orthogonally: beneath a bubble in a row, to the right of one in a column
 					if (horizontal) place(node.children, false, r + 1, c, depth + 1, colors.get(node.id) ?? null, { row: r, col: c, id: node.id });
@@ -235,6 +364,25 @@
 	});
 	let cell = $derived(exploded ? levels[levels.length - 1] : levels[levelIndex]);
 	let zoom = $derived(cell / PITCH);
+	// the whole space between two bubbles is a drop zone: each side reaches the gap's midpoint
+	$effect(() => {
+		dd.reach = Math.ceil((GAP * zoom) / 2) + 2;
+	});
+	/** The plus's on-screen diameter: at most 48px, shrinking with the zoom so it always leaves a margin
+	 * (8px a side) between itself and the bubbles either side of the gap. */
+	let plusSize = $derived(Math.max(24, Math.min(48, GAP * zoom - 16)));
+
+	// the hovered gap goes when the scene moves under the pointer, a drag starts or editing ends
+	$effect(() => {
+		void zoom;
+		if (!onadd || exploded || dd.dragId) gap.clear();
+	});
+	// a new gap starts with the popup closed
+	$effect(() => {
+		void gap.target?.id;
+		void gap.target?.place;
+		plusOpen = false;
+	});
 	/** the stage: as many whole cells as fit, no more than the layout has */
 	let stageW = $derived(Math.min(Math.floor(roomW / cell + 0.01), colCount) * cell);
 	let stageH = $derived(Math.min(Math.floor(roomH / cell + 0.01), rowCount) * cell);
@@ -300,13 +448,13 @@
 	// ---- Reading modal ----
 	/** every paragraph in document order, with its section's colour (for previous / next in the modal) */
 	let flat = $derived.by(() => {
-		/** @type {{ id: string, text: string, index: string | number, color: string, path: string[] }[]} */
+		/** @type {{ id: string, text: string, title: string, description: string, index: string | number, color: string, path: string[] }[]} */
 		const out = [];
 		/** @param {SectionChild[]} list @param {string} color @param {string[]} path the sections around the list, outermost first */
 		const walk = (list, color, path) => {
 			for (const n of list) {
 				if (n.kind === 'section') walk(n.children, colors.get(n.id) ?? color, [...path, n.id]);
-				else out.push({ id: n.paragraph.id, text: n.paragraph.text, index: n.paragraphIndex, color, path });
+				else out.push({ id: n.paragraph.id, text: n.paragraph.text, title: /** @type {any} */ (n.paragraph).title ?? '', description: /** @type {any} */ (n.paragraph).description ?? '', index: n.paragraphIndex, color, path });
 			}
 		};
 		walk(tree, 'var(--color-taupe3)', []);
@@ -324,6 +472,13 @@
 	/** @type {HTMLDivElement | undefined} */
 	let panel = $state();
 	let closing = false;
+	/** whether the modal is the editor (double-click in editing mode) rather than the reader, and its draft */
+	let editMode = $state(false);
+	let draftTitle = $state('');
+	let draftDescription = $state('');
+	let draftBody = $state('');
+	/** @type {HTMLInputElement | undefined} */
+	let titleInput = $state();
 	/** the modal is a square this fraction of the window's shorter side, whatever the zoom */
 	const MODAL_FRACTION = 0.75;
 	const DURATION = 380;
@@ -369,16 +524,26 @@
 		return a.finished.catch(() => {});
 	}
 
-	/** @param {string} id */
-	async function openModal(id) {
+	/** @param {string} id @param {boolean} [edit] */
+	async function openModal(id, edit = false) {
 		if (openId) return;
 		const from = bubbleRect(id);
+		const f = flat.find((x) => x.id === id);
+		editMode = edit;
+		draftTitle = f?.title ?? '';
+		draftDescription = f?.description ?? '';
+		draftBody = f?.text ?? '';
 		modalW = modalH = Math.min(window.innerWidth, window.innerHeight) * MODAL_FRACTION;
 		closing = false;
 		openId = id;
 		await tick();
-		panel?.focus();
+		(edit ? titleInput : panel)?.focus();
 		morph(from, false);
+	}
+
+	function saveEdit() {
+		if (openId && editMode) onedit?.({ id: openId, text: draftBody, title: draftTitle.trim(), description: draftDescription.trim() });
+		closeModal();
 	}
 
 	async function closeModal() {
@@ -393,6 +558,7 @@
 		}
 		await morph(bubbleRect(openId), true);
 		openId = null;
+		editMode = false;
 		closing = false;
 	}
 
@@ -405,6 +571,14 @@
 	/** @param {KeyboardEvent} e */
 	function onkeydown(e) {
 		if (!openId) return;
+		if (editMode) {
+			// the fields own the keys; only Escape (cancel) and Ctrl/Cmd+Enter (save) are the modal's
+			if (e.key === 'Escape') closeModal();
+			else if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveEdit();
+			else return;
+			e.preventDefault();
+			return;
+		}
 		if (e.key === 'Escape') closeModal();
 		else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') step(-1);
 		else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') step(1);
@@ -419,7 +593,18 @@
 	}
 </script>
 
-<div class="relative flex h-full w-full items-center justify-center overflow-hidden bg-taupe1" bind:this={host} bind:clientWidth={paneW} bind:clientHeight={paneH} use:wheelZoom>
+<DropTip {dd} />
+
+<div
+	role="presentation"
+	onpointermove={hoverMove}
+	onpointerleave={() => gap.leave()}
+	ondragover={dragOver}
+	ondrop={drop}
+	ondragleave={(e) => {
+		if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
+	}}
+	class="relative flex h-full w-full items-center justify-center overflow-hidden bg-taupe1" bind:this={host} bind:clientWidth={paneW} bind:clientHeight={paneH} use:wheelZoom>
 	{#if !tree.length}
 		<p class="text-sm text-gray-500">{empty}</p>
 	{:else}
@@ -483,15 +668,17 @@
 						data-section
 						aria-expanded={p.open}
 						{style}
+						{...dragAttrs(node.id, 'section', p.horizontal)}
 						onclick={(e) => toggle(p.depth, node.id, e.currentTarget)}
-						class="absolute flex flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-8 border-(--c) px-6 py-4 text-center text-dark transition-[left,top] focus:outline-none {p.open
+						class="absolute flex flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-8 border-(--c) px-8 py-6 text-center text-dark transition-[left,top] focus:outline-none {dd.dragId === node.id ? 'opacity-40' : ''} {mergeClasses(node.id, p.horizontal)} {p.open
 							? 'bg-[color-mix(in_srgb,var(--c)_28%,var(--color-taupe1))] font-semibold'
 							: 'bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] hover:bg-[color-mix(in_srgb,var(--c)_20%,var(--color-taupe1))]'}"
 					>
 						<span class="mb-3 text-xs font-normal text-grey2">§{node.hierarchicalIndex}</span>
 						<span class="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center break-words text-xl leading-snug">
-							{t.title}
-							{#if t.subtitle}<span class="mt-1 block text-sm font-normal text-grey2">{t.subtitle}</span>{/if}
+							<!-- long titles are cut off with an ellipsis rather than spilling out of the bubble -->
+							<span class="max-w-full overflow-hidden {t.subtitle ? 'line-clamp-2' : 'line-clamp-3'}" title={node.title}>{t.title}</span>
+							{#if t.subtitle}<span class="mt-1 line-clamp-1 max-w-full overflow-hidden text-sm font-normal text-grey2">{t.subtitle}</span>{/if}
 						</span>
 						<svg class="h-5 w-5 shrink-0 transition-transform {p.open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
 							<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
@@ -504,21 +691,74 @@
 						tabindex="0"
 						role="button"
 						aria-label="Paragraph"
-						onclick={() => openModal(pid)}
+						onclick={() => !onedit && openModal(pid)}
+						ondblclick={onedit ? () => openModal(pid, true) : undefined}
 						onkeydown={(e) => {
 							if (e.key === 'Enter' || e.key === ' ') {
 								e.preventDefault();
-								openModal(pid);
+								openModal(pid, !!onedit);
 							}
 						}}
 						{style}
-						class="absolute flex cursor-pointer flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none"
+						{...dragAttrs(pid, 'paragraph', p.horizontal)}
+						class="absolute flex cursor-pointer flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
 					>
 						<span class="mb-3 text-xs text-gray-500">{p.node.paragraphIndex}</span>
+						{#if /** @type {any} */ (p.node.paragraph).title}<span class="mb-1 text-sm font-semibold">{/** @type {any} */ (p.node.paragraph).title}</span>{/if}
 						<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
 					</div>
 				{/if}
 			{/each}
+
+			{#if gapLine}
+				<div class="pointer-events-none absolute rounded-full bg-taupe3" style="left:{gapLine.left}px;top:{gapLine.top}px;width:{gapLine.width}px;height:{gapLine.height}px"></div>
+				{#if onadd && !dd.dragId}
+					<!-- the plus sits on the line's middle at a constant on-screen size (undoing the scene's zoom) -->
+					<div
+						data-gapctl
+						role="toolbar"
+						aria-label="Add at this gap"
+						tabindex="-1"
+						class="absolute z-30 h-0 w-0"
+						style="left:{gapLine.cx}px;top:{gapLine.cy}px"
+						onpointerenter={() => gap.hold()}
+						onpointerleave={() => {
+							plusOpen = false;
+							gap.leave();
+						}}
+					>
+						<div class="absolute top-0 left-0 -translate-x-1/2 -translate-y-1/2" style="zoom:{1 / zoom}">
+							<button
+								type="button"
+								aria-label="Add here"
+								aria-haspopup="menu"
+								aria-expanded={plusOpen}
+								onpointerenter={() => (plusOpen = true)}
+								onclick={() => (plusOpen = true)}
+								style="width:{plusSize}px;height:{plusSize}px"
+								class="flex items-center justify-center rounded-full border border-taupe3 bg-taupe1 p-px text-taupe4 hover:bg-taupe2 [&_svg]:h-full [&_svg]:w-full"
+							>
+								<Plus />
+							</button>
+							{#if plusOpen}
+								<!-- the padding bridges the pointer from the plus to the popup -->
+								<div role="menu" class="absolute top-full left-1/2 z-40 -translate-x-1/2 pt-2">
+									<div class="flex items-center gap-1 rounded-md border border-taupe2 bg-taupe1 px-2 py-1 whitespace-nowrap shadow-lg">
+										<button type="button" role="menuitem" aria-label="Paragraph sign" title={paragraphFits ? 'Paragraph sign' : 'A paragraph here would land inside the section before it'} disabled={!paragraphFits} onclick={() => add('paragraph')} class="flex h-7 w-7 items-center justify-center rounded-md text-taupe5 enabled:hover:bg-taupe2 disabled:cursor-not-allowed disabled:opacity-30">
+											<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M4 10c0 3.31 2.69 6 6 6h2v4h2V6h2v14h2V6h3V4H10c-3.31 0-6 2.69-6 6m8 4h-2c-2.21 0-4-1.79-4-4s1.79-4 4-4h2z" /></svg>
+										</button>
+										<span class="text-xs font-semibold text-taupe5">OR</span>
+										<button type="button" role="menuitem" aria-label="Section sign" title="Section sign" onclick={() => add('section')} class="flex h-7 w-7 items-center justify-center rounded-md text-taupe5 hover:bg-taupe2">
+											<span class="text-xl leading-none font-semibold" style="font-family: Georgia, serif">§</span>
+										</button>
+										<span class="text-base font-semibold text-taupe5">?</span>
+									</div>
+								</div>
+							{/if}
+						</div>
+					</div>
+				{/if}
+			{/if}
 		</div>
 		</div>
 
@@ -535,7 +775,7 @@
 <FootnoteTip />
 
 {#if current}
-	<div class="fixed inset-0 z-50 flex items-center justify-center bg-dark/40" role="presentation" onclick={(e) => e.target === e.currentTarget && closeModal()}>
+	<div class="fixed inset-0 z-50 flex items-center justify-center bg-dark/40" role="presentation" onclick={(e) => e.target === e.currentTarget && !editMode && closeModal()}>
 		<div
 			bind:this={panel}
 			role="dialog"
@@ -546,11 +786,34 @@
 			class="relative flex flex-col overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
 		>
 			<span class="mb-4 text-center text-sm text-gray-500">{current.index}</span>
+			{#if editMode}
+				<div class="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+					<label class="flex flex-col gap-1 text-xs text-grey3">
+						Title
+						<input bind:this={titleInput} type="text" bind:value={draftTitle} class="rounded-xl border border-taupe3 bg-white/60 px-3 py-1.5 text-base text-dark outline-none focus:border-grey2" />
+					</label>
+					<label class="flex flex-col gap-1 text-xs text-grey3">
+						Description
+						<textarea rows="2" bind:value={draftDescription} class="resize-none rounded-xl border border-taupe3 bg-white/60 px-3 py-1.5 text-base text-dark outline-none focus:border-grey2"></textarea>
+					</label>
+					<label class="flex min-h-32 flex-1 flex-col gap-1 text-xs text-grey3">
+						Body
+						<textarea bind:value={draftBody} class="min-h-0 flex-1 resize-none rounded-xl border border-taupe3 bg-white/60 px-3 py-2 text-base leading-relaxed text-dark outline-none focus:border-grey2"></textarea>
+					</label>
+				</div>
+				<div class="mt-3 flex shrink-0 justify-center gap-2">
+					<button type="button" onclick={closeModal} class="rounded-md px-3 py-1.5 text-sm text-dark hover:bg-taupe2">Cancel</button>
+					<button type="button" onclick={saveEdit} class="rounded-md bg-dark px-3 py-1.5 text-sm font-medium text-taupe1 hover:bg-taupe5">Save</button>
+				</div>
+			{:else}
+			{#if current.title}<h2 class="mb-1 text-center text-xl font-semibold">{current.title}</h2>{/if}
+			{#if current.description}<p class="mb-4 text-center text-sm text-grey3 italic">{current.description}</p>{/if}
 			<div bind:this={textBox} onscroll={measureMore} class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
 				<p class="md whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html notes.get(current.id)}{:else}{current.text}{/if}</p>
 			</div>
 			{#if more}
 				<div class="pointer-events-none -mt-8 h-8 shrink-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] to-transparent text-center text-xl leading-8 text-grey2" aria-hidden="true">…</div>
+			{/if}
 			{/if}
 		</div>
 	</div>

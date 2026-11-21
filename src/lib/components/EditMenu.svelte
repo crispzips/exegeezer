@@ -106,7 +106,7 @@
 			{#if menuOpen && target.kind === 'section'}
 				<div
 					role="menu"
-					class="absolute right-0 top-full z-50 mt-1 w-max rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
+					class="absolute right-0 top-full z-50 mt-1 w-max raised rounded-md py-1 shadow-lg"
 				>
 					<button role="menuitem" onclick={() => choose('only')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">
 						Delete just this section

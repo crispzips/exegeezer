@@ -1,4 +1,5 @@
 <script>
+	import { noLineBreaks } from '#lib/utilities/editable.js';
 	import { tick } from 'svelte';
 	import { X } from '@boxicons/svelte';
 	import { findPosition, indexInfo, moveItem } from '#lib/utilities/editText.js';
@@ -234,7 +235,7 @@
 							bind:this={titleEl}
 							type="text"
 							bind:value={title}
-							class="rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal text-dark outline-none focus:border-grey2"
+							class="rounded-md px-2 py-1.5 font-normal"
 						/>
 					</label>
 				{/if}
@@ -245,8 +246,9 @@
 						<textarea
 							bind:this={textEl}
 							bind:value={text}
+							use:noLineBreaks
 							rows="7"
-							class="resize-y rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal leading-relaxed text-dark outline-none focus:border-grey2"
+							class="resize-y rounded-md px-2 py-1.5 font-normal leading-relaxed"
 						></textarea>
 					</label>
 					<label class="flex flex-col gap-1 text-sm font-medium">
@@ -254,7 +256,7 @@
 						<textarea
 							bind:value={description}
 							rows="3"
-							class="resize-y rounded-md border border-taupe2 bg-white/60 px-2 py-1.5 font-normal text-dark outline-none focus:border-grey2"
+							class="resize-y rounded-md px-2 py-1.5 font-normal"
 						></textarea>
 					</label>
 				{/if}
@@ -277,7 +279,7 @@
 									onchange={(e) => commit(field, e.currentTarget)}
 									onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
 									aria-invalid={errors[field] ? 'true' : undefined}
-									class="rounded-md border bg-white/60 px-2 py-1.5 text-sm text-dark outline-none focus:border-grey2 {errors[field] ? 'border-red' : 'border-taupe2'}"
+									class="rounded-md px-2 py-1.5 text-sm {errors[field] ? 'border-red' : ''}"
 								/>
 								{#if errors[field]}<span class="text-red">{errors[field]}</span>{/if}
 							</label>

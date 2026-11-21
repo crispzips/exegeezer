@@ -290,6 +290,20 @@ export function gapIndex(list, targetId, place, flat) {
 }
 
 /**
+ * How many paragraphs are dangling: not inside any section (before the first header, or in a text with
+ * no headers at all). Paragraphs have to be inside sections, so an edit must never raise this number.
+ * @param {Para[]} list
+ */
+export function danglingCount(list) {
+	let n = 0;
+	for (const p of list) {
+		if ((p.level ?? 0) > 0) break;
+		n++;
+	}
+	return n;
+}
+
+/**
  * Insert items at a gap.
  * @template {Para} T
  * @param {T[]} list

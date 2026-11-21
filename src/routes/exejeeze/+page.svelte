@@ -4,7 +4,8 @@
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
-    import { ArrowOutDownCircleHalf, Discussion, Edit, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll } from '@boxicons/svelte';
+    import { replaceState } from '$app/navigation';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -14,11 +15,12 @@
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
     import NewTextDialog from '#lib/components/NewTextDialog.svelte';
+    import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
     import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
-    import { applyDrop, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
+    import { applyDrop, danglingCount, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** the layout's data: `user` is the signed-in user, or null (then the app shows the example text and nothing else works) */
     let { data } = $props();
@@ -70,7 +72,8 @@
      * @param {{ id: string, originalIndex: number, text: string, level: number, children?: unknown[] }[]} list
      */
     function withFrontmatter(list) {
-        const level = Math.min(...list.filter((p) => p.level > 0).map((p) => p.level));
+        const headers = list.filter((p) => p.level > 0).map((p) => p.level);
+        const level = headers.length ? Math.min(...headers) : 1;
         const header = {
             id: crypto.randomUUID(),
             originalIndex: 0,
@@ -102,8 +105,11 @@
     // ---- Saving: the main text lives in the database ----
     /** id of the saved text the main pane shows (null until it has been saved once) */
     /** @type {string | null} */
-    let textId = null;
+    let textId = $state(null);
     let textTitle = $state('Untitled');
+    /** the names the loaded text is by (empty: none shown) */
+    /** @type {string[]} */
+    let textAuthors = $state([]);
     /** 'private' | 'public', chosen in the new-text dialog before a text is first saved */
     let textVisibility = '';
     /** @type {{ title: string, run: (v: { title: string, visibility: string }) => void } | null} */
@@ -127,6 +133,38 @@
             ...(level === 0 && description ? { description } : {})
         }));
 
+    /** Replace what the main pane shows with a saved text. @param {string} id */
+    async function showSaved(id) {
+        const res = await fetch(`/api/texts/${id}`);
+        if (!res.ok) throw new Error(`${res.status}`);
+        const saved = await res.json();
+        textId = saved.id;
+        markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
+        textTitle = saved.title;
+        textAuthors = saved.authors ?? [];
+        mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
+        lastSaved = JSON.stringify(toItems(mainText));
+        history.clear();
+        focusId = null;
+        startEditId = null;
+        replaceState(`/exejeeze?text=${saved.id}`, {});
+    }
+
+    /** Make an identical copy (COPYOF--<name>) and show it in place of the original. */
+    async function duplicate() {
+        const id = textId;
+        if (!id) return;
+        try {
+            await queue; // let any save in flight finish first
+            const res = await fetch(`/api/texts/${id}/duplicate`, { method: 'POST' });
+            if (!res.ok) throw new Error(`${res.status}`);
+            await showSaved((await res.json()).id);
+        } catch (err) {
+            console.warn('Could not duplicate the text', err);
+            alert('Could not duplicate the text.');
+        }
+    }
+
     /** Show the most recently changed saved text, if there is one. */
     async function loadSaved() {
         try {
@@ -135,12 +173,7 @@
             // ?text=<id> (from the profile page) picks which text to open; otherwise the most recent
             const wanted = new URLSearchParams(location.search).get('text');
             const pick = texts.find((/** @type {any} */ t) => t.id === wanted) ?? texts[0];
-            const saved = await (await fetch(`/api/texts/${pick.id}`)).json();
-            textId = saved.id;
-            markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
-            textTitle = saved.title;
-            mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
-            lastSaved = JSON.stringify(toItems(mainText));
+            await showSaved(pick.id);
             return true;
         } catch (err) {
             console.warn('Could not load the saved text', err);
@@ -197,7 +230,7 @@
             mainText = EXAMPLE_ITEMS.map((p) => ({ ...p }));
             return;
         }
-        // ?new (from the profile page): start a blank text, in editing mode
+        // ?new (from the profile page): start a blank text, in writing mode
         const startNew = new URLSearchParams(location.search).has('new');
         if (!startNew && !(await loadSaved())) {
             const load = Object.values(dissertationFiles)[0];
@@ -227,11 +260,20 @@
     /** @type {History<typeof mainText>} */
     const history = new History();
 
-    /** apply an edit to the main text, remembering the text it replaces */
-    /** @param {typeof mainText} next */
+    /**
+     * Apply an edit to the main text, remembering the text it replaces. Paragraphs have to be inside sections, in
+     * every view: an edit that would leave a new paragraph dangling (above the first section) is refused.
+     * @param {typeof mainText} next
+     * @returns {boolean} whether the edit was applied
+     */
     function commit(next) {
+        if (danglingCount(next) > danglingCount(mainText)) {
+            alert('Paragraphs have to be inside a section. Add a section first.');
+            return false;
+        }
         history.record(mainText);
         mainText = next;
+        return true;
     }
 
     function undo() {
@@ -244,7 +286,7 @@
         if (next) mainText = next;
     }
 
-    /** Cmd/Ctrl+Z (undo) and Shift+Cmd/Ctrl+Z or Ctrl+Y (redo) in editing mode, leaving text fields to their own undo */
+    /** Cmd/Ctrl+Z (undo) and Shift+Cmd/Ctrl+Z or Ctrl+Y (redo) in writing mode, leaving text fields to their own undo */
     /** @param {KeyboardEvent} e */
     function onKeydown(e) {
         if (!editing || !(e.metaKey || e.ctrlKey) || e.altKey) return;
@@ -310,6 +352,11 @@
         commit(moveItem(next, id, position));
     }
 
+    /** @param {{ id: string, title: string }} change a section's new title */
+    function renameSectionTitle({ id, title }) {
+        if (title.trim()) commit(renameSection(mainText, id, title));
+    }
+
     /** @param {{ id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }} drop */
     function moveByDrag(drop) {
         commit(applyDrop(mainText, drop, view === 'linear'));
@@ -324,6 +371,14 @@
     /** @type {string | null} */
     let startEditId = $state(null);
 
+    /** Enter in a paragraph: a new empty paragraph directly below it, opened for writing. @param {string} id */
+    function newParagraphBelow(id) {
+        const at = mainText.findIndex((p) => p.id === id) + 1;
+        if (at === 0) return;
+        const item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
+        if (commit(insertAt(mainText, at, [item]))) startEditId = item.id;
+    }
+
     // ---- Editing: inject at an interstitial landing zone ----
     /** where the next injection from the Load Text modal goes (a gap in the main text), or null for the usual choice */
     /** @type {number | null} */
@@ -335,8 +390,7 @@
         if (gap === -1) return;
         if (mode === 'empty') {
             const item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
-            commit(insertAt(mainText, gap, [item]));
-            startEditId = item.id; // the editing cursor goes straight into the new paragraph
+            if (commit(insertAt(mainText, gap, [item]))) startEditId = item.id; // the editing cursor goes straight into the new paragraph
         } else {
             injectGap = gap;
             dialogEl?.showModal();
@@ -347,15 +401,20 @@
      * Add an empty paragraph or section at a gap (the cascading view's plus). A new section's
      * level is its sibling's, or one below the section the gap is inside (1 at the top);
      * like any header it takes in what follows it up to the next header of its level or higher.
-     * @param {{ targetId: string, place: 'before' | 'after', kind: 'paragraph' | 'section' }} req
+     * @param {{ targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section' }} req
      * @returns {string | undefined} the new item's id (the view centres its bubble)
      */
     function addAtGap({ targetId, place, kind }) {
-        const at = gapIndex(mainText, targetId, place, false);
+        // 'inside': the first item of a section, right after its header
+        const target = mainText.findIndex((p) => p.id === targetId);
+        const at = place === 'inside' ? (target === -1 ? -1 : target + 1) : gapIndex(mainText, targetId, place, false);
         if (at === -1) return;
         /** @type {{ id: string, originalIndex: number, text: string, level: number }} */
         let item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
-        if (kind === 'section') {
+        if (kind === 'section' && place === 'inside') {
+            const level = Math.min(6, (mainText[target].level ?? 0) + 1);
+            item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
+        } else if (kind === 'section') {
             let level = 1;
             for (let k = mainText.findIndex((p) => p.id === targetId); k >= 0; k--) {
                 const lv = mainText[k].level ?? 0;
@@ -366,8 +425,88 @@
             }
             item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
         }
-        commit(insertAt(mainText, at, [item]));
-        return item.id;
+        return commit(insertAt(mainText, at, [item])) ? item.id : undefined;
+    }
+
+    /** where the "Seed a text" button is: not clicked yet, or offering heading levels (a text begins with a section: paragraphs have to be inside sections) */
+    /** @type {'idle' | 'level'} */
+    let seedStep = $state('idle');
+    /** what the seed area shows: with no text loaded it starts as the "Seed a text" button; a loaded text that is merely blank goes straight to the choices */
+    const seedPhase = $derived(seedStep === 'idle' && textId ? 'level' : seedStep);
+    /**
+     * The heading levels a new section may have: 1 up to one deeper than the text already goes
+     * (so the first section is a heading 1 and no needless depth is created).
+     */
+    const seedLevels = $derived(
+        Array.from({ length: Math.min(6, mainText.reduce((deepest, p) => Math.max(deepest, p.level ?? 0), 0) + 1) }, (_, i) => i + 1)
+    );
+
+    /**
+     * Begin a text with one empty section.
+     * @param {number} [level] its heading level
+     */
+    function seedText(level = 1) {
+        seedStep = 'idle';
+        if (commit([{ id: crypto.randomUUID(), originalIndex: 0, text: `${'#'.repeat(level)} Untitled section`, level }])) markdown = true;
+    }
+
+    // ---- Whole-text menu (in the header): settings, delete, wipe clean ----
+    /** @type {{ id: string } | null} */
+    let settingsRequest = $state(null);
+
+    /** Show no text at all: the viewer as it is when nothing is loaded. */
+    function unloadText() {
+        textId = null;
+        textVisibility = '';
+        textTitle = 'Untitled';
+        textAuthors = [];
+        lastSaved = '';
+        mainText = [];
+        seedStep = 'idle';
+        history.clear();
+        focusId = null;
+        startEditId = null;
+        replaceState('/exejeeze?new', {});
+    }
+
+    /** @param {string} url @param {'DELETE' | 'POST'} method */
+    async function wholeTextCall(url, method) {
+        await queue; // let any save in flight finish first
+        const res = await fetch(url, { method });
+        if (!res.ok) throw new Error(`${res.status}`);
+    }
+
+    /** @param {'delete' | 'wipe'} kind */
+    function requestWhole(kind) {
+        const id = textId;
+        if (!id) return;
+        const name = textTitle.trim() ? `"${textTitle}"` : 'this text';
+        deleteRequest =
+            kind === 'delete'
+                ? {
+                      title: 'Delete this whole text?',
+                      message: `This permanently deletes ${name}, its content and its settings. This cannot be undone.`,
+                      confirm: 'Delete text',
+                      run: () => runWhole(`/api/texts/${id}`, 'DELETE', 'delete the text')
+                  }
+                : {
+                      title: 'Wipe this text clean?',
+                      message: `This permanently erases all of the content of ${name}. The text itself and its settings stay, as a blank slate. This cannot be undone.`,
+                      confirm: 'Wipe clean',
+                      run: () => runWhole(`/api/texts/${id}/wipe`, 'POST', 'wipe the text')
+                  };
+    }
+
+    /** @param {string} url @param {'DELETE' | 'POST'} method @param {string} what */
+    async function runWhole(url, method, what) {
+        try {
+            await wholeTextCall(url, method);
+        } catch (err) {
+            console.warn(`Could not ${what}`, err);
+            alert(`Could not ${what}.`);
+            return;
+        }
+        unloadText();
     }
 
     // ---- Load Text modal ----
@@ -416,7 +555,7 @@
         const makesNewText = injectGap === null && (mainText.length === 0 || where === 'replace');
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((/** @type {any} */ p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}), ...(p.title ? { title: p.title } : {}), ...(p.description ? { description: p.description } : {}) }));
-        const combined =
+        let combined =
             injectGap !== null
                 ? insertAt(mainText, injectGap, added)
                 : mainText.length === 0 || where === 'replace'
@@ -424,6 +563,10 @@
                 : where === 'prepend'
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
+        // paragraphs have to be inside sections: text with none above its first header goes into a Frontmatter section
+        if (combined[0] && (combined[0].level ?? 0) === 0 && danglingCount(combined) > (makesNewText ? 0 : danglingCount(mainText))) {
+            combined = withFrontmatter(combined);
+        }
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             textId = null;
@@ -458,16 +601,17 @@
         let injectmenu;
 
     // ---- Mode: reading (default), editing, or commenting (the toggle's order) ----
-    /** @typedef {'reading' | 'editing' | 'commenting'} Mode */
+    /** @typedef {'reading' | 'writing' | 'commenting'} Mode */
     /** @type {Mode} */
     let mode = $state('reading');
     /** @type {Mode[]} */
-    const MODES = ['reading', 'editing', 'commenting'];
-    const editing = $derived(mode === 'editing');
-    /** nothing loaded: the app can only be in editing mode (so there is a way to start a text) */
+    const MODES = ['reading', 'writing', 'commenting'];
+    /** whether the text can be changed (writing mode) */
+    const editing = $derived(mode === 'writing');
+    /** nothing loaded: the app can only be in writing mode (so there is a way to start a text) */
     const noText = $derived(ready && mainText.length === 0);
     $effect(() => {
-        if (noText) mode = 'editing';
+        if (noText) mode = 'writing';
         else if (!authed) mode = 'reading';
     });
     /** the mode button is locked when there is no text (editing only) or nobody is signed in (reading only) */
@@ -532,19 +676,54 @@
         <header class="flex shrink-0 items-center gap-2 border-b border-taupe2 bg-taupe1 px-6 py-2 text-dark">
             <Scroll class="shrink-0" />
             <h1 class="truncate text-lg font-semibold" title={textTitle}>{textTitle}</h1>
+            {#if authed && textId && textAuthors.length}
+                <!-- the byline: names in the sans font, the connecting words in the script font -->
+                <p class="min-w-0 truncate py-1 text-lg font-semibold">
+                    <span class="font-script text-2xl leading-none font-normal">by</span><span class="ml-2">{#each textAuthors as name, i (i)}{#if i > 0}{#if i === textAuthors.length - 1}{#if textAuthors.length > 2}<span class="font-script text-2xl leading-none font-normal">,</span>{/if}<span class="font-script mx-2 text-2xl leading-none font-normal">and</span>{:else}<span class="font-script mr-2 text-2xl leading-none font-normal">,</span>{/if}{/if}{name}{/each}</span>
+                </p>
+            {/if}
+            {#if authed && textId}
+                <!-- the whole-text menu -->
+                <span aria-hidden="true" class="shrink-0 cursor-default text-xl leading-none font-bold whitespace-pre text-taupe5 select-none">· · ·</span>
+                <div role="menu" aria-label="Whole text" class="flex shrink-0 items-center gap-1">
+                    <button role="menuitem" onclick={() => (settingsRequest = { id: /** @type {string} */ (textId) })} aria-label="Text settings" use:tip={'Text settings'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><FileCog /></button>
+                    <button role="menuitem" onclick={duplicate} aria-label="Duplicate text" use:tip={'Duplicate text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><CopyPlus /></button>
+                    <button role="menuitem" onclick={() => requestWhole('delete')} aria-label="Delete text" use:tip={'Delete text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><Trash /></button>
+                    <button role="menuitem" onclick={() => requestWhole('wipe')} aria-label="Wipe clean" use:tip={'Wipe clean'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><ToiletRoll /></button>
+                </div>
+            {/if}
             {#if !authed}
                 <span class="ml-auto flex shrink-0 items-center gap-3 text-sm text-grey3">
                     <span class="hidden sm:inline">You're viewing an example text.</span>
                 </span>
             {/if}
         </header>
-        <div class="min-h-0 flex-1">
+        <div class="relative min-h-0 flex-1">
+        {#if noText && authed}
+            <!-- nothing is loaded: one button to begin -->
+            <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                {#if seedPhase === 'level'}
+                    <!-- the heading levels on offer: only as deep as the text already goes, plus one -->
+                    <div class="pointer-events-auto flex items-center gap-5">
+                        {#each seedLevels as n (n)}
+                            <button onclick={() => seedText(n)} aria-label="Heading {n}" use:tip={`Heading ${n}`} data-tip-place="below" class="pop-in flex h-16 w-16 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2">
+                                <span class="text-3xl leading-none font-semibold" style="font-family: Georgia, serif">{'#'.repeat(n)}</span>
+                            </button>
+                        {/each}
+                    </div>
+                {:else}
+                    <button onclick={() => (seedStep = 'level')} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
+                        <Sapling class="text-taupe1!" /> Seed a text
+                    </button>
+                {/if}
+            </div>
+        {/if}
         {#if view === 'linear'}
-            <ParagraphViewer paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="No main text yet." synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer onnewbelow={editing ? newParagraphBelow : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'cascading'}
-            <CascadingViewer bind:this={hierarchy} onsettings={(r) => (editRequest = r)} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="No main text yet." onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="No main text yet." ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer onnewbelow={editing ? newParagraphBelow : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
     </div>
@@ -561,8 +740,8 @@
             <ArrowOutDownCircleHalf />
         </button>
 
-        <!-- View menu: choices pop out to the left -->
-        <div class="relative" bind:this={viewmenu}>
+        <!-- View menu: the choices open below the button, set off by thin lines like the editing helpers -->
+        <div class="flex w-full flex-col items-center gap-1" bind:this={viewmenu}>
             <button
                 onclick={() => (viewOpen = !viewOpen)}
                 aria-label="Change view"
@@ -577,7 +756,7 @@
             {#if viewOpen}
                 <div
                     role="menu"
-                    class="absolute right-full top-0 z-10 mr-2 flex gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
+                    class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1"
                 >
                     <button
                         role="menuitemradio"
@@ -640,19 +819,19 @@
         <button
             onclick={cycleMode}
             aria-label="Mode"
-            use:tip={!authed ? 'Reading mode (sign in to edit)' : noText ? 'Editing mode (no text is loaded)' : `${mode[0].toUpperCase() + mode.slice(1)} mode`}
+            use:tip={!authed ? 'Reading mode (sign in to edit)' : noText ? 'Writing mode (no text is loaded)' : `${mode[0].toUpperCase() + mode.slice(1)} mode`}
             aria-disabled={modeLocked}
             class="inline-grid items-center justify-center rounded-md p-1 text-dark {modeLocked ? 'cursor-not-allowed opacity-60' : 'hover:bg-taupe2'}"
         >
             {#key mode}
                 <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">
-                    {#if mode === 'editing'}<Edit />{:else if mode === 'commenting'}<Discussion />{:else}<Reading />{/if}
+                    {#if mode === 'writing'}<PencilEditCircle />{:else if mode === 'commenting'}<Discussion />{:else}<Reading />{/if}
                 </span>
             {/key}
         </button>
 
         {#if editing}
-            <!-- Editing helpers: shown under the mode button, only in editing mode -->
+            <!-- Writing helpers: shown under the mode button, only in writing mode -->
             <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
                 <button onclick={undo} disabled={!history.canUndo} aria-label="Undo" use:tip={'Undo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Undo /></button>
                 <button onclick={redo} disabled={!history.canRedo} aria-label="Redo" use:tip={'Redo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Redo /></button>
@@ -664,6 +843,7 @@
 <MenuTip />
 <ConfirmDialog bind:request={deleteRequest} />
 <NewTextDialog bind:request={newTextRequest} />
+<TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
@@ -732,7 +912,7 @@
                 {#if injectOpen && mainText.length > 0 && injectGap === null}
                     <div
                         role="menu"
-                        class="absolute right-0 z-10 mt-2 w-40 origin-top-right rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
+                        class="absolute right-0 z-10 mt-2 w-40 origin-top-right raised rounded-md py-1 shadow-lg"
                     >
                         <button role="menuitem" onclick={() => inject('prepend')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Prepend</button>
                         <button role="menuitem" onclick={() => inject('append')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Append</button>

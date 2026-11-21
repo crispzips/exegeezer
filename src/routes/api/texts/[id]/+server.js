@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { isProductionStatus, isVisibility, loadText, parseItems, saveText } from '#lib/server/texts.js';
+import { deleteText, isProductionStatus, isVisibility, loadText, parseItems, saveText } from '#lib/server/texts.js';
 
 /** A text with its paragraphs and sections arranged in order. */
 export async function GET({ params, locals }) {
@@ -23,5 +23,12 @@ export async function PUT({ params, request, locals }) {
 		...(body.visibility !== undefined ? { visibility: body.visibility } : {})
 	};
 	if (!(await saveText(params.id, locals, items, title, status))) error(404, 'No such text');
+	return json({ ok: true });
+}
+
+/** Permanently delete a text. */
+export async function DELETE({ params, locals }) {
+	if (!locals.user) error(401, 'Sign in to use your texts');
+	if (!(await deleteText(params.id, locals))) error(404, 'No such text');
 	return json({ ok: true });
 }

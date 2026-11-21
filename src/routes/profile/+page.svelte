@@ -160,7 +160,7 @@
 						else if (e.key === 'Escape') cancel();
 					}}
 					onblur={() => (draft.trim() === p.name ? cancel() : formEl.requestSubmit())}
-					class="w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 text-2xl font-semibold text-dark outline-none focus:border-grey2"
+					class="w-full rounded-md px-2 py-1 text-2xl font-semibold"
 				/>
 				<p class="mt-1 text-xs text-grey3">Enter to save, Esc to cancel.</p>
 			{:else}
@@ -354,7 +354,7 @@
 												else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPersonaField(); }
 											}}
 											onblur={commitPersonaField}
-											class="w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 text-lg font-semibold outline-none focus:border-grey2"
+											class="w-full rounded-md px-2 py-1 text-lg font-semibold"
 										/>
 									{:else if detail.isSelf}
 										<h2 class="truncate px-2 py-1 text-lg font-semibold" title="Your default persona's name can't be changed">{detail.name}</h2>
@@ -383,7 +383,7 @@
 											else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPersonaField(); }
 										}}
 										onblur={commitPersonaField}
-										class="mt-0.5 w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 outline-none focus:border-grey2"
+										class="mt-0.5 w-full rounded-md px-2 py-1"
 									/>
 								{:else}
 									<button type="button" onclick={() => (pfield = 'image')} title="Click to edit" class="mt-0.5 block w-full cursor-text truncate rounded-md px-2 py-1 text-left hover:bg-taupe2 {detail.image ? 'text-dark' : 'text-grey3'}">{detail.image || 'None'}</button>
@@ -401,7 +401,7 @@
 										aria-label="Description"
 										onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelPersonaField(); } }}
 										onblur={commitPersonaField}
-										class="mt-0.5 w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 outline-none focus:border-grey2"
+										class="mt-0.5 w-full rounded-md px-2 py-1"
 									></textarea>
 								{:else}
 									<button type="button" onclick={() => (pfield = 'description')} title="Click to edit" class="mt-0.5 block w-full cursor-text rounded-md px-2 py-1 text-left whitespace-pre-line hover:bg-taupe2 {detail.description ? 'text-dark' : 'text-grey3'}">{detail.description || 'None'}</button>
@@ -454,8 +454,8 @@
 					class="flex flex-col gap-2 text-sm"
 				>
 					<h2 class="text-base font-semibold text-dark">New persona</h2>
-					<input name="name" placeholder="Name" value={form?.personaName ?? ''} class="rounded-md border border-taupe3 bg-white/60 px-2 py-1 text-dark outline-none focus:border-grey2" />
-					<textarea name="description" rows="2" placeholder="Description (optional)" class="rounded-md border border-taupe3 bg-white/60 px-2 py-1 text-dark outline-none focus:border-grey2">{form?.personaDescription ?? ''}</textarea>
+					<input name="name" placeholder="Name" value={form?.personaName ?? ''} class="rounded-md px-2 py-1" />
+					<textarea name="description" rows="2" placeholder="Description (optional)" class="rounded-md px-2 py-1">{form?.personaDescription ?? ''}</textarea>
 					{#if form?.personaMessage}<p role="alert" class="text-red">{form.personaMessage}</p>{/if}
 					<div class="mt-2 flex justify-end gap-2">
 						<button type="button" onclick={() => personaDialog?.close()} class="rounded-md px-3 py-1.5 hover:bg-taupe2">Cancel</button>
@@ -530,7 +530,7 @@
 						else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelField(); }
 					}}
 					onblur={commitField}
-					class="w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 text-lg font-semibold outline-none focus:border-grey2"
+					class="w-full rounded-md px-2 py-1 text-lg font-semibold"
 				/>
 			{:else}
 				<h2 class="text-lg font-semibold">
@@ -553,7 +553,7 @@
 									onchange={commitField}
 									onblur={() => { if (tfield === key) cancelField(); }}
 									onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelField(); } }}
-									class="w-full rounded-md border border-taupe3 bg-white/60 px-2 py-1 outline-none focus:border-grey2"
+									class="w-full rounded-md px-2 py-1"
 								>
 									{#each options as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
 								</select>

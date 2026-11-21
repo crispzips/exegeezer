@@ -34,6 +34,7 @@
 	 *   startEditId?: string | null,
 	 *   onstartedit?: () => void,
 	 *   empty?: string,
+	 *   onnewbelow?: (id: string) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
@@ -45,7 +46,7 @@
 	 * bubbles (a violet line) to move them there, or onto the first or second half of a
 	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined } = $props();
+	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined } = $props();
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -508,7 +509,7 @@
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
 			<p
-				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t) }}
+				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t), onenter: () => onnewbelow?.(node.paragraph.id) }}
 				class="flex-1 whitespace-pre-wrap outline-none"
 			></p>
 		{:else}

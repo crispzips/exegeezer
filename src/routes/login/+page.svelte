@@ -10,7 +10,7 @@
 	});
 	let busy = $state(false);
 
-	const field = 'rounded-md border border-taupe3 bg-white/60 px-3 py-2 text-dark outline-none focus:border-grey2';
+	const field = 'rounded-md px-3 py-2';
 </script>
 
 <svelte:head><title>{signup ? 'Sign up' : 'Sign in'} · Exegeezer</title></svelte:head>

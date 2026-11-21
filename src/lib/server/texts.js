@@ -1,5 +1,7 @@
 import { and, asc, desc, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.js';
+import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
+import { selfPersonaId } from '#lib/server/personae.js';
 import { paragraph, section, text_, textItem } from '#lib/server/db/schema.js';
 
 /**
@@ -194,9 +196,12 @@ async function writeItems(id, items) {
  * @param {App.Locals} locals
  * @param {string} title
  * @param {Item[]} items
+ * @param {string} visibility 'private' or 'public'
  */
-export async function createText(locals, title, items) {
-	const [row] = await db.insert(text_).values({ userId: owner(locals), title: title || 'Untitled' }).returning({ id: text_.id });
+export async function createText(locals, title, items, visibility) {
+	const uid = owner(locals);
+	const personaId = uid ? await selfPersonaId(uid) : null;
+	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, title: title || 'Untitled' }).returning({ id: text_.id });
 	await writeItems(row.id, items);
 	return row.id;
 }
@@ -207,12 +212,43 @@ export async function createText(locals, title, items) {
  * @param {App.Locals} locals
  * @param {Item[]} items
  * @param {string | undefined} title
+ * @param {{ productionStatus?: string, visibility?: string }} [status]
  * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
  */
-export async function saveText(id, locals, items, title) {
+export async function saveText(id, locals, items, title, status = {}) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
 	if (title) await db.update(text_).set({ title }).where(eq(text_.id, id));
+	if (status.productionStatus || status.visibility) await db.update(text_).set(status).where(eq(text_.id, id));
 	await writeItems(id, items);
+	return true;
+}
+
+/** @param {unknown} v */
+export const isVisibility = (v) => typeof v === 'string' && VISIBILITIES.includes(v);
+/** @param {unknown} v */
+export const isProductionStatus = (v) => typeof v === 'string' && PRODUCTION_STATUSES.includes(v);
+
+/**
+ * Delete a text and the paragraphs and sections that only it used.
+ * @param {string} id
+ * @param {App.Locals} locals
+ * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ */
+export async function deleteText(id, locals) {
+	const row = await accessible(id, locals);
+	if (!row) return false;
+	await db.transaction(async (tx) => {
+		const items = await tx.select({ p: textItem.paragraphId, s: textItem.sectionId }).from(textItem).where(eq(textItem.textId, id));
+		await tx.delete(text_).where(eq(text_.id, id)); // its text_item rows go with it
+		const ps = /** @type {string[]} */ (items.map((i) => i.p).filter(Boolean));
+		const ss = /** @type {string[]} */ (items.map((i) => i.s).filter(Boolean));
+		for (let k = 0; k < ps.length; k += CHUNK) {
+			await tx.delete(paragraph).where(and(inArray(paragraph.id, ps.slice(k, k + CHUNK)), notExists(tx.select().from(textItem).where(eq(textItem.paragraphId, paragraph.id)))));
+		}
+		for (let k = 0; k < ss.length; k += CHUNK) {
+			await tx.delete(section).where(and(inArray(section.id, ss.slice(k, k + CHUNK)), notExists(tx.select().from(textItem).where(eq(textItem.sectionId, section.id)))));
+		}
+	});
 	return true;
 }

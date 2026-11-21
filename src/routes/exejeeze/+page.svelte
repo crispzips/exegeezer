@@ -13,6 +13,7 @@
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+    import NewTextDialog from '#lib/components/NewTextDialog.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
@@ -103,6 +104,10 @@
     /** @type {string | null} */
     let textId = null;
     let textTitle = $state('Untitled');
+    /** 'private' | 'public', chosen in the new-text dialog before a text is first saved */
+    let textVisibility = '';
+    /** @type {{ title: string, run: (v: { title: string, visibility: string }) => void } | null} */
+    let newTextRequest = $state(null);
     /** autosave starts once the saved text (if any) has been loaded */
     let ready = $state(false);
     /** the list last loaded or saved, as JSON, so an unchanged text is not saved again */
@@ -148,11 +153,25 @@
         const items = toItems($state.snapshot(mainText));
         const json = JSON.stringify(items);
         if (json === lastSaved || (!items.length && !textId)) return;
+        if (!textId && !textVisibility) {
+            // a new text: ask for its name and visibility first, then save
+            if (!newTextRequest) {
+                newTextRequest = {
+                    title: textTitle,
+                    run: ({ title, visibility }) => {
+                        textTitle = title;
+                        textVisibility = visibility;
+                        save();
+                    }
+                };
+            }
+            return;
+        }
         queue = queue.then(async () => {
             try {
                 const res = textId
                     ? await fetch(`/api/texts/${textId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }) })
-                    : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, items }) });
+                    : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, visibility: textVisibility, items }) });
                 if (!res.ok) throw new Error(`${res.status}`);
                 if (!textId) textId = (await res.json()).id;
                 lastSaved = json;
@@ -178,7 +197,9 @@
             mainText = EXAMPLE_ITEMS.map((p) => ({ ...p }));
             return;
         }
-        if (!(await loadSaved())) {
+        // ?new (from the profile page): start a blank text, in editing mode
+        const startNew = new URLSearchParams(location.search).has('new');
+        if (!startNew && !(await loadSaved())) {
             const load = Object.values(dissertationFiles)[0];
             if (load) {
                 const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
@@ -406,6 +427,7 @@
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             textId = null;
+            textVisibility = ''; // asked again for the new text
             textTitle = loadName || 'Untitled';
             lastSaved = '';
         }
@@ -426,7 +448,7 @@
         const res = await fetch('/api/texts', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ title: `ORIGINAL--${loadName}`, items })
+            body: JSON.stringify({ title: `ORIGINAL--${loadName}`, visibility: 'private', items })
         });
         if (!res.ok) throw new Error(`${res.status}`);
     }
@@ -641,6 +663,7 @@
 
 <MenuTip />
 <ConfirmDialog bind:request={deleteRequest} />
+<NewTextDialog bind:request={newTextRequest} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />

@@ -13,6 +13,7 @@ import { count, isNull } from 'drizzle-orm';
 import { sendEmail } from '#lib/server/email.ts';
 import { db } from '#lib/server/db/index.js';
 import { text_, user } from '#lib/server/db/schema.js';
+import { ensureSelfPersona } from '#lib/server/personae.js';
 
 export const auth = betterAuth({
 	baseURL: ORIGIN,
@@ -43,8 +44,10 @@ export const auth = betterAuth({
 	databaseHooks: {
 		user: {
 			create: {
-				// the very first account adopts every text saved before accounts existed
+				// every account (email or Google sign-up) starts with the persona "self";
+				// the very first account also adopts every text saved before accounts existed
 				after: async (created) => {
+					await ensureSelfPersona(created.id);
 					const [{ n }] = await db.select({ n: count() }).from(user);
 					if (n === 1) await db.update(text_).set({ userId: created.id }).where(isNull(text_.userId));
 				}

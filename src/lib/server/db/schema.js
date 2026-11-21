@@ -1,6 +1,6 @@
 export * from './schema';
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const user = pgTable("user", {
@@ -78,6 +78,7 @@ export const verification = pgTable(
 export const userRelations = relations(user, ({ many }) => ({
   sessions: many(session),
   accounts: many(account),
+  userPersonae: many(userPersona),
 }));
 
 export const sessionRelations = relations(session, ({ one }) => ({
@@ -111,16 +112,27 @@ export const text_ = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     // null = not tied to an account
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    // the persona the text is written as (new texts get their owner's "self")
+    personaId: uuid("persona_id").references(() => persona.id, { onDelete: "set null" }),
     title: text("title").notNull().default("Untitled"),
     // 'original' or 'commentary'
     type: text("type").notNull().default("original"),
+    // 'idea' | 'draft' | 'under review' | 'published'; new texts start as drafts
+    productionStatus: text("production_status").notNull().default("draft"),
+    // 'private' | 'public'; chosen by the user when the text is created
+    visibility: text("visibility").notNull().default("private"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
       .$onUpdate(() => /* @__PURE__ */ new Date())
       .notNull(),
   },
-  (table) => [index("text_userId_idx").on(table.userId)],
+  (table) => [
+    index("text_userId_idx").on(table.userId),
+    index("text_personaId_idx").on(table.personaId),
+    check("text_production_status_check", sql`${table.productionStatus} in ('idea', 'draft', 'under review', 'published')`),
+    check("text_visibility_check", sql`${table.visibility} in ('private', 'public')`),
+  ],
 );
 
 export const paragraph = pgTable("paragraph", {
@@ -178,4 +190,50 @@ export const textItemRelations = relations(textItem, ({ one }) => ({
   text: one(text_, { fields: [textItem.textId], references: [text_.id] }),
   paragraph: one(paragraph, { fields: [textItem.paragraphId], references: [paragraph.id] }),
   section: one(section, { fields: [textItem.sectionId], references: [section.id] }),
+}));
+
+// ---------------------------------------------------------------------------
+// Personae. A user (an author) can have several personae, and a persona can be
+// shared by several users: many-to-many through `user_persona`.
+// ---------------------------------------------------------------------------
+
+export const persona = pgTable("persona", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // address of the persona's picture (null = none)
+  image: text("image"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at")
+    .defaultNow()
+    .$onUpdate(() => /* @__PURE__ */ new Date())
+    .notNull(),
+});
+
+export const userPersona = pgTable(
+  "user_persona",
+  {
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+    // this is the user's default persona, "self": undeletable, and each user has exactly one
+    isSelf: boolean("is_self").default(false).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.userId, table.personaId] }),
+    uniqueIndex("user_persona_one_self_idx").on(table.userId).where(sql`${table.isSelf}`),
+    // which users share a given persona
+    index("user_persona_personaId_idx").on(table.personaId),
+  ],
+);
+
+export const personaRelations = relations(persona, ({ many }) => ({ userPersonae: many(userPersona) }));
+
+export const userPersonaRelations = relations(userPersona, ({ one }) => ({
+  user: one(user, { fields: [userPersona.userId], references: [user.id] }),
+  persona: one(persona, { fields: [userPersona.personaId], references: [persona.id] }),
 }));

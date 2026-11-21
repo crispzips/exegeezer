@@ -2,7 +2,8 @@ import { and, asc, desc, eq, inArray, isNull, notExists, sql } from 'drizzle-orm
 import { db } from '#lib/server/db/index.js';
 import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
-import { paragraph, section, text_, textItem } from '#lib/server/db/schema.js';
+import { isPublicized } from '#lib/textStatus.js';
+import { paragraph, persona, section, text_, textAuthor, textItem, userPersona } from '#lib/server/db/schema.js';
 
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
@@ -84,7 +85,7 @@ export async function listTexts(locals) {
  * Rebuild a text's ordered list from its items.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, title: string, items: Item[] } | null>}
+ * @returns {Promise<{ id: string, title: string, authors: string[], items: Item[] } | null>}
  */
 export async function loadText(id, locals) {
 	const row = await accessible(id, locals);
@@ -118,7 +119,7 @@ export async function loadText(id, locals) {
 					...(r.description ? { description: r.description } : {})
 				}
 	);
-	return { id: row.id, title: row.title, items };
+	return { id: row.id, title: row.title, authors: await authorNames(id, locals), items };
 }
 
 /**
@@ -202,6 +203,7 @@ export async function createText(locals, title, items, visibility) {
 	const uid = owner(locals);
 	const personaId = uid ? await selfPersonaId(uid) : null;
 	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, title: title || 'Untitled' }).returning({ id: text_.id });
+	if (personaId) await setAuthors(db, row.id, [personaId]);
 	await writeItems(row.id, items);
 	return row.id;
 }
@@ -251,4 +253,141 @@ export async function deleteText(id, locals) {
 		}
 	});
 	return true;
+}
+
+/**
+ * Erase all of a text's content, keeping the text itself (its title and other properties).
+ * Content only this text used is deleted; content other texts share stays with them.
+ * @param {string} id
+ * @param {App.Locals} locals
+ * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ */
+export async function wipeText(id, locals) {
+	const row = await accessible(id, locals);
+	if (!row) return false;
+	await writeItems(id, []);
+	return true;
+}
+
+/**
+ * A text's properties (everything but its content), for the settings modal.
+ * @param {string} id
+ * @param {App.Locals} locals
+ */
+export async function loadTextProperties(id, locals) {
+	const row = await accessible(id, locals);
+	if (!row) return null;
+	return {
+		id: row.id,
+		title: row.title,
+		type: row.type,
+		personaIds: await authorIds(id),
+		productionStatus: row.productionStatus,
+		visibility: row.visibility,
+		publicized: isPublicized(row),
+		createdAt: row.createdAt.toISOString(),
+		updatedAt: row.updatedAt.toISOString()
+	};
+}
+
+/**
+ * A text's authors (persona ids), first author first.
+ * @param {string} textId
+ * @returns {Promise<string[]>}
+ */
+export async function authorIds(textId) {
+	const rows = await db.select({ id: textAuthor.personaId }).from(textAuthor).where(eq(textAuthor.textId, textId)).orderBy(asc(textAuthor.position));
+	return rows.map((r) => r.id);
+}
+
+/**
+ * Set a text's authors (in order); `text.persona_id` follows the first one.
+ * @param {Pick<typeof db, 'delete' | 'insert' | 'update'>} conn the database or a transaction
+ * @param {string} textId
+ * @param {string[]} personaIds
+ */
+export async function setAuthors(conn, textId, personaIds) {
+	await conn.delete(textAuthor).where(eq(textAuthor.textId, textId));
+	if (personaIds.length) await conn.insert(textAuthor).values(personaIds.map((personaId, position) => ({ textId, personaId, position })));
+	await conn.update(text_).set({ personaId: personaIds[0] ?? null }).where(eq(text_.id, textId));
+}
+
+/**
+ * The names a text is by, in order (a user's "self" shows as their profile name).
+ * @param {string} textId
+ * @param {App.Locals} locals
+ * @returns {Promise<string[]>}
+ */
+async function authorNames(textId, locals) {
+	const choices = await authorChoices(locals);
+	return (await authorIds(textId)).map((id) => choices.find((c) => c.id === id)?.name).filter((n) => typeof n === 'string');
+}
+
+/**
+ * The personae the requester may write as, named as authors (their "self" shows as their profile name).
+ * @param {App.Locals} locals
+ */
+export async function authorChoices(locals) {
+	const uid = owner(locals);
+	if (!uid) return [];
+	const rows = await db
+		.select({ id: persona.id, name: persona.name, isSelf: userPersona.isSelf })
+		.from(userPersona)
+		.innerJoin(persona, eq(userPersona.personaId, persona.id))
+		.where(eq(userPersona.userId, uid))
+		.orderBy(desc(userPersona.isSelf), asc(persona.createdAt));
+	return rows.map((r) => ({ id: r.id, name: r.isSelf ? (locals.user?.name ?? r.name) : r.name }));
+}
+
+/**
+ * Change a text's properties.
+ * @param {string} id
+ * @param {App.Locals} locals
+ * @param {{ title: string, personaIds: string[], productionStatus: string, visibility: string }} next
+ * @returns {Promise<{ ok: true } | { ok: false, status: number, message: string }>}
+ */
+export async function updateTextProperties(id, locals, { title, personaIds, productionStatus, visibility }) {
+	const row = await accessible(id, locals);
+	if (!row) return { ok: false, status: 404, message: 'No such text' };
+	if (!title) return { ok: false, status: 400, message: 'Enter a title.' };
+	if (!isProductionStatus(productionStatus) || !isVisibility(visibility)) return { ok: false, status: 400, message: 'Choose a production status and visibility.' };
+	const choices = await authorChoices(locals);
+	const unique = [...new Set(personaIds)];
+	if (!unique.length || !unique.every((p) => choices.some((c) => c.id === p))) return { ok: false, status: 400, message: 'Choose at least one of your personae as an author.' };
+	if (isPublicized(row)) {
+		const had = await authorIds(id);
+		if (had.length !== unique.length || !had.every((p) => unique.includes(p))) return { ok: false, status: 400, message: "The authors of a published, public text can't be changed." };
+	}
+	await db.transaction(async (tx) => {
+		await tx.update(text_).set({ title, productionStatus, visibility }).where(eq(text_.id, id));
+		await setAuthors(tx, id, unique);
+	});
+	return { ok: true };
+}
+
+/**
+ * Copy a text into a new one called `COPYOF--<title>`, with the same properties and content.
+ * The copy gets fresh paragraph and section ids, so it shares nothing with the original.
+ * @param {string} id
+ * @param {App.Locals} locals
+ * @returns {Promise<string | null>} the copy's id; null when the text does not exist or is not the requester's
+ */
+export async function duplicateText(id, locals) {
+	const row = await accessible(id, locals);
+	const loaded = row && (await loadText(id, locals));
+	if (!row || !loaded) return null;
+	const [copy] = await db
+		.insert(text_)
+		.values({
+			userId: row.userId,
+			personaId: row.personaId,
+			type: row.type,
+			productionStatus: row.productionStatus,
+			visibility: row.visibility,
+			title: `COPYOF--${row.title}`.slice(0, 200)
+		})
+		.returning({ id: text_.id });
+	await setAuthors(db, copy.id, await authorIds(id));
+	await writeItems(copy.id, loaded.items.map((i) => ({ ...i, id: crypto.randomUUID() })));
+	return copy.id;
 }

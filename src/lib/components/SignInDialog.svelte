@@ -15,7 +15,7 @@
 		dialog.showModal();
 	}
 
-	const field = 'rounded-md border border-taupe3 bg-white/60 px-3 py-2 text-dark outline-none focus:border-grey2';
+	const field = 'rounded-md px-3 py-2';
 
 	/** post the form to a /login action; a redirect (signed in, or off to Google) leaves the page */
 	async function submit(e, next) {

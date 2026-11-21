@@ -65,7 +65,7 @@
 	</button>
 
 	{#if gap.open}
-		<div role="menu" class="absolute left-0 top-full z-50 mt-1 w-max rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg">
+		<div role="menu" class="absolute left-0 top-full z-50 mt-1 w-max raised rounded-md py-1 shadow-lg">
 			<button role="menuitem" onclick={() => choose('empty')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">
 				inject empty
 			</button>

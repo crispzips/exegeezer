@@ -1,8 +1,87 @@
+@import url("https://fonts.googleapis.com/css2?family=Momo+Signature&display=swap");
 @import "tailwindcss";
 
 body {
 	background-color: var(--color-taupe1);
     color: var(--color-dark);
+}
+
+/* Form defaults. Don't restyle a field with colour or border classes: these apply to every one.
+   All form text is taupe5 on a taupe1 background; the highlighter (hovered or chosen option) is taupe2.
+   Text fields look sunk into the page (dark top-left edge, light bottom-right, inner shadow);
+   dropdowns and their popup menus (`.raised`) look slightly lifted (the reverse, outer shadow). */
+@layer base {
+	input:not([type='checkbox'], [type='radio'], [type='file'], [type='hidden'], [type='range'], [type='color'], [type='submit'], [type='button']),
+	textarea {
+		background-color: var(--color-taupe1);
+		color: var(--color-taupe5);
+		border: 1px solid;
+		border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+		box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+	}
+	/* the closed dropdown sits in the plane of the form: flat, a plain thin border */
+	select {
+		background-color: var(--color-taupe1);
+		color: var(--color-taupe5);
+		border: 1px solid var(--color-taupe3);
+	}
+	option,
+	optgroup {
+		background-color: var(--color-taupe1);
+		color: var(--color-taupe5);
+	}
+	option:hover,
+	option:checked {
+		background-color: var(--color-taupe2);
+		box-shadow: 0 0 0 100px var(--color-taupe2) inset; /* Firefox paints option highlights with this */
+	}
+	/* the dropdown's popup (customizable selects, Chromium): slightly elevated, like our popup menus */
+	@supports (appearance: base-select) {
+		select,
+		select::picker(select) {
+			appearance: base-select;
+		}
+		select::picker(select) {
+			background-color: var(--color-taupe1);
+			color: var(--color-taupe5);
+			border: 1px solid;
+			border-color: var(--color-taupe3) var(--color-taupe4) var(--color-taupe4) var(--color-taupe3);
+			border-radius: 0.375rem;
+			padding: 0.25rem 0;
+			margin-top: 0.25rem;
+			box-shadow: 1px 3px 8px color-mix(in srgb, var(--color-taupe5) 25%, transparent);
+		}
+		select option {
+			padding: 0.375rem 0.75rem;
+		}
+		select option::checkmark {
+			color: var(--color-taupe5);
+		}
+		select::picker-icon {
+			color: var(--color-taupe5);
+		}
+	}
+	input::placeholder,
+	textarea::placeholder {
+		color: var(--color-taupe4);
+	}
+	:is(input, textarea, select):focus-visible {
+		outline: 2px solid var(--color-taupe3);
+		outline-offset: 1px;
+	}
+	label,
+	legend {
+		color: var(--color-taupe5);
+	}
+}
+
+/* A popup menu that looks slightly elevated: light top-left edge, dark bottom-right */
+@layer components {
+	.raised {
+		background-color: var(--color-taupe1);
+		border: 1px solid;
+		border-color: var(--color-taupe3) var(--color-taupe4) var(--color-taupe4) var(--color-taupe3);
+	}
 }
 
 /* `static` always emits every theme colour as a CSS variable, not only the ones
@@ -12,6 +91,8 @@ body {
      Use `rounded-bubble` on any square icon tile. */
   --radius-bubble: 37.5%;
   --font-sans: "Atkinson Hyperlegible", ui-sans-serif, system-ui, sans-serif;
+  /* the connecting words of a byline ("by", "and", commas); names stay in the sans font */
+  --font-script: "Momo Signature", cursive;
   --color-dark: #002b36;
   --color-lessdark: #073642;
   --color-grey4: #586e75;
@@ -61,3 +142,10 @@ body {
 
 /* every icon is drawn in taupe5 (the icons paint with currentColor) */
 svg[fill="currentColor"] { color: var(--color-taupe5); }
+
+/* a button that pops in: grows from a little smaller with a slight overshoot */
+@keyframes pop-in {
+	from { transform: scale(0.6); opacity: 0; }
+	to { transform: scale(1); opacity: 1; }
+}
+.pop-in { animation: pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both; }

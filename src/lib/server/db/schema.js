@@ -135,6 +135,25 @@ export const text_ = pgTable(
   ],
 );
 
+// A text can be by several personae. `text_author` lists them in order (position 0 is the first
+// author); `text.persona_id` mirrors the first author so older code that reads one author keeps working.
+export const textAuthor = pgTable(
+  "text_author",
+  {
+    textId: uuid("text_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+    position: integer("position").notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.textId, table.personaId] }),
+    index("text_author_personaId_idx").on(table.personaId),
+  ],
+);
+
 export const paragraph = pgTable("paragraph", {
   id: uuid("id").primaryKey().defaultRandom(),
   body: text("body").notNull(),

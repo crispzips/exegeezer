@@ -26,6 +26,12 @@ export class History {
 		return this.#future.length > 0;
 	}
 
+	/** Forget every step (the text they were steps of is gone). */
+	clear() {
+		this.#past = [];
+		this.#future = [];
+	}
+
 	/**
 	 * Record an edit: remember `current`, forget any redo steps.
 	 * @param {T} current the value before the edit

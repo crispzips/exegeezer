@@ -5,7 +5,8 @@ import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
  * The menu that opens beside the pointer stays where the pointer first entered the zone,
  * and a short grace period on leaving lets the pointer travel to it.
  *
- * @typedef {{ id: string, place: 'before' | 'after', axis: 'x' | 'y', at?: { x: number, y: number } }} GapTarget
+ * `place` 'inside' (cascading view only) is the gap just beyond a section bubble, where its contents begin.
+ * @typedef {{ id: string, place: 'before' | 'after' | 'inside', axis: 'x' | 'y', at?: { x: number, y: number } }} GapTarget
  */
 export class GapHover {
 	/** @type {GapTarget | null} */
@@ -95,6 +96,6 @@ export class GapHover {
 			if (axis === 'y') return place === 'before' ? 'mt-12' : 'mb-12';
 			return place === 'before' ? 'ml-12' : 'mr-12';
 		}
-		return this.lit && this.target?.id === id ? gapLineClass(this.target.place, this.target.axis) : '';
+		return this.lit && this.target?.id === id && this.target.place !== 'inside' ? gapLineClass(this.target.place, this.target.axis) : '';
 	}
 }

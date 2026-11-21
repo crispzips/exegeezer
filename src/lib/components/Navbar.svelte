@@ -44,7 +44,7 @@
 			{#if open}
 				<div
 					role="menu"
-					class="absolute right-0 mt-2 w-48 origin-top-right rounded-md border border-taupe2 bg-taupe1 py-1 shadow-lg"
+					class="absolute right-0 mt-2 w-48 origin-top-right raised rounded-md py-1 shadow-lg"
 				>
 					{#if user}
 						<a href="/profile" role="menuitem" class="block px-4 py-2 text-xs text-grey3 hover:bg-taupe2">

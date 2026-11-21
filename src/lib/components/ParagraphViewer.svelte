@@ -29,6 +29,7 @@
 	 *   focusId?: string | null,
 	 *   onfocusitem?: (id: string) => void,
 	 *   startEditId?: string | null,
+	 *   onnewbelow?: (id: string) => void,
 	 *   onstartedit?: () => void,
 	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
@@ -63,7 +64,7 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, markdown = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, markdown = false } = $props();
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -700,7 +701,7 @@
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
 						<p
-							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t) }}
+							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t), onenter: () => onnewbelow?.(para.id) }}
 							class="flex-1 whitespace-pre-wrap outline-none"
 						></p>
 					{:else}

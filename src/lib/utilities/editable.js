@@ -1,12 +1,18 @@
+/** A paragraph is one line of text: any run of line breaks becomes a single space. @param {string} s */
+export const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
+
 /**
  * Svelte action: turn an element into an in-place plain-text editor. It is filled with
  * `text`, focused, and given a caret at character `caret` (default: the end). Leaving it (blur, or Ctrl/Cmd+Enter)
  * commits; Escape cancels. `onfinish` gets the new text, or null when cancelled or unchanged.
  *
+ * There are no line breaks in a paragraph: Enter finishes the edit (committing it) and calls
+ * `onenter`, which starts the next paragraph; pasted line breaks become spaces.
+ *
  * @param {HTMLElement} node
- * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void }} opts
+ * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void, onenter?: () => void }} opts
  */
-export function editable(node, { text, caret, onfinish }) {
+export function editable(node, { text, caret, onfinish, onenter }) {
 	node.contentEditable = 'plaintext-only';
 	if (node.contentEditable !== 'plaintext-only') node.contentEditable = 'true'; // older browsers
 	node.textContent = text;
@@ -28,7 +34,7 @@ export function editable(node, { text, caret, onfinish }) {
 	function finish(commit) {
 		if (done) return;
 		done = true;
-		const next = node.textContent ?? '';
+		const next = oneLine(node.textContent ?? '');
 		onfinish(commit && next !== text ? next : null);
 	}
 
@@ -40,23 +46,34 @@ export function editable(node, { text, caret, onfinish }) {
 		} else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			finish(true);
+		} else if (e.key === 'Enter' && !e.isComposing) {
+			e.preventDefault(); // never a line break: the paragraph ends and the next one begins
+			finish(true);
+			onenter?.();
 		}
+	}
+
+	/** @param {InputEvent} e */
+	function onbeforeinput(e) {
+		if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') e.preventDefault();
 	}
 
 	/** @param {ClipboardEvent} e */
 	function onpaste(e) {
 		e.preventDefault(); // paste as plain text even where plaintext-only is unsupported
-		document.execCommand('insertText', false, e.clipboardData?.getData('text/plain') ?? '');
+		document.execCommand('insertText', false, oneLine(e.clipboardData?.getData('text/plain') ?? ''));
 	}
 
 	const onblur = () => finish(true);
 	node.addEventListener('keydown', onkeydown);
 	node.addEventListener('paste', onpaste);
+	node.addEventListener('beforeinput', onbeforeinput);
 	node.addEventListener('blur', onblur);
 	return {
 		destroy() {
 			node.removeEventListener('keydown', onkeydown);
 			node.removeEventListener('paste', onpaste);
+			node.removeEventListener('beforeinput', onbeforeinput);
 			node.removeEventListener('blur', onblur);
 		}
 	};
@@ -92,4 +109,32 @@ export function caretOffsetAt(row, x, y, text) {
 	before.selectNodeContents(p);
 	before.setEnd(node, offset);
 	return before.toString().length;
+}
+
+/**
+ * Svelte action for a paragraph's body `<textarea>`: no line breaks. Enter does nothing, and any
+ * that arrive by paste or drop become spaces. (The input event updates `bind:value` as usual.)
+ * @param {HTMLTextAreaElement} node
+ */
+export function noLineBreaks(node) {
+	/** @param {KeyboardEvent} e */
+	function onkeydown(e) {
+		if (e.key === 'Enter' && !e.isComposing && !(e.metaKey || e.ctrlKey)) e.preventDefault();
+	}
+	function oninput() {
+		const clean = oneLine(node.value);
+		if (clean === node.value) return;
+		const at = node.selectionStart - (node.value.length - clean.length);
+		node.value = clean;
+		node.setSelectionRange(Math.max(0, at), Math.max(0, at));
+		node.dispatchEvent(new Event('input', { bubbles: true })); // let bind:value see the cleaned text
+	}
+	node.addEventListener('keydown', onkeydown);
+	node.addEventListener('input', oninput);
+	return {
+		destroy() {
+			node.removeEventListener('keydown', onkeydown);
+			node.removeEventListener('input', oninput);
+		}
+	};
 }

@@ -9,6 +9,11 @@ class MenuTip {
 	y = $state(0);
 	/** the bubble's right edge: just left of the hovered button (px from the left of the window) */
 	x = $state(0);
+	/** the hovered button's horizontal centre and bottom edge (for tooltips placed below it) */
+	cx = $state(0);
+	bottom = $state(0);
+	/** 'left' of the button (the default, for the vertical menu) or 'below' it (set with `data-tip-place="below"`) */
+	place = $state('left');
 	/** @type {HTMLElement | null} */
 	owner = null;
 }
@@ -29,6 +34,10 @@ export function tip(node, text) {
 		menuTip.text = text;
 		menuTip.x = node.getBoundingClientRect().left;
 		menuTip.y = e.clientY;
+		const box = node.getBoundingClientRect();
+		menuTip.cx = box.left + box.width / 2;
+		menuTip.bottom = box.bottom;
+		menuTip.place = node.dataset.tipPlace === 'below' ? 'below' : 'left';
 	}
 	function hide() {
 		if (menuTip.owner === node) {

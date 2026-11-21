@@ -43,7 +43,7 @@
 			<label class="mt-3 flex flex-col gap-1 text-sm">
 				<span class="font-medium">Name</span>
 				<!-- svelte-ignore a11y_autofocus -->
-				<input autofocus bind:value={title} maxlength="200" class="rounded-md border border-taupe3 bg-white/60 px-2 py-1 outline-none focus:border-grey2" />
+				<input autofocus bind:value={title} maxlength="200" class="rounded-md px-2 py-1" />
 			</label>
 			<fieldset class="mt-3 text-sm">
 				<legend class="font-medium">Visibility</legend>

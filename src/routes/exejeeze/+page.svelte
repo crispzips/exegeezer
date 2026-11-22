@@ -5,7 +5,7 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, Paragraph, AlignLeft, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, Paragraph, AlignLeft, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll, X } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -41,8 +41,6 @@
     let loadSource = $state('computer');
     /** the loaded file's name without its extension (names the new text and the ORIGINAL-- copy) */
     let loadName = $state('');
-    /** a chosen own text's visibility: it is already named and set up, so the new-text dialog is not asked again for it */
-    let loadVisibility = $state('');
     /** the import question: keep an unaltered copy of the incoming text in the user's own texts (as `ORIGINAL--<name>`)? */
     let keepCopy = $state(false);
 
@@ -51,7 +49,6 @@
         const latest = uploadedfiles[uploadedfiles.length - 1];
         if (latest) {
             loadSource = 'computer';
-            loadVisibility = '';
             loadName = latest.name.replace(/\.[^.]+$/, '');
             // Markdown: drop the table of contents and its {#anchor} header links first
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
@@ -71,10 +68,9 @@
     let ownTextsOpen = $state(false);
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
-     * @param {{ title: string, visibility?: string, items: any[] }} saved */
+     * @param {{ title: string, items: any[] }} saved */
     function onOwnTextChosen(saved) {
         loadSource = 'own';
-        loadVisibility = saved.visibility ?? 'private';
         loadName = saved.title;
         previewMarkdown = saved.items.some((p) => p.level > 0);
         // fresh ids, so the preview shares nothing with the text it came from
@@ -580,6 +576,13 @@
     let settingsRequest = $state(null);
 
     /** Show no text at all: the viewer as it is when nothing is loaded. */
+    /** The X in the title bar: leave this text (it stays saved) and empty the viewer. */
+    async function closeText() {
+        save(); // any last edits go first
+        await queue;
+        unloadText();
+    }
+
     function unloadText() {
         try {
             localStorage.removeItem(REMEMBER_TEXT);
@@ -661,7 +664,7 @@
     let dialogEl;
 
     function openModal() {
-        if (!authed) return;
+        if (!authed || noText) return; // with no text there is nothing to load into: the Seed a text button starts one
         injectGap = null;
         dialogEl?.showModal();
     }
@@ -699,7 +702,9 @@
                 if (!confirm('The original copy could not be saved. Import the text anyway?')) return;
             }
         }
-        const makesNewText = injectGap === null && (mainText.length === 0 || where === 'replace');
+        const replacing = injectGap === null && (mainText.length === 0 || where === 'replace');
+        // one of the user's own texts only ever brings its body: it goes into the current text, which keeps its title and settings
+        const makesNewText = replacing && loadSource !== 'own';
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((/** @type {any} */ p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}), ...(p.title ? { title: p.title } : {}), ...(p.description ? { description: p.description } : {}) }));
         let combined =
@@ -711,13 +716,13 @@
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
         // paragraphs have to be inside sections: text with none above its first header goes into a Frontmatter section
-        if (combined[0] && (combined[0].level ?? 0) === 0 && danglingCount(combined) > (makesNewText ? 0 : danglingCount(mainText))) {
+        if (combined[0] && (combined[0].level ?? 0) === 0 && danglingCount(combined) > (replacing ? 0 : danglingCount(mainText))) {
             combined = withFrontmatter(combined);
         }
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             textId = null;
-            textVisibility = loadSource === 'own' ? loadVisibility : ''; // asked again for a new text, but not for one already made
+            textVisibility = ''; // asked again for the new text
             textTitle = loadName || 'Untitled';
             lastSaved = '';
         }
@@ -897,6 +902,8 @@
                     <button role="menuitem" onclick={() => requestWhole('delete')} aria-label="Delete text" use:tip={'Delete text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><Trash /></button>
                     <button role="menuitem" onclick={() => requestWhole('wipe')} aria-label="Wipe clean" use:tip={'Wipe clean'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><ToiletRoll /></button>
                 </div>
+                <!-- exit this text: empties the viewer (the text stays saved) -->
+                <button onclick={closeText} aria-label="Close text" use:tip={'Close text'} data-tip-place="below" class="ml-auto inline-flex shrink-0 items-center justify-center rounded-md p-1 hover:bg-taupe2"><X /></button>
             {/if}
             {#if !authed}
                 <span class="ml-auto flex shrink-0 items-center gap-3 text-sm text-grey3">
@@ -927,7 +934,10 @@
         {#if view === 'linear'}
             <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'rally'}
-            <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} unit={rallyUnit} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+            <!-- with no text there is nothing to pace, or to write into: only the Seed a text button shows -->
+            {#if !noText}
+                <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} unit={rallyUnit} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+            {/if}
         {:else if view === 'cascading'}
             <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
@@ -941,9 +951,9 @@
         <button
             onclick={openModal}
             aria-label="Load text"
-            aria-disabled={!authed}
-            use:tip={authed ? 'Load text' : 'Load text (sign in first)'}
-            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
+            aria-disabled={!authed || noText}
+            use:tip={!authed ? 'Load text (sign in first)' : noText ? 'Load text (seed a text first)' : 'Load text'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed && !noText ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
         >
             <ArrowOutDownCircleHalf />
         </button>

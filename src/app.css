@@ -189,3 +189,49 @@ input[type='range'].rally-speed {
   height: 7rem;
   accent-color: var(--color-violet);
 }
+
+/* Sliders in the rally setup: the track is hollow and sunk like our text fields (taupe edges, inner shadow);
+   only the part up to the thumb is filled, in the modal's accent (--mode). `--p` is the value as 0-1. */
+input[type='range'].form-range {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 2rem;
+  background: transparent;
+  --thumb: 2rem;
+  --fill: calc(var(--p, 0) * (100% - var(--thumb)) + var(--thumb) / 2);
+}
+input[type='range'].form-range::-webkit-slider-runnable-track {
+  height: 0.7rem;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  border: 1px solid;
+  border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+  box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+}
+input[type='range'].form-range::-moz-range-track {
+  height: 0.7rem;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  border: 1px solid;
+  border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+  box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+}
+input[type='range'].form-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-top: calc((0.7rem - var(--thumb)) / 2 - 1px);
+  border-radius: 999px;
+  background: var(--mode, var(--color-violet));
+  border: 2px solid var(--color-taupe1);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-taupe5) 40%, transparent);
+}
+input[type='range'].form-range::-moz-range-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 999px;
+  background: var(--mode, var(--color-violet));
+  border: 2px solid var(--color-taupe1);
+  box-sizing: border-box;
+}

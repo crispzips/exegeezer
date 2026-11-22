@@ -14,6 +14,7 @@ export async function POST({ request, locals }) {
 	const items = parseItems(body?.items);
 	if (!items) error(400, 'items must be a list of { id, text, level }');
 	if (!isVisibility(body.visibility)) error(400, "visibility must be 'private' or 'public'");
-	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+	// an empty title is allowed (a text seeded from another starts untitled); none sent means 'Untitled'
+	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : undefined;
 	return json({ id: await createText(locals, title, items, body.visibility) }, { status: 201 });
 }

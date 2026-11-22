@@ -5,11 +5,12 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, Paragraph, AlignLeft, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll, X } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import CascadingViewer from '#lib/components/CascadingViewer.svelte';
+    import RallySetup from '#lib/components/RallySetup.svelte';
     import RallyViewer from '#lib/components/RallyViewer.svelte';
     import { READ_WPM, SIZES, STYLES } from '#lib/utilities/rallyChunks.js';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
@@ -70,6 +71,10 @@
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
      * @param {{ title: string, items: any[] }} saved */
     function onOwnTextChosen(saved) {
+        if (seedingFromOwn) {
+            seedingFromOwn = false;
+            return void seedFrom(saved);
+        }
         loadSource = 'own';
         loadName = saved.title;
         previewMarkdown = saved.items.some((p) => p.level > 0);
@@ -547,8 +552,10 @@
     }
 
     /** where the "Seed a text" button is: not clicked yet, or offering heading levels (a text begins with a section: paragraphs have to be inside sections) */
-    /** @type {'idle' | 'level'} */
+    /** @type {'idle' | 'choose' | 'level'} */
     let seedStep = $state('idle');
+    /** the "From Your Texts" list was opened by seeding (a new text from an existing one), not by Load text */
+    let seedingFromOwn = false;
     /** what the seed area shows: with no text loaded it starts as the "Seed a text" button; a loaded text that is merely blank goes straight to the choices */
     const seedPhase = $derived(seedStep === 'idle' && textId ? 'level' : seedStep);
     /**
@@ -558,6 +565,30 @@
     const seedLevels = $derived(
         Array.from({ length: Math.min(6, mainText.reduce((deepest, p) => Math.max(deepest, p.level ?? 0), 0) + 1) }, (_, i) => i + 1)
     );
+
+    /** Seed from an existing text: pick one of the user's own texts (other users' texts will come later). */
+    function seedFromExisting() {
+        seedingFromOwn = true;
+        ownTextsOpen = true;
+    }
+
+    /**
+     * A new text with the chosen text's content and nothing else: no title, no settings carried over (it is a draft by its owner,
+     * private until they say otherwise). Made at once and opened.
+     * @param {{ items: any[] }} source
+     */
+    async function seedFrom(source) {
+        try {
+            const items = toItems(source.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i })));
+            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', items }) });
+            if (!res.ok) throw new Error(`${res.status}`);
+            await showSaved((await res.json()).id);
+            seedStep = 'idle';
+        } catch (err) {
+            console.warn('Could not seed the text', err);
+            alert('Could not seed a text from that one.');
+        }
+    }
 
     /**
      * Begin a text with one empty section.
@@ -584,6 +615,8 @@
     }
 
     function unloadText() {
+        rallyStarted = false;
+        rallyPlaying = false;
         try {
             localStorage.removeItem(REMEMBER_TEXT);
         } catch {
@@ -664,6 +697,7 @@
     let dialogEl;
 
     function openModal() {
+        seedingFromOwn = false;
         if (!authed || noText) return; // with no text there is nothing to load into: the Seed a text button starts one
         injectGap = null;
         dialogEl?.showModal();
@@ -799,7 +833,6 @@
                 if (authed) mode = saved.mode;
             }
             if (typeof saved.exploded === 'boolean') exploded = saved.exploded;
-            if (saved.rallyUnit === 'sentence' || saved.rallyUnit === 'paragraph') rallyUnit = saved.rallyUnit;
             if (STYLES.includes(saved.rallyStyle)) rallyStyle = saved.rallyStyle;
             if (Number.isInteger(saved.rallySize) && saved.rallySize >= 0 && saved.rallySize < SIZES.length) rallySize = saved.rallySize;
             if (Number.isInteger(saved.rallySpeed) && saved.rallySpeed >= 0 && saved.rallySpeed < READ_WPM.length) rallySpeed = saved.rallySpeed;
@@ -810,7 +843,7 @@
     });
 
     $effect(() => {
-        const settings = { view, mode: chosenMode, exploded, rallyUnit, rallyStyle, rallySize, rallySpeed };
+        const settings = { view, mode: chosenMode, exploded, rallyStyle, rallySize, rallySpeed };
         if (!restored) return;
         try {
             localStorage.setItem(REMEMBER, JSON.stringify(settings));
@@ -845,26 +878,70 @@
     /** @type {('linear' | 'hierarchical' | 'cascading' | 'rally')[]} */
     const VIEWS = ['linear', 'hierarchical', 'cascading', 'rally'];
     // rally view's settings: chunk unit, text size step, speed tick (unlabelled; ranges set in rallyChunks.js), and whether it is running
-    /** @type {'sentence' | 'paragraph'} */
-    let rallyUnit = $state('sentence');
     /** @type {'compose' | 'copy' | 'recall' | 'dictate'} */
     let rallyStyle = $state('compose');
     let rallySize = $state(4);
-    let rallySpeed = $state(3);
+    let rallySpeed = $state(6);
     let rallyPlaying = $state(false);
     /**
      * Rally's compose style hands over what was written: a new paragraph after `afterId` (or at the end), or, with `id`, added to that paragraph.
-     * @param {{ afterId: string | null, id: string | null, text: string }} add
+     * @param {{ afterId: string | null, text: string }} add
      * @returns {string | null} the paragraph it went into
      */
-    function composeInto({ afterId, id, text }) {
-        if (id && mainText.some((p) => p.id === id)) {
-            commit(mainText.map((p) => (p.id === id ? { ...p, text: `${p.text} ${text}` } : p)));
-            return id;
+    function composeInto({ afterId, text }) {
+        // the empty paragraph a rally began with takes the first one written
+        const fill = rallyFillId && mainText.find((p) => p.id === rallyFillId && p.text === '');
+        rallyFillId = null;
+        if (fill) {
+            commit(mainText.map((p) => (p.id === fill.id ? { ...p, text } : p)));
+            return fill.id;
         }
         const at = afterId ? mainText.findIndex((p) => p.id === afterId) : -1;
         const item = { id: crypto.randomUUID(), originalIndex: 0, text, level: 0 };
+        if (mainText.length === 0) {
+            // composing from nothing: paragraphs have to be inside a section, so an empty first section is begun too
+            const header = { id: crypto.randomUUID(), originalIndex: 0, text: '# ', level: 1 };
+            if (!commit([header, item].map((p, i) => ({ ...p, originalIndex: i })))) return null;
+            markdown = true;
+            return item.id;
+        }
         return commit(insertAt(mainText, at === -1 ? mainText.length : at + 1, [item])) ? item.id : null;
+    }
+    /** the rally has been started from its setup (until then the pane is empty and the setup modal offers the flag) */
+    let rallyStarted = $state(false);
+    /** the empty paragraph a rally from nothing began with (the first thing composed goes into it) */
+    let rallyFillId = /** @type {string | null} */ (null);
+    let rallySetupOpen = $state(false);
+    $effect(() => {
+        if (view !== 'rally') rallyStarted = false;
+        else if (!rallyStarted && !noText) rallySetupOpen = true; // arriving in rally: set it up first (with no text, the Seed a text button opens it)
+    });
+    async function startRally() {
+        rallySetupOpen = false;
+        rallyStarted = true; // before the text is made, so arriving with a text does not reopen the setup
+        if (noText) {
+            // a rally from nothing: a new text is made (untitled, private; a section with an empty paragraph) and opened in writing mode
+            rallyStyle = 'compose'; // nothing to copy
+            try {
+                const items = [
+                    { id: crypto.randomUUID(), text: '# ', level: 1 },
+                    { id: crypto.randomUUID(), text: '', level: 0 }
+                ];
+                const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', items }) });
+                if (!res.ok) throw new Error(`${res.status}`);
+                await showSaved((await res.json()).id);
+                mode = chosenMode = 'writing';
+                markdown = true;
+                rallyFillId = mainText[mainText.length - 1]?.id ?? null;
+                startEditId = null;
+            } catch (err) {
+                console.warn('Could not begin a text', err);
+                alert('Could not begin a new text.');
+                rallyStarted = false;
+                return;
+            }
+        }
+        rallyPlaying = true;
     }
     $effect(() => {
         if (view !== 'rally') rallyPlaying = false;
@@ -883,10 +960,11 @@
 <!-- Main pane -->
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="flex min-w-0 flex-1 flex-col" bind:this={mainPane}>
-        <!-- the text's title: floats above every view, never part of the text -->
+        <!-- the text's title: floats above every view, never part of the text; there is none until a text has been seeded -->
+        {#if !noText}
         <header class="flex shrink-0 items-center gap-2 border-b border-taupe2 bg-taupe1 px-6 py-2 text-dark">
             <Scroll class="shrink-0" />
-            <h1 class="truncate text-lg font-semibold" title={textTitle}>{textTitle}</h1>
+            <h1 class="truncate text-lg font-semibold {textTitle ? '' : 'text-grey3'}" title={textTitle}>{textTitle || 'Untitled text'}</h1>
             {#if authed && textId && textAuthors.length}
                 <!-- the byline: names in the sans font, the connecting words in the script font -->
                 <p class="min-w-0 truncate py-1 text-lg font-semibold">
@@ -911,11 +989,16 @@
                 </span>
             {/if}
         </header>
+        {/if}
         <div class="relative min-h-0 flex-1">
-        {#if noText && authed}
-            <!-- nothing is loaded: one button to begin -->
+        {#if noText && authed && !(view === 'rally' && rallyStarted)}
+            <!-- nothing is loaded: one button to begin (in rally view it opens the rally's setup) -->
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-                {#if seedPhase === 'level'}
+                {#if view === 'rally'}
+                    <button onclick={() => (rallySetupOpen = true)} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
+                        <Sapling class="text-taupe1!" /> Seed a text
+                    </button>
+                {:else if seedPhase === 'level'}
                     <!-- the heading levels on offer: only as deep as the text already goes, plus one -->
                     <div class="pointer-events-auto flex items-center gap-5">
                         {#each seedLevels as n (n)}
@@ -924,8 +1007,14 @@
                             </button>
                         {/each}
                     </div>
+                {:else if seedPhase === 'choose'}
+                    <!-- a fresh text, or one seeded from an existing text -->
+                    <div class="pointer-events-auto flex items-center gap-8">
+                        <button onclick={() => (seedStep = 'level')} aria-label="Fresh text" use:tip={'A fresh text'} data-tip-place="below" class="pop-in flex h-20 w-20 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"><Clipboard width={40} height={40} /></button>
+                        <button onclick={seedFromExisting} aria-label="Seed from an existing text" use:tip={'Seed from an existing text'} data-tip-place="below" class="pop-in flex h-20 w-20 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"><ClipboardPlus width={40} height={40} /></button>
+                    </div>
                 {:else}
-                    <button onclick={() => (seedStep = 'level')} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
+                    <button onclick={() => (seedStep = 'choose')} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
                         <Sapling class="text-taupe1!" /> Seed a text
                     </button>
                 {/if}
@@ -935,8 +1024,13 @@
             <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'rally'}
             <!-- with no text there is nothing to pace, or to write into: only the Seed a text button shows -->
-            {#if !noText}
-                <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} unit={rallyUnit} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+            {#if rallyStarted}
+                <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+            {:else if !noText}
+                <!-- the rally has not started: an empty pane with the violet flag, which opens the setup -->
+                <div class="flex h-full items-center justify-center">
+                    <button onclick={() => (rallySetupOpen = true)} aria-label="Start rally" use:tip={'Start rally'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-violet px-6 py-3 text-taupe1 hover:bg-violet/90"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
+                </div>
             {/if}
         {:else if view === 'cascading'}
             <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
@@ -990,16 +1084,7 @@
         {#if view === 'rally'}
             <!-- Rally settings: chunk unit, text size, and a speed slider (ticks, no labels) -->
             <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
-                <button
-                    onclick={() => (rallyUnit = rallyUnit === 'sentence' ? 'paragraph' : 'sentence')}
-                    aria-label="Chunk size"
-                    use:tip={`Chunks: ${rallyUnit}s`}
-                    class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
-                >
-                    {#key rallyUnit}
-                        <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">{#if rallyUnit === 'paragraph'}<Paragraph />{:else}<AlignLeft />{/if}</span>
-                    {/key}
-                </button>
+                <button onclick={() => ((rallyPlaying = false), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
                 {#if editing}
                     <button
                         onclick={() => (rallyStyle = STYLES[(STYLES.indexOf(rallyStyle) + 1) % STYLES.length])}
@@ -1078,6 +1163,7 @@
         }}
     />
 {/if}
+<RallySetup bind:open={rallySetupOpen} writing={editing} empty={noText} bind:style={rallyStyle} bind:size={rallySize} bind:speed={rallySpeed} onstart={startRally} />
 <ConfirmDialog bind:request={deleteRequest} />
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />
@@ -1099,7 +1185,7 @@
         <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-0 z-40 flex items-center justify-center' : 'inline-block'}>
             <div class="pointer-events-auto relative z-50 inline-flex gap-5">
                 <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
-                <SourceButton name="From Your Texts" onclick={() => (ownTextsOpen = true)}><Swatch width={40} height={40} /></SourceButton>
+                <SourceButton name="From Your Texts" onclick={() => ((seedingFromOwn = false), (ownTextsOpen = true))}><Swatch width={40} height={40} /></SourceButton>
                 <SourceButton name="From Other Exegeezers"><Mesh width={40} height={40} /></SourceButton>
             </div>
         </div>

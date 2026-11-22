@@ -32,6 +32,16 @@ export class History {
 		this.#future = [];
 	}
 
+	/** The value before the latest recorded edit, if any (what undo would restore). */
+	get last() {
+		return this.#past.at(-1);
+	}
+
+	/** Forget the latest recorded edit as if it never happened (it cannot be redone either). */
+	discard() {
+		this.#past = this.#past.slice(0, -1);
+	}
+
 	/**
 	 * Record an edit: remember `current`, forget any redo steps.
 	 * @param {T} current the value before the edit

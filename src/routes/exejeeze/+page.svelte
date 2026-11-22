@@ -18,6 +18,7 @@
     import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
+    import OwnTextsDialog from '#lib/components/OwnTextsDialog.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
     import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
     import { applyDrop, danglingCount, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
@@ -59,6 +60,18 @@
                 askMatter();
             }
         }
+    }
+
+    let ownTextsOpen = $state(false);
+
+    /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
+     * @param {{ title: string, items: any[] }} saved */
+    function onOwnTextChosen(saved) {
+        loadSource = 'own';
+        loadName = saved.title;
+        previewMarkdown = saved.items.some((p) => p.level > 0);
+        // fresh ids, so the preview shares nothing with the text it came from
+        paragraphs = saved.items.map((p, i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
     }
 
     /** whether the text loaded in the preview is Markdown */
@@ -334,7 +347,7 @@
                   }
                 : {
                       title: 'Delete just this section?',
-                      message: `This permanently deletes the section heading${info.title.trim() ? ` "${info.title}"` : ''}. Its ${inside} stay in place.`,
+                      message: `This permanently deletes the section heading${info.title.trim() ? ` "${info.title}"` : ''}. Its ${inside} move into the section above it.`,
                       confirm: 'Delete section',
                       run: () => commit(removeSection(mainText, id, false))
                   };
@@ -367,7 +380,36 @@
         commit(mainText.map((p) => (p.id === id ? { ...p, ...fields } : p)));
     }
 
-    /** a just-injected empty paragraph the view should start editing at once (its body field), or null */
+    /**
+     * Bubbles made by Enter that are still waiting for their first content, each with the text as it was
+     * just before the bubble was made. A bubble left without any content is dropped again.
+     * @type {Map<string, typeof mainText>}
+     */
+    const fresh = new Map();
+
+    /** An edit in a view ended: a fresh bubble left unchanged is deleted (as if never made). @param {string} id @param {boolean} changed */
+    function leftBubble(id, changed) {
+        const before = fresh.get(id);
+        if (!before) return;
+        fresh.delete(id);
+        if (changed) return;
+        const item = mainText.find((p) => p.id === id);
+        if (!item) return;
+        const next = (item.level ?? 0) > 0 ? removeSection(mainText, id, false) : removeParagraph(mainText, id);
+        if (history.last === before) {
+            history.discard(); // the bubble's making was the latest step: take it back rather than add a step
+            mainText = next;
+        } else commit(next);
+        if (focusId === id) focusId = null;
+    }
+
+    /** Enter in a section's title: a new empty section directly after it (its sibling), opened for editing. @param {string} id */
+    function newSectionAfter(id) {
+        const newId = addAtGap({ targetId: id, place: 'after', kind: 'section', auto: true });
+        if (newId) startEditId = newId;
+    }
+
+    /** a just-injected empty paragraph the view should start editing at once (its body field, or a section's title), or null */
     /** @type {string | null} */
     let startEditId = $state(null);
 
@@ -376,7 +418,11 @@
         const at = mainText.findIndex((p) => p.id === id) + 1;
         if (at === 0) return;
         const item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
-        if (commit(insertAt(mainText, at, [item]))) startEditId = item.id;
+        const before = mainText;
+        if (commit(insertAt(mainText, at, [item]))) {
+            fresh.set(item.id, before);
+            startEditId = item.id;
+        }
     }
 
     // ---- Editing: inject at an interstitial landing zone ----
@@ -401,10 +447,11 @@
      * Add an empty paragraph or section at a gap (the cascading view's plus). A new section's
      * level is its sibling's, or one below the section the gap is inside (1 at the top);
      * like any header it takes in what follows it up to the next header of its level or higher.
-     * @param {{ targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section' }} req
+     * @param {{ targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean }} req (auto: made by Enter, so dropped again if left empty)
      * @returns {string | undefined} the new item's id (the view centres its bubble)
      */
-    function addAtGap({ targetId, place, kind }) {
+    function addAtGap({ targetId, place, kind, auto = false }) {
+        const before = mainText;
         // 'inside': the first item of a section, right after its header
         const target = mainText.findIndex((p) => p.id === targetId);
         const at = place === 'inside' ? (target === -1 ? -1 : target + 1) : gapIndex(mainText, targetId, place, false);
@@ -425,7 +472,9 @@
             }
             item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
         }
-        return commit(insertAt(mainText, at, [item])) ? item.id : undefined;
+        if (!commit(insertAt(mainText, at, [item]))) return;
+        if (auto) fresh.set(item.id, before); // made by Enter: dropped again if it is left empty
+        return item.id;
     }
 
     /** where the "Seed a text" button is: not clicked yet, or offering heading levels (a text begins with a section: paragraphs have to be inside sections) */
@@ -469,11 +518,28 @@
         replaceState('/exejeeze?new', {});
     }
 
+    /** After a wipe: the same text stays loaded (title, authors, settings), with no content. */
+    function blankText() {
+        mainText = [];
+        lastSaved = JSON.stringify([]); // so autosave sees nothing to save
+        seedStep = 'idle';
+        history.clear();
+        focusId = null;
+        startEditId = null;
+    }
+
     /** @param {string} url @param {'DELETE' | 'POST'} method */
     async function wholeTextCall(url, method) {
         await queue; // let any save in flight finish first
         const res = await fetch(url, { method });
         if (!res.ok) throw new Error(`${res.status}`);
+    }
+
+    /** A double-click on a paragraph while not writing: switch to writing mode and open that paragraph for editing (the cascading view edits the bubble in place). @param {string} id */
+    function writeAt(id) {
+        if (!authed || noText) return;
+        mode = 'writing';
+        if (view !== 'cascading') startEditId = id;
     }
 
     /** @param {'delete' | 'wipe'} kind */
@@ -487,18 +553,18 @@
                       title: 'Delete this whole text?',
                       message: `This permanently deletes ${name}, its content and its settings. This cannot be undone.`,
                       confirm: 'Delete text',
-                      run: () => runWhole(`/api/texts/${id}`, 'DELETE', 'delete the text')
+                      run: () => runWhole(`/api/texts/${id}`, 'DELETE', 'delete the text', unloadText)
                   }
                 : {
                       title: 'Wipe this text clean?',
                       message: `This permanently erases all of the content of ${name}. The text itself and its settings stay, as a blank slate. This cannot be undone.`,
                       confirm: 'Wipe clean',
-                      run: () => runWhole(`/api/texts/${id}/wipe`, 'POST', 'wipe the text')
+                      run: () => runWhole(`/api/texts/${id}/wipe`, 'POST', 'wipe the text', blankText)
                   };
     }
 
-    /** @param {string} url @param {'DELETE' | 'POST'} method @param {string} what */
-    async function runWhole(url, method, what) {
+    /** @param {string} url @param {'DELETE' | 'POST'} method @param {string} what @param {() => void} after what the page shows once it has worked */
+    async function runWhole(url, method, what, after) {
         try {
             await wholeTextCall(url, method);
         } catch (err) {
@@ -506,7 +572,7 @@
             alert(`Could not ${what}.`);
             return;
         }
-        unloadText();
+        after();
     }
 
     // ---- Load Text modal ----
@@ -679,7 +745,7 @@
             {#if authed && textId && textAuthors.length}
                 <!-- the byline: names in the sans font, the connecting words in the script font -->
                 <p class="min-w-0 truncate py-1 text-lg font-semibold">
-                    <span class="font-script text-2xl leading-none font-normal">by</span><span class="ml-2">{#each textAuthors as name, i (i)}{#if i > 0}{#if i === textAuthors.length - 1}{#if textAuthors.length > 2}<span class="font-script text-2xl leading-none font-normal">,</span>{/if}<span class="font-script mx-2 text-2xl leading-none font-normal">and</span>{:else}<span class="font-script mr-2 text-2xl leading-none font-normal">,</span>{/if}{/if}{name}{/each}</span>
+                    <span class="font-script text-xs leading-none font-normal">by</span><span class="ml-2">{#each textAuthors as name, i (i)}{#if i > 0}{#if i === textAuthors.length - 1}{#if textAuthors.length > 2}<span class="font-script text-xs leading-none font-normal">,</span>{/if}<span class="font-script mx-2 text-xs leading-none font-normal">and</span>{:else}<span class="font-script mr-2 text-xs leading-none font-normal">,</span>{/if}{/if}{name}{/each}</span>
                 </p>
             {/if}
             {#if authed && textId}
@@ -719,11 +785,11 @@
             </div>
         {/if}
         {#if view === 'linear'}
-            <ParagraphViewer onnewbelow={editing ? newParagraphBelow : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewbelow={editing ? newParagraphBelow : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'cascading'}
-            <CascadingViewer bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer onnewbelow={editing ? newParagraphBelow : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onrename={editing ? renameSectionTitle : undefined} onnewsection={editing ? newSectionAfter : undefined} onnewbelow={editing ? newParagraphBelow : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
     </div>
@@ -846,6 +912,7 @@
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
+<OwnTextsDialog bind:open={ownTextsOpen} onchoose={onOwnTextChosen} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 
 <!-- Load Text modal -->
@@ -861,7 +928,7 @@
         <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-0 z-40 flex items-center justify-center' : 'inline-block'}>
             <div class="pointer-events-auto relative z-50 inline-flex gap-5">
                 <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
-                <SourceButton name="From Your Texts"><Swatch width={40} height={40} /></SourceButton>
+                <SourceButton name="From Your Texts" onclick={() => (ownTextsOpen = true)}><Swatch width={40} height={40} /></SourceButton>
                 <SourceButton name="From Other Exegeezers"><Mesh width={40} height={40} /></SourceButton>
             </div>
         </div>

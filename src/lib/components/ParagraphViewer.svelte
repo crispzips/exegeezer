@@ -30,6 +30,7 @@
 	 *   onfocusitem?: (id: string) => void,
 	 *   startEditId?: string | null,
 	 *   onnewbelow?: (id: string) => void,
+	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   onstartedit?: () => void,
 	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
@@ -64,7 +65,7 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, markdown = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, onwrite = undefined, onleave = undefined, markdown = false } = $props();
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -74,6 +75,8 @@
 	let editing = $state(null);
 	/** where the caret goes when editing starts: the character nearest the double-click */
 	let editCaret = $state(0);
+	/** the caret for an edit that waits on writing mode (a double-click while reading): `editCaret` is reset when the edit starts */
+	let pendingCaret = 0;
 
 	// Leaving editing mode (the edit props go away) drops any open editor, menu or highlight
 	$effect(() => {
@@ -90,6 +93,7 @@
 	function finishEdit(id, text) {
 		if (editing === id) editing = null;
 		if (text !== null) onedit?.({ id, text });
+		onleave?.(id, text !== null);
 	}
 
 	// Footnote tooltip: hovering (or focusing) an in-text note mark shows the note's text.
@@ -224,7 +228,8 @@
 			if (!(el instanceof HTMLElement)) return;
 			editHover.clear();
 			gap.clear();
-			editCaret = 0;
+			editCaret = pendingCaret;
+			pendingCaret = 0;
 			editing = id;
 			el.scrollIntoView({ block: 'center', inline: 'center' });
 			onstartedit?.();
@@ -684,9 +689,15 @@
 							}
 						: undefined}
 					ondragend={onmove ? () => dd.end() : undefined}
-					ondblclick={onedit && (para.level ?? 0) === 0
+					ondblclick={(para.level ?? 0) === 0 && (onedit || onwrite)
 						? (e) => {
-								editCaret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
+								const caret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
+								if (!onedit) {
+									// reading: ask the page for writing mode, which then opens this paragraph for editing
+									pendingCaret = caret;
+									return onwrite?.(para.id);
+								}
+								editCaret = caret;
 								editHover.clear();
 								gap.clear();
 								editing = para.id;

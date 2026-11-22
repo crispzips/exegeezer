@@ -54,9 +54,11 @@ export function removeParagraph(list, id) {
 }
 
 /**
- * Delete a section. `withDescendants` false removes only its header, so its
- * paragraphs and sub-sections stay in place (and fall under the section above);
- * true removes the header and everything in it.
+ * Delete a section. `withDescendants` true removes the header and everything in it. False removes
+ * only the header and hands its contents to the section above: the next sibling above it (same level)
+ * takes the section's paragraphs (placed before that sibling's own subsections, so they stay its
+ * direct content) and its subsections (which follow the sibling's). With no sibling above (it is the
+ * first in its parent), the contents stay in place and fall under the parent.
  * @template {Para} T
  * @param {T[]} list
  * @param {string} id
@@ -65,8 +67,19 @@ export function removeParagraph(list, id) {
 export function removeSection(list, id, withDescendants) {
 	const i = list.findIndex((p) => p.id === id);
 	if (i === -1) return list;
-	const end = withDescendants ? sectionEnd(list, i) : i + 1;
-	return renumber([...list.slice(0, i), ...list.slice(end)]);
+	const end = sectionEnd(list, i);
+	if (withDescendants) return renumber([...list.slice(0, i), ...list.slice(end)]);
+	const level = list[i].level ?? 0;
+	// the sibling above: the nearest header before it at its own level, with nothing shallower in between
+	let j = i - 1;
+	while (j >= 0 && ((list[j].level ?? 0) === 0 || (list[j].level ?? 0) > level)) j--;
+	if (j < 0 || (list[j].level ?? 0) !== level) return renumber([...list.slice(0, i), ...list.slice(i + 1)]);
+	// the section's own paragraphs (before its first subsection) go before the sibling's first subsection
+	let k = i + 1;
+	while (k < end && (list[k].level ?? 0) === 0) k++;
+	let m = j + 1;
+	while (m < i && (list[m].level ?? 0) === 0) m++;
+	return renumber([...list.slice(0, m), ...list.slice(i + 1, k), ...list.slice(m, i), ...list.slice(k, end), ...list.slice(end)]);
 }
 
 /**

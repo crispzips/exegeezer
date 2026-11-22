@@ -1,6 +1,7 @@
 <script>
 	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
+	import { goto, invalidateAll } from '$app/navigation';
+	import TextsBrowser from '#lib/components/TextsBrowser.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash } from '@boxicons/svelte';
@@ -113,7 +114,7 @@
 	const tabs = ['Profile', 'Texts', 'Personae'];
 	let tab = $state('Profile');
 	/** 'list' | 'icons' */
-	let view = $state('list');
+	let view = $state(/** @type {'list' | 'icons'} */ ('list'));
 	const day = (iso) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
 	const typeLabel = { original: 'Original text', commentary: 'Commentary' };
 	const fmt = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });
@@ -228,46 +229,12 @@
 					{/if}
 				</div>
 				{#if data.texts.length}
-					{#if view === 'list'}
-						<div class="grid grid-cols-[1.25rem_minmax(0,1fr)_6.5rem_5.5rem_4rem_5rem_3.5rem] items-center gap-x-2 border-b border-taupe3 px-1 pb-1 text-xs text-grey3">
-							<span></span><span>Title</span><span>Author</span><span>Status</span><span>Visibility</span><span class="text-right">Created</span><span></span>
-						</div>
-						<ul class="divide-y divide-taupe3 text-sm">
-							{#each data.texts as t (t.id)}
-								{@const Icon = t.type === 'commentary' ? MessageCircleReply : Scroll}
-								<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
-								<li onclick={() => openTextEditor(t.id)} class="group grid grid-cols-[1.25rem_minmax(0,1fr)_6.5rem_5.5rem_4rem_5rem_3.5rem] cursor-pointer items-center gap-x-2 rounded-md px-1 hover:bg-taupe2">
-									<span title={typeLabel[t.type] ?? t.type}><Icon size="sm" /></span>
-									<!-- the title opens the properties modal (the whole row does too, for the mouse) -->
-									<button type="button" onclick={(e) => { e.stopPropagation(); openTextEditor(t.id); }} class="min-w-0 truncate py-2 text-left font-medium text-dark">{t.title}</button>
-									<span class="truncate text-xs text-dark" title={t.author ?? ''}>{t.author ?? '—'}</span>
-									<span class="truncate text-xs text-grey3">{t.productionStatus}</span>
-									<span class="truncate text-xs text-grey3">{t.visibility}</span>
-									<span class="text-right text-xs text-grey3">{day(t.createdAt)}</span>
-									<!-- appear on hover, or when focused with the keyboard -->
-									<span class="flex justify-end gap-0.5 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
-										<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Delete {t.title}" title="Delete" class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
-										<a href="/exejeeze?text={t.id}" onclick={(e) => e.stopPropagation()} aria-label="Open {t.title} in the text editor" title="Open in the text editor" class="rounded-md p-1 hover:bg-taupe3"><Edit width={18} height={18} /></a>
-									</span>
-								</li>
-							{/each}
-						</ul>
-					{:else}
-						<ul class="flex flex-wrap gap-5">
-							{#each data.texts as t (t.id)}
-								{@const Icon = t.type === 'commentary' ? MessageCircleReply : Scroll}
-								<li class="w-16">
-									<a href="/exejeeze?text={t.id}" class="group relative flex flex-col items-center gap-1.5">
-										<span class="flex size-16 items-center justify-center rounded-bubble border-4 border-taupe3 bg-taupe2 shadow-sm group-hover:bg-taupe3">
-											<Icon size="lg" />
-										</span>
-										<span class="w-full truncate rounded-2xl border border-taupe3 bg-taupe1 px-2 py-1 text-center text-xs text-taupe5 shadow-lg">{t.title}</span>
-										<span role="tooltip" class="pointer-events-none absolute bottom-full left-1/2 z-10 mb-2 -translate-x-1/2 rounded-md border border-taupe3 bg-taupe1 px-2 py-1 text-xs whitespace-nowrap text-taupe5 opacity-0 shadow-md group-hover:opacity-100 group-focus-visible:opacity-100">{t.title} ({typeLabel[t.type] ?? t.type})</span>
-									</a>
-								</li>
-							{/each}
-						</ul>
-					{/if}
+					<TextsBrowser texts={data.texts} {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
+						{#snippet actions(t)}
+							<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Delete {t.title}" title="Delete" class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
+							<a href="/exejeeze?text={t.id}" onclick={(e) => e.stopPropagation()} aria-label="Open {t.title} in the text editor" title="Open in the text editor" class="rounded-md p-1 hover:bg-taupe3"><Edit width={18} height={18} /></a>
+						{/snippet}
+					</TextsBrowser>
 				{:else}
 					<p class="text-sm text-grey3">You have no texts yet.</p>
 				{/if}

@@ -35,6 +35,7 @@
 	 *   onstartedit?: () => void,
 	 *   empty?: string,
 	 *   onnewbelow?: (id: string) => void,
+	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
@@ -46,17 +47,23 @@
 	 * bubbles (a violet line) to move them there, or onto the first or second half of a
 	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined } = $props();
+	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, onwrite = undefined, onrename = undefined, onnewsection = undefined, onleave = undefined } = $props();
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
 	let editing = $state(null);
+	/** id of the section whose title is being edited in place (double-click), or null */
+	/** @type {string | null} */
+	let titleEditId = $state(null);
 	/** where the caret goes when editing starts: the character nearest the double-click */
 	let editCaret = $state(0);
+	/** the caret for an edit that waits on writing mode (a double-click while reading): `editCaret` is reset when the edit starts */
+	let pendingCaret = 0;
 
 	// Leaving editing mode (the edit props go away) drops any open editor, menu or highlight
 	$effect(() => {
 		if (!onedit) editing = null;
+		if (!onrename) titleEditId = null;
 		if (!ondelete) editHover.clear();
 		if (!oninject) {
 			gap.clear();
@@ -65,10 +72,41 @@
 		if (!onmove) dd.end();
 	});
 
+	/** @param {string} id @param {string | null} title */
+	function finishTitle(id, title) {
+		if (titleEditId === id) titleEditId = null;
+		const changed = title !== null && title.trim() !== '';
+		if (changed) onrename?.({ id, title: /** @type {string} */ (title).trim() });
+		onleave?.(id, changed);
+	}
+
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let clickTimer;
+	/** a title edit waiting for writing mode to be on (a double-click while reading) @type {string | null} */
+	let pendingTitleEdit = null;
+	/** @param {string} id */
+	function editTitle(id) {
+		clearTimeout(clickTimer);
+		if (!onrename) {
+			// reading: ask the page for writing mode, which then opens the title for editing
+			pendingTitleEdit = id;
+			return onwrite?.(id);
+		}
+		editHover.clear();
+		gap.clear();
+		titleEditId = id;
+	}
+	$effect(() => {
+		if (!onrename || !pendingTitleEdit) return;
+		titleEditId = pendingTitleEdit;
+		pendingTitleEdit = null;
+	});
+
 	/** @param {string} id @param {string | null} text */
 	function finishEdit(id, text) {
 		if (editing === id) editing = null;
 		if (text !== null) onedit?.({ id, text });
+		onleave?.(id, text !== null);
 	}
 
 	let lastX = -1;
@@ -250,8 +288,13 @@
 			if (!(el instanceof HTMLElement)) return;
 			editHover.clear();
 			gap.clear();
-			editCaret = 0;
-			editing = id;
+			if (el.hasAttribute('data-section')) {
+				if (onrename) titleEditId = id; // a section: its title
+			} else {
+				editCaret = pendingCaret;
+				pendingCaret = 0;
+				editing = id;
+			}
 			el.scrollIntoView({ block: 'center', inline: 'center' });
 			onstartedit?.();
 		});
@@ -494,9 +537,15 @@
 		}}
 		onclick={() => setCursor(node.paragraph.id, 'paragraph')}
 		{...(editing === node.paragraph.id ? {} : dragAttrs(node.paragraph.id, 'paragraph', stacked ? 'y' : 'x'))}
-		ondblclick={onedit
+		ondblclick={onedit || onwrite
 			? (e) => {
-					editCaret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, node.paragraph.text);
+					const caret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, node.paragraph.text);
+					if (!onedit) {
+						// reading: ask the page for writing mode, which then opens this paragraph for editing
+						pendingCaret = caret;
+						return onwrite?.(node.paragraph.id);
+					}
+					editCaret = caret;
 					editHover.clear();
 					gap.clear();
 					editing = node.paragraph.id;
@@ -557,7 +606,9 @@
 				{#if node.kind === 'section'}
 					{@const isOpen = selected[d] === node.id}
 					{@const t = splitTitle(node.title)}
-					<button
+					<svelte:element
+						this={titleEditId === node.id ? 'div' : 'button'}
+						role={titleEditId === node.id ? 'button' : undefined}
 						data-section
 						data-node={node.id}
 						tabindex={isCursor(node.id) ? 0 : -1}
@@ -565,16 +616,24 @@
 							if (cursor?.id !== node.id) setCursor(node.id, 'section');
 							centreSoon(e.currentTarget);
 						}}
-						{...dragAttrs(node.id, 'section', 'x')}
+						{...titleEditId === node.id ? {} : dragAttrs(node.id, 'section', 'x')}
 						data-level={node.level}
 						data-open={isOpen}
-						onclick={(e) => {
+						onclick={(/** @type {MouseEvent & { currentTarget: HTMLElement }} */ e) => {
+							if (titleEditId === node.id) return;
 							setCursor(node.id, 'section');
+							const el = e.currentTarget;
 							// opening or closing rebuilds the rows beneath, so take focus back afterwards
-							toggle(d, node.id, e.currentTarget).then(() => {
-								if (cursor?.id === node.id) focusCursor();
-							});
+							const run = () =>
+								toggle(d, node.id, el).then(() => {
+									if (cursor?.id === node.id) focusCursor();
+								});
+							// where a double-click edits the title, the toggle waits a moment for a second click
+							clearTimeout(clickTimer);
+							if (onrename || onwrite) clickTimer = setTimeout(run, 260);
+							else run();
 						}}
+						ondblclick={onrename || onwrite ? () => editTitle(node.id) : undefined}
 						onpointerenter={ondelete ? (e) => pointerMoved(e) && editHover.enter({ id: node.id, kind: 'section', el: e.currentTarget }) : undefined}
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
@@ -584,19 +643,29 @@
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
 							<span class="text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">§{node.hierarchicalIndex}</span>
-							<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
-								<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
-							</svg>
+							<!-- the caret shows the open state, so only a section with something in it has one -->
+							{#if node.children.length}
+								<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+									<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
+								</svg>
+							{:else}
+								<span class="h-5 w-5"></span>
+							{/if}
 						</span>
 						<!-- wraps inside the container and clips at the bottom; an open container
 						     grows wide enough to show the whole title and subtitle -->
 						<span class="min-w-0 flex-1 {isOpen ? 'whitespace-nowrap' : 'break-words'}">
-							{t.title}
-							{#if t.subtitle}
-								<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">{t.subtitle}</span>
+							{#if titleEditId === node.id}
+								<!-- double-clicked: the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
+								<span use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewsection ? () => onnewsection(node.id) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
+							{:else}
+								{t.title}
+								{#if t.subtitle}
+									<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">{t.subtitle}</span>
+								{/if}
 							{/if}
 						</span>
-					</button>
+					</svelte:element>
 				{:else}
 					{@render paragraphBubble(node, false)}
 				{/if}

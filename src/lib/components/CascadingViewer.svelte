@@ -1,8 +1,8 @@
 <script>
-	import { editable, noLineBreaks } from '#lib/utilities/editable.js';
+	import { caretOffsetAt, editable, noLineBreaks } from '#lib/utilities/editable.js';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { tick, untrack } from 'svelte';
-	import { Cog, Minus, Plus } from '@boxicons/svelte';
+	import { Cog, Fullscreen, Minus, PencilEditCircle, Plus, TrashX } from '@boxicons/svelte';
 	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
@@ -27,7 +27,9 @@
 	 *   empty?: string,
 	 *   exploded?: boolean,
 	 *   onmove?: (drop: { id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }) => void,
-	 *   onadd?: (req: { targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section' }) => string | void,
+	 *   onadd?: (req: { targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean }) => string | void,
+	 *   onleave?: (id: string, changed: boolean) => void,
+	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void
 	 * }}
 	 *
@@ -38,14 +40,18 @@
 	 * With `onadd` (editing mode), hovering the space between bubbles shows the same line and a
 	 * plus; hovering the plus asks "Paragraph or section?" and adds an empty one there.
 	 *
-	 * With `onedit` (editing mode), double-clicking a paragraph opens its modal with fields for the
-	 * paragraph's title, description and body (a single click then does nothing).
+	 * A single click on a paragraph bubble only selects it. Hovering a bubble shows a vertical menu
+	 * of buttons at its top right: expand (the reading modal) and, with `onedit` (writing mode), the
+	 * pencil (a modal with fields for the paragraph's title, description and body) and, with `ondelete`,
+	 * the trash (below them; a section's menu is its settings cog, then the trash). Double-clicking a
+	 * paragraph edits its text in place, in the bubble; while not writing, `onwrite` is asked first
+	 * to switch to writing mode.
 	 *
 	 * Exploded: every section is open at once (children may land on the same cell), the view is
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined } = $props();
+	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined } = $props();
 
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -114,7 +120,11 @@
 		const [x, y] = along ? [(p.col + step) * PITCH - LINE / 2, p.row * PITCH + GAP / 2] : [p.col * PITCH + GAP / 2, (p.row + step) * PITCH - LINE / 2];
 		const width = along ? LINE : SIZE;
 		const height = along ? SIZE : LINE;
-		return { id: z.id, place: z.place, left: x, top: y, width, height, cx: x + width / 2, cy: y + height / 2 };
+		// the line is centred on a cell boundary, so at the grid's outer edges half of it would fall outside the
+		// scene and be clipped (a thin line beside the full ones between bubbles): keep it wholly inside
+		const left = Math.max(0, Math.min(x, colCount * PITCH - width));
+		const top = Math.max(0, Math.min(y, rowCount * PITCH - height));
+		return { id: z.id, place: z.place, left, top, width, height, cx: left + width / 2, cy: top + height / 2 };
 	}
 	let gapLine = $derived.by(() => {
 		const d = dd.drop;
@@ -149,8 +159,8 @@
 		gap.set(locateGap(e, dd.reach), e);
 	}
 
-	/** @param {'paragraph' | 'section'} kind @param {GapSpec} z the gap to add at */
-	async function add(kind, z) {
+	/** @param {'paragraph' | 'section'} kind @param {GapSpec} z the gap to add at @param {boolean} [auto] made by Enter in the bubble before it (the page then drops it if it is left empty) */
+	async function add(kind, z, auto = false) {
 		gap.clear();
 		plusOpen = null;
 		if (z?.place === 'inside') {
@@ -158,7 +168,7 @@
 			const p = layout.find((q) => q.node.kind === 'section' && q.node.id === z.id);
 			if (p) selected = [...selected.slice(0, p.depth), z.id];
 		}
-		const id = z ? onadd?.({ targetId: z.id, place: z.place, kind }) : undefined;
+		const id = z ? onadd?.({ targetId: z.id, place: z.place, kind, auto }) : undefined;
 		if (!id) return;
 		// once the new bubble is laid out (the grid may grow and re-zoom), bring it to the middle of the view
 		await tick();
@@ -167,8 +177,8 @@
 		// the editing cursor goes straight into the new item: a paragraph's body, or a section's title
 		await new Promise((r) => setTimeout(r, 350));
 		if (kind === 'paragraph') {
-			await openModal(id, true);
-			bodyInput?.focus();
+			inlineCaret = 0;
+			inlineEditId = id;
 		} else {
 			titleEditId = id; // the new section's title is editable at once, in place
 		}
@@ -593,15 +603,27 @@
 	 * @param {number} depth @param {string} id @param {HTMLElement} el
 	 */
 	function clickSection(depth, id, el) {
-		if (!onrename) return void toggle(depth, id, el);
+		if (!onrename && !onwrite) return void toggle(depth, id, el);
 		clearTimeout(clickTimer);
 		clickTimer = setTimeout(() => toggle(depth, id, el), 260);
 	}
+	/** a title edit waiting for writing mode to be on (a double-click while reading) @type {string | null} */
+	let pendingTitleEdit = null;
 	/** @param {string} id */
 	function editTitle(id) {
 		clearTimeout(clickTimer);
+		if (!onrename) {
+			// reading: ask the page for writing mode, which then opens the title for editing
+			pendingTitleEdit = id;
+			return onwrite?.(id);
+		}
 		titleEditId = id;
 	}
+	$effect(() => {
+		if (!onrename || !pendingTitleEdit) return;
+		titleEditId = pendingTitleEdit;
+		pendingTitleEdit = null;
+	});
 
 	// ---- A section's title edited in place (double-click, or straight after adding the section) ----
 	/** @type {string | null} */
@@ -609,7 +631,9 @@
 	/** @param {string} id @param {string | null} text */
 	function finishTitle(id, text) {
 		if (titleEditId === id) titleEditId = null;
-		if (text !== null && text.trim()) onrename?.({ id, title: text.trim() });
+		const changed = text !== null && text.trim() !== '';
+		if (changed) onrename?.({ id, title: /** @type {string} */ (text).trim() });
+		onleave?.(id, changed);
 	}
 
 	// ---- A section's settings modal: the bubble grown to a form, in the bubble's own colours (the cog on a hovered bubble) ----
@@ -666,6 +690,54 @@
 		return a.finished.catch(() => {});
 	}
 
+	// ---- A section's trash: the choice of deleting just the section, or everything in it ----
+	/** @type {{ id: string, left: number, top: number } | null} */
+	let trashMenu = $state(null);
+	/** @param {'only' | 'tree'} scope */
+	function chooseDelete(scope) {
+		const m = trashMenu;
+		trashMenu = null;
+		if (m) ondelete?.({ id: m.id, kind: 'section', scope });
+	}
+
+	// ---- A paragraph's text edited in place in its bubble (double-click, or straight after adding the paragraph) ----
+	/** @type {string | null} */
+	let inlineEditId = $state(null);
+	/** where the caret goes when the in-place edit starts */
+	let inlineCaret = 0;
+	/** an in-place edit waiting for writing mode to be on (a double-click while reading) @type {{ id: string, caret: number } | null} */
+	let pendingEdit = null;
+
+	/** @param {string} id @param {number} caret */
+	function editInPlace(id, caret) {
+		if (!onedit) {
+			pendingEdit = { id, caret };
+			return onwrite?.(id);
+		}
+		inlineCaret = caret;
+		inlineEditId = id;
+	}
+	$effect(() => {
+		if (!onedit) {
+			inlineEditId = null; // leaving writing mode drops an open editor
+			return;
+		}
+		if (!pendingEdit) return;
+		inlineCaret = pendingEdit.caret;
+		inlineEditId = pendingEdit.id;
+		pendingEdit = null;
+	});
+
+	/** @param {string} id @param {string | null} text */
+	function finishInline(id, text) {
+		if (inlineEditId === id) inlineEditId = null;
+		if (text !== null) {
+			const f = flat.find((x) => x.id === id);
+			onedit?.({ id, text, title: f?.title ?? '', description: f?.description ?? '' });
+		}
+		onleave?.(id, text !== null);
+	}
+
 	/** @param {string} id @param {boolean} [edit] */
 	async function openModal(id, edit = false) {
 		if (openId) return;
@@ -712,6 +784,11 @@
 
 	/** @param {KeyboardEvent} e */
 	function onkeydown(e) {
+		if (trashMenu && e.key === 'Escape') {
+			trashMenu = null;
+			e.preventDefault();
+			return;
+		}
 		if (sectionModal) {
 			if (e.key === 'Escape') closeSectionSettings();
 			else if (e.key === 'Enter') saveSectionSettings();
@@ -824,7 +901,7 @@
 						{style}
 						{...titleEditId === node.id ? {} : dragAttrs(node.id, 'section', p.horizontal)}
 						onclick={(e) => titleEditId !== node.id && clickSection(p.depth, node.id, e.currentTarget)}
-						ondblclick={onrename ? () => editTitle(node.id) : undefined}
+						ondblclick={onrename || onwrite ? () => editTitle(node.id) : undefined}
 						onkeydown={(e) => {
 							if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 								e.preventDefault();
@@ -838,21 +915,33 @@
 						<span class="mb-3 text-xs font-normal text-grey2">§{node.hierarchicalIndex}</span>
 						<span class="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center break-words text-xl leading-snug">
 							{#if titleEditId === node.id}
-								<!-- double-clicked (or just added): the title is edited in place; Enter or leaving saves, Esc cancels -->
-								<span use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v) }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
+								<!-- double-clicked (or just added): the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
+								<span use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onadd ? () => add('section', { id: node.id, place: 'after' }, true) : undefined }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
 							{:else}
 								<!-- long titles are cut off with an ellipsis rather than spilling out of the bubble -->
 								<span class="max-w-full overflow-hidden {t.subtitle ? 'line-clamp-2' : 'line-clamp-3'}" title={node.title}>{t.title}</span>
 								{#if t.subtitle}<span class="mt-1 line-clamp-1 max-w-full overflow-hidden text-sm font-normal text-grey2">{t.subtitle}</span>{/if}
 							{/if}
 						</span>
-						<svg class="h-5 w-5 shrink-0 transition-transform {p.open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
-							<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
-						</svg>
+						<!-- the caret shows the open state, so only a section with something in it has one -->
+						{#if node.children.length}
+							<svg class="h-5 w-5 shrink-0 transition-transform {p.open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+								<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
+							</svg>
+						{:else}
+							<span class="h-5 w-5 shrink-0"></span>
+						{/if}
 
-						{#if onrename && !exploded && titleEditId !== node.id}
-							<!-- the settings cog: top right of the bubble, on hover -->
-							<button type="button" aria-label="Section settings" use:tip={'Settings'} draggable="false" onclick={(e) => { e.stopPropagation(); openSectionSettings(node.id); }} ondblclick={(e) => e.stopPropagation()} class="absolute top-[12%] right-[12%] z-10 inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 opacity-0 hover:bg-taupe2 focus-visible:opacity-100 group-hover:opacity-100"><Cog width={18} height={18} /></button>
+						{#if (onrename || ondelete) && !exploded && titleEditId !== node.id}
+							<!-- the bubble's menu: top right, shown on hover, a vertical stack: the settings cog, then the trash -->
+							<div class="absolute top-[12%] right-[12%] z-10 flex flex-col gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+								{#if onrename}
+									<button type="button" aria-label="Section settings" use:tip={'Settings'} draggable="false" onclick={(e) => { e.stopPropagation(); openSectionSettings(node.id); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><Cog width={18} height={18} /></button>
+								{/if}
+								{#if ondelete}
+									<button type="button" aria-label="Delete section" use:tip={'Delete'} draggable="false" data-trash-menu onclick={(e) => { e.stopPropagation(); const r = e.currentTarget.getBoundingClientRect(); trashMenu = trashMenu?.id === node.id ? null : { id: node.id, left: r.left, top: r.bottom + 4 }; }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><TrashX width={18} height={18} /></button>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{:else}
@@ -862,27 +951,40 @@
 						tabindex="0"
 						role="button"
 						aria-label="Paragraph"
-						onclick={() => {
-							onfocusitem?.(pid);
-							if (!onedit) openModal(pid);
-						}}
-						ondblclick={onedit ? () => openModal(pid, true) : undefined}
+						onclick={() => onfocusitem?.(pid)}
+						ondblclick={onedit || onwrite
+							? (e) => editInPlace(pid, caretOffsetAt(e.currentTarget, e.clientX, e.clientY, p.node.kind === 'paragraph' ? p.node.paragraph.text : ''))
+							: undefined}
 						onkeydown={(e) => {
-							if (e.key === 'Enter' || e.key === ' ') {
+							if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 								e.preventDefault();
-								openModal(pid, !!onedit);
+								if (onedit) editInPlace(pid, p.node.kind === 'paragraph' ? p.node.paragraph.text.length : 0);
+								else openModal(pid);
 							}
 						}}
 						{style}
-						{...dragAttrs(pid, 'paragraph', p.horizontal)}
-						class="group absolute flex cursor-pointer flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
+						{...inlineEditId === pid ? {} : dragAttrs(pid, 'paragraph', p.horizontal)}
+						class="group absolute flex {inlineEditId === pid ? 'cursor-text' : 'cursor-default'} flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
 					>
 						<span class="mb-3 text-xs text-gray-500">{p.node.paragraphIndex}</span>
 						{#if /** @type {any} */ (p.node.paragraph).title}<span class="mb-1 text-sm font-semibold">{/** @type {any} */ (p.node.paragraph).title}</span>{/if}
-						<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
-						{#if onedit && !exploded}
-							<!-- the settings cog: top right of the bubble, on hover -->
-							<button type="button" aria-label="Paragraph settings" use:tip={'Settings'} draggable="false" onclick={(e) => { e.stopPropagation(); openModal(pid, true); }} ondblclick={(e) => e.stopPropagation()} class="absolute top-[12%] right-[12%] z-10 inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 opacity-0 hover:bg-taupe2 focus-visible:opacity-100 group-hover:opacity-100"><Cog width={18} height={18} /></button>
+						{#if inlineEditId === pid}
+							<!-- double-clicked: the text is edited in place; Enter or leaving saves, Esc cancels -->
+							<p use:editable={{ text: p.node.paragraph.text, caret: inlineCaret, onfinish: (t) => finishInline(pid, t), onenter: onadd ? () => add('paragraph', { id: pid, place: 'after' }, true) : undefined }} class="whitespace-pre-wrap outline-none"></p>
+						{:else}
+							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
+						{/if}
+						{#if !exploded && inlineEditId !== pid}
+							<!-- the bubble's menu: top right, shown on hover, a vertical stack of buttons -->
+							<div class="absolute top-[12%] right-[12%] z-10 flex flex-col gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+								<button type="button" aria-label="Expand paragraph" use:tip={'Expand'} draggable="false" onclick={(e) => { e.stopPropagation(); openModal(pid); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><Fullscreen width={18} height={18} /></button>
+								{#if onedit}
+									<button type="button" aria-label="Edit paragraph" use:tip={'Edit title, description and text'} draggable="false" onclick={(e) => { e.stopPropagation(); openModal(pid, true); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><PencilEditCircle width={18} height={18} /></button>
+								{/if}
+								{#if ondelete}
+									<button type="button" aria-label="Delete paragraph" use:tip={'Delete'} draggable="false" onclick={(e) => { e.stopPropagation(); ondelete({ id: pid, kind: 'paragraph' }); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><TrashX width={18} height={18} /></button>
+								{/if}
+							</div>
 						{/if}
 					</div>
 				{/if}
@@ -972,7 +1074,14 @@
 	{/if}
 </div>
 
-<svelte:window {onkeydown} />
+<svelte:window {onkeydown} onpointerdown={(e) => trashMenu && !(e.target instanceof Element && e.target.closest('[data-trash-menu]')) && (trashMenu = null)} />
+
+{#if trashMenu}
+	<div role="menu" data-trash-menu class="fixed z-50 w-max raised rounded-md py-1 shadow-lg" style="left: {Math.max(4, Math.min(trashMenu.left, innerWidth - 340))}px; top: {trashMenu.top}px">
+		<button role="menuitem" onclick={() => chooseDelete('only')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Delete just this section</button>
+		<button role="menuitem" onclick={() => chooseDelete('tree')} class="block w-full px-4 py-2 text-left text-sm text-dark hover:bg-taupe2">Delete this section and all its descendants</button>
+	</div>
+{/if}
 
 <FootnoteTip />
 

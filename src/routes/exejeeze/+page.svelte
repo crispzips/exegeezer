@@ -5,11 +5,13 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, Paragraph, AlignLeft, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import CascadingViewer from '#lib/components/CascadingViewer.svelte';
+    import RallyViewer from '#lib/components/RallyViewer.svelte';
+    import { READ_WPM, SIZES, STYLES } from '#lib/utilities/rallyChunks.js';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
@@ -39,6 +41,8 @@
     let loadSource = $state('computer');
     /** the loaded file's name without its extension (names the new text and the ORIGINAL-- copy) */
     let loadName = $state('');
+    /** a chosen own text's visibility: it is already named and set up, so the new-text dialog is not asked again for it */
+    let loadVisibility = $state('');
     /** the import question: keep an unaltered copy of the incoming text in the user's own texts (as `ORIGINAL--<name>`)? */
     let keepCopy = $state(false);
 
@@ -47,6 +51,7 @@
         const latest = uploadedfiles[uploadedfiles.length - 1];
         if (latest) {
             loadSource = 'computer';
+            loadVisibility = '';
             loadName = latest.name.replace(/\.[^.]+$/, '');
             // Markdown: drop the table of contents and its {#anchor} header links first
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
@@ -66,9 +71,10 @@
     let ownTextsOpen = $state(false);
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
-     * @param {{ title: string, items: any[] }} saved */
+     * @param {{ title: string, visibility?: string, items: any[] }} saved */
     function onOwnTextChosen(saved) {
         loadSource = 'own';
+        loadVisibility = saved.visibility ?? 'private';
         loadName = saved.title;
         previewMarkdown = saved.items.some((p) => p.level > 0);
         // fresh ids, so the preview shares nothing with the text it came from
@@ -185,7 +191,7 @@
             const texts = await (await fetch('/api/texts')).json();
             if (!texts.length) return false;
             // ?text=<id> (from the profile page) picks which text to open; otherwise the most recent
-            const wanted = new URLSearchParams(location.search).get('text');
+            const wanted = new URLSearchParams(location.search).get('text') ?? rememberedText();
             const pick = texts.find((/** @type {any} */ t) => t.id === wanted) ?? texts[0];
             await showSaved(pick.id);
             return true;
@@ -194,6 +200,25 @@
             return false;
         }
     }
+
+    // ---- The open text is remembered, so a refresh (or coming back by the menu) returns to it ----
+    const REMEMBER_TEXT = 'exegeezer.text';
+    function rememberedText() {
+        try {
+            return localStorage.getItem(REMEMBER_TEXT);
+        } catch {
+            return null;
+        }
+    }
+    $effect(() => {
+        const id = textId;
+        if (!id) return;
+        try {
+            localStorage.setItem(REMEMBER_TEXT, id);
+        } catch {
+            // storage is blocked: nothing is remembered
+        }
+    });
 
     /** Save the main text: create it the first time, replace its contents afterwards. */
     function save() {
@@ -220,7 +245,10 @@
                     ? await fetch(`/api/texts/${textId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }) })
                     : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, visibility: textVisibility, items }) });
                 if (!res.ok) throw new Error(`${res.status}`);
-                if (!textId) textId = (await res.json()).id;
+                if (!textId) {
+                    textId = (await res.json()).id;
+                    replaceState(`/exejeeze?text=${textId}`, {}); // so a refresh stays on it
+                }
                 lastSaved = json;
             } catch (err) {
                 console.warn('Could not save the text', err);
@@ -553,6 +581,11 @@
 
     /** Show no text at all: the viewer as it is when nothing is loaded. */
     function unloadText() {
+        try {
+            localStorage.removeItem(REMEMBER_TEXT);
+        } catch {
+            // storage is blocked
+        }
         textId = null;
         textVisibility = '';
         textTitle = 'Untitled';
@@ -586,7 +619,7 @@
     /** A double-click on a paragraph while not writing: switch to writing mode and open that paragraph for editing (the cascading view edits the bubble in place). @param {string} id */
     function writeAt(id) {
         if (!authed || noText) return;
-        mode = 'writing';
+        mode = chosenMode = 'writing';
         if (view !== 'cascading') startEditId = id;
     }
 
@@ -684,7 +717,7 @@
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             textId = null;
-            textVisibility = ''; // asked again for the new text
+            textVisibility = loadSource === 'own' ? loadVisibility : ''; // asked again for a new text, but not for one already made
             textTitle = loadName || 'Untitled';
             lastSaved = '';
         }
@@ -742,7 +775,44 @@
     function cycleMode() {
         if (modeLocked) return;
         mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+        chosenMode = mode;
     }
+
+    // ---- Remembered across refreshes and visits to other pages: the view, the mode and each view's settings ----
+    const REMEMBER = 'exegeezer.editor';
+    /** set once the saved settings have been read, so the defaults are not saved over them */
+    let restored = $state(false);
+    /** the mode the user chose (the mode itself is also forced by having no text or no sign-in, which is not their choice) */
+    let chosenMode = $state('reading');
+
+    onMount(() => {
+        try {
+            const saved = JSON.parse(localStorage.getItem(REMEMBER) ?? '{}');
+            if (VIEWS.includes(saved.view)) view = saved.view;
+            if (MODES.includes(saved.mode)) {
+                chosenMode = saved.mode;
+                if (authed) mode = saved.mode;
+            }
+            if (typeof saved.exploded === 'boolean') exploded = saved.exploded;
+            if (saved.rallyUnit === 'sentence' || saved.rallyUnit === 'paragraph') rallyUnit = saved.rallyUnit;
+            if (STYLES.includes(saved.rallyStyle)) rallyStyle = saved.rallyStyle;
+            if (Number.isInteger(saved.rallySize) && saved.rallySize >= 0 && saved.rallySize < SIZES.length) rallySize = saved.rallySize;
+            if (Number.isInteger(saved.rallySpeed) && saved.rallySpeed >= 0 && saved.rallySpeed < READ_WPM.length) rallySpeed = saved.rallySpeed;
+        } catch {
+            // no saved settings (or storage is blocked): the defaults stand
+        }
+        restored = true;
+    });
+
+    $effect(() => {
+        const settings = { view, mode: chosenMode, exploded, rallyUnit, rallyStyle, rallySize, rallySpeed };
+        if (!restored) return;
+        try {
+            localStorage.setItem(REMEMBER, JSON.stringify(settings));
+        } catch {
+            // storage is blocked: nothing is remembered
+        }
+    });
 
     // ---- Map modal: a navigable map of the text's sections ----
     let mapOpen = $state(false);
@@ -763,12 +833,37 @@
     }
 
     // ---- Main pane view menu ----
-    /** @type {'linear' | 'hierarchical' | 'cascading'} */
+    /** @type {'linear' | 'hierarchical' | 'cascading' | 'rally'} */
     let view = $state('linear');
     /** cascading view only: every section open at once, zoomed all the way out, colours only */
     let exploded = $state(false);
-    /** @type {('linear' | 'hierarchical' | 'cascading')[]} */
-    const VIEWS = ['linear', 'hierarchical', 'cascading'];
+    /** @type {('linear' | 'hierarchical' | 'cascading' | 'rally')[]} */
+    const VIEWS = ['linear', 'hierarchical', 'cascading', 'rally'];
+    // rally view's settings: chunk unit, text size step, speed tick (unlabelled; ranges set in rallyChunks.js), and whether it is running
+    /** @type {'sentence' | 'paragraph'} */
+    let rallyUnit = $state('sentence');
+    /** @type {'compose' | 'copy' | 'recall' | 'dictate'} */
+    let rallyStyle = $state('compose');
+    let rallySize = $state(4);
+    let rallySpeed = $state(3);
+    let rallyPlaying = $state(false);
+    /**
+     * Rally's compose style hands over what was written: a new paragraph after `afterId` (or at the end), or, with `id`, added to that paragraph.
+     * @param {{ afterId: string | null, id: string | null, text: string }} add
+     * @returns {string | null} the paragraph it went into
+     */
+    function composeInto({ afterId, id, text }) {
+        if (id && mainText.some((p) => p.id === id)) {
+            commit(mainText.map((p) => (p.id === id ? { ...p, text: `${p.text} ${text}` } : p)));
+            return id;
+        }
+        const at = afterId ? mainText.findIndex((p) => p.id === afterId) : -1;
+        const item = { id: crypto.randomUUID(), originalIndex: 0, text, level: 0 };
+        return commit(insertAt(mainText, at === -1 ? mainText.length : at + 1, [item])) ? item.id : null;
+    }
+    $effect(() => {
+        if (view !== 'rally') rallyPlaying = false;
+    });
 
     /** the triple toggle (linear, hierarchical, cascading): each click moves to the next view */
     function cycleView() {
@@ -831,6 +926,8 @@
         {/if}
         {#if view === 'linear'}
             <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+        {:else if view === 'rally'}
+            <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} unit={rallyUnit} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
         {:else if view === 'cascading'}
             <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
@@ -860,7 +957,7 @@
         >
             {#key view}
                 <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">
-                    {#if view === 'hierarchical'}<Sitemap />{:else if view === 'cascading'}<StepsDown />{:else}<Queue />{/if}
+                    {#if view === 'hierarchical'}<Sitemap />{:else if view === 'cascading'}<StepsDown />{:else if view === 'rally'}<FlagChequered />{:else}<Queue />{/if}
                 </span>
             {/key}
         </button>
@@ -877,6 +974,47 @@
                 >
                     {#if exploded}<Explosion />{:else}<Bomb />{/if}
                 </button>
+            </div>
+        {/if}
+
+        {#if view === 'rally'}
+            <!-- Rally settings: chunk unit, text size, and a speed slider (ticks, no labels) -->
+            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
+                <button
+                    onclick={() => (rallyUnit = rallyUnit === 'sentence' ? 'paragraph' : 'sentence')}
+                    aria-label="Chunk size"
+                    use:tip={`Chunks: ${rallyUnit}s`}
+                    class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+                >
+                    {#key rallyUnit}
+                        <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">{#if rallyUnit === 'paragraph'}<Paragraph />{:else}<AlignLeft />{/if}</span>
+                    {/key}
+                </button>
+                {#if editing}
+                    <button
+                        onclick={() => (rallyStyle = STYLES[(STYLES.indexOf(rallyStyle) + 1) % STYLES.length])}
+                        aria-label="Writing style"
+                        use:tip={`Writing: ${{ compose: 'compose new text', copy: 'type it back', recall: 'recall from memory', dictate: 'dictation' }[rallyStyle]}`}
+                        class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+                    >
+                        {#key rallyStyle}
+                            <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">{#if rallyStyle === 'copy'}<Copy />{:else if rallyStyle === 'recall'}<Brain />{:else if rallyStyle === 'dictate'}<Ear />{:else}<Pencil />{/if}</span>
+                        {/key}
+                    </button>
+                {/if}
+                <button
+                    onclick={() => (rallySize = (rallySize + 1) % SIZES.length)}
+                    aria-label="Text size"
+                    use:tip={'Text size'}
+                    class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+                >
+                    <TextHeight />
+                </button>
+                <div class="flex items-stretch gap-0.5 py-1">
+                    <!-- the ticks (one per speed, no labels), then the slider -->
+                    <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each READ_WPM as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
+                    <input type="range" min="0" max={READ_WPM.length - 1} step="1" bind:value={rallySpeed} aria-label="Speed" use:tip={'Speed'} class="rally-speed" />
+                </div>
             </div>
         {/if}
 

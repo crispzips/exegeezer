@@ -916,10 +916,10 @@
 						<span class="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center break-words text-xl leading-snug">
 							{#if titleEditId === node.id}
 								<!-- double-clicked (or just added): the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
-								<span use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onadd ? () => add('section', { id: node.id, place: 'after' }, true) : undefined }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
+								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onadd ? () => add('section', { id: node.id, place: 'after' }, true) : undefined }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
 							{:else}
 								<!-- long titles are cut off with an ellipsis rather than spilling out of the bubble -->
-								<span class="max-w-full overflow-hidden {t.subtitle ? 'line-clamp-2' : 'line-clamp-3'}" title={node.title}>{t.title}</span>
+								<span class="max-w-full overflow-hidden {t.subtitle ? 'line-clamp-2' : 'line-clamp-3'}" title={node.title}>{#if t.title}{t.title}{:else}<span class="font-normal text-grey2 italic">Untitled section</span>{/if}</span>
 								{#if t.subtitle}<span class="mt-1 line-clamp-1 max-w-full overflow-hidden text-sm font-normal text-grey2">{t.subtitle}</span>{/if}
 							{/if}
 						</span>
@@ -1094,7 +1094,7 @@
 			aria-label="Paragraph {current.index}"
 			tabindex="-1"
 			style="width:{modalW}px;height:{modalH}px;border-radius:{modalRadius}px;padding:{modalPad}px;--c:{current.color}"
-			class="relative flex flex-col overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
+			class="bubble-form relative flex flex-col overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
 		>
 			<span class="mb-4 text-center text-sm text-gray-500">{current.index}</span>
 			{#if editMode}
@@ -1140,13 +1140,13 @@
 			aria-label="Section settings"
 			tabindex="-1"
 			style="width:{modalW}px;height:{modalH}px;border-radius:{modalRadius}px;padding:{modalPad}px;--c:{sectionModal.color};--mix:{sectionModal.mix}%"
-			class="relative flex flex-col items-center overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_var(--mix),var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
+			class="bubble-form relative flex flex-col items-center overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_var(--mix),var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
 		>
 			<span class="mb-4 text-center text-sm font-normal text-grey2">{sectionModal.index}</span>
 			<form class="flex min-h-0 w-full flex-1 flex-col justify-center gap-3" onsubmit={(e) => { e.preventDefault(); saveSectionSettings(); }}>
 				<label class="flex flex-col gap-1 text-xs text-grey3">
 					Title
-					<input bind:this={sectionTitleInput} type="text" bind:value={draftSectionTitle} class="rounded-xl px-3 py-1.5 text-base" />
+					<input bind:this={sectionTitleInput} type="text" placeholder="Untitled section" bind:value={draftSectionTitle} class="rounded-xl px-3 py-1.5 text-base" />
 				</label>
 				<div class="mt-3 flex shrink-0 justify-center gap-2">
 					<button type="button" onclick={closeSectionSettings} class="rounded-md px-3 py-1.5 text-sm text-dark hover:bg-taupe2">Cancel</button>

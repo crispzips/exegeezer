@@ -84,6 +84,28 @@ body {
 	}
 }
 
+/* Form fields inside a cascading-view bubble modal: the form theme, coloured like the bubble
+   (the modal sets --c, and optionally --mix, its background's share of the bubble colour). */
+@layer components {
+	.bubble-form {
+		--bubble-bg: color-mix(in srgb, var(--c) var(--mix, 10%), var(--color-taupe1));
+	}
+	.bubble-form :is(input, textarea, select) {
+		background-color: var(--bubble-bg);
+		border-color: var(--c);
+	}
+	.bubble-form :is(input, textarea, select):focus-visible {
+		outline-color: var(--c);
+	}
+}
+
+/* Placeholder text for an in-place editable span (contenteditable has no placeholder attribute) */
+[data-placeholder]:empty::before {
+	content: attr(data-placeholder);
+	color: var(--color-taupe4);
+	pointer-events: none;
+}
+
 /* `static` always emits every theme colour as a CSS variable, not only the ones
    used by a Tailwind class (the synopsis blips read the accents via var()). */
 @theme static {

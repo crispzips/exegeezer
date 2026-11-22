@@ -209,7 +209,7 @@ async function writeItems(id, items) {
 export async function createText(locals, title, items, visibility) {
 	const uid = owner(locals);
 	const personaId = uid ? await selfPersonaId(uid) : null;
-	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, title: title || 'Untitled' }).returning({ id: text_.id });
+	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, title: title ?? 'Untitled' }).returning({ id: text_.id });
 	if (personaId) await setAuthors(db, row.id, [personaId]);
 	await writeItems(row.id, items);
 	return row.id;

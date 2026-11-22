@@ -74,11 +74,18 @@ async function accessible(id, locals) {
  */
 export async function listTexts(locals) {
 	const uid = owner(locals);
-	return db
-		.select({ id: text_.id, title: text_.title, type: text_.type, createdAt: text_.createdAt, updatedAt: text_.updatedAt })
+	const rows = await db
+		.select({ id: text_.id, title: text_.title, type: text_.type, productionStatus: text_.productionStatus, visibility: text_.visibility, createdAt: text_.createdAt, updatedAt: text_.updatedAt })
 		.from(text_)
 		.where(uid ? eq(text_.userId, uid) : isNull(text_.userId))
 		.orderBy(desc(text_.updatedAt));
+	const choices = await authorChoices(locals);
+	return Promise.all(
+		rows.map(async (r) => ({
+			...r,
+			author: (await authorIds(r.id)).map((id) => choices.find((c) => c.id === id)?.name).filter(Boolean).join(', ') || null
+		}))
+	);
 }
 
 /**

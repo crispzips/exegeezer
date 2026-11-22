@@ -6,8 +6,9 @@ export const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
  * `text`, focused, and given a caret at character `caret` (default: the end). Leaving it (blur, or Ctrl/Cmd+Enter)
  * commits; Escape cancels. `onfinish` gets the new text, or null when cancelled or unchanged.
  *
- * There are no line breaks in a paragraph: Enter finishes the edit (committing it) and calls
- * `onenter`, which starts the next paragraph; pasted line breaks become spaces.
+ * There are no line breaks in a paragraph: Enter finishes the edit (committing it) and, when the
+ * text was changed, calls `onenter`, which starts the next paragraph (an untouched paragraph just
+ * ends); pasted line breaks become spaces.
  *
  * @param {HTMLElement} node
  * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void, onenter?: () => void }} opts
@@ -48,8 +49,9 @@ export function editable(node, { text, caret, onfinish, onenter }) {
 			finish(true);
 		} else if (e.key === 'Enter' && !e.isComposing) {
 			e.preventDefault(); // never a line break: the paragraph ends and the next one begins
+			const changed = oneLine(node.textContent ?? '') !== text;
 			finish(true);
-			onenter?.();
+			if (changed) onenter?.();
 		}
 	}
 

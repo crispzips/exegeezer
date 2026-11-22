@@ -657,9 +657,9 @@
 						<span class="min-w-0 flex-1 {isOpen ? 'whitespace-nowrap' : 'break-words'}">
 							{#if titleEditId === node.id}
 								<!-- double-clicked: the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
-								<span use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewsection ? () => onnewsection(node.id) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
+								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewsection ? () => onnewsection(node.id) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
 							{:else}
-								{t.title}
+								{#if t.title}{t.title}{:else}<span class="font-normal italic opacity-60">Untitled section</span>{/if}
 								{#if t.subtitle}
 									<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">{t.subtitle}</span>
 								{/if}

@@ -5,7 +5,7 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, EyeAlt, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FileCog, CopyPlus, Trash, ToiletRoll } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -460,7 +460,7 @@
         let item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
         if (kind === 'section' && place === 'inside') {
             const level = Math.min(6, (mainText[target].level ?? 0) + 1);
-            item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
+            item = { ...item, level, text: `${'#'.repeat(level)} ` };
         } else if (kind === 'section') {
             let level = 1;
             for (let k = mainText.findIndex((p) => p.id === targetId); k >= 0; k--) {
@@ -470,7 +470,7 @@
                     break;
                 }
             }
-            item = { ...item, level, text: `${'#'.repeat(level)} Untitled section` };
+            item = { ...item, level, text: `${'#'.repeat(level)} ` };
         }
         if (!commit(insertAt(mainText, at, [item]))) return;
         if (auto) fresh.set(item.id, before); // made by Enter: dropped again if it is left empty
@@ -496,7 +496,7 @@
      */
     function seedText(level = 1) {
         seedStep = 'idle';
-        if (commit([{ id: crypto.randomUUID(), originalIndex: 0, text: `${'#'.repeat(level)} Untitled section`, level }])) markdown = true;
+        if (commit([{ id: crypto.randomUUID(), originalIndex: 0, text: `${'#'.repeat(level)} `, level }])) markdown = true;
     }
 
     // ---- Whole-text menu (in the header): settings, delete, wipe clean ----
@@ -717,20 +717,17 @@
     // ---- Main pane view menu ----
     /** @type {'linear' | 'hierarchical' | 'cascading'} */
     let view = $state('linear');
-    let viewOpen = $state(false);
     /** cascading view only: every section open at once, zoomed all the way out, colours only */
     let exploded = $state(false);
-        /** @type {HTMLDivElement | undefined} */
-        let viewmenu;
+    /** @type {('linear' | 'hierarchical' | 'cascading')[]} */
+    const VIEWS = ['linear', 'hierarchical', 'cascading'];
 
-    /** @param {'linear' | 'hierarchical' | 'cascading'} v */
-    function chooseView(v) {
-        view = v;
-        viewOpen = false;
+    /** the triple toggle (linear, hierarchical, cascading): each click moves to the next view */
+    function cycleView() {
+        view = VIEWS[(VIEWS.indexOf(view) + 1) % VIEWS.length];
     }
 
         function onWindowClick(e) {
-            if (viewOpen && viewmenu && !viewmenu.contains(e.target)) viewOpen = false;
             if (injectOpen && injectmenu && !injectmenu.contains(e.target)) injectOpen = false;
         }
 </script>
@@ -806,57 +803,19 @@
             <ArrowOutDownCircleHalf />
         </button>
 
-        <!-- View menu: the choices open below the button, set off by thin lines like the editing helpers -->
-        <div class="flex w-full flex-col items-center gap-1" bind:this={viewmenu}>
-            <button
-                onclick={() => (viewOpen = !viewOpen)}
-                aria-label="Change view"
-                use:tip={'Change view'}
-                aria-haspopup="menu"
-                aria-expanded={viewOpen}
-                class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {viewOpen ? 'bg-taupe2' : ''}"
-            >
-                <EyeAlt />
-            </button>
-
-            {#if viewOpen}
-                <div
-                    role="menu"
-                    class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1"
-                >
-                    <button
-                        role="menuitemradio"
-                        aria-checked={view === 'linear'}
-                        aria-label="Linear"
-                        use:tip={'Linear'}
-                        onclick={() => chooseView('linear')}
-                        class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'linear' ? 'bg-taupe2' : ''}"
-                    >
-                        <Queue />
-                    </button>
-                    <button
-                        role="menuitemradio"
-                        aria-checked={view === 'hierarchical'}
-                        aria-label="Hierarchical"
-                        use:tip={'Hierarchical'}
-                        onclick={() => chooseView('hierarchical')}
-                        class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'hierarchical' ? 'bg-taupe2' : ''}"
-                    >
-                        <Sitemap />
-                    </button>
-                    <button
-                        role="menuitemradio"
-                        aria-checked={view === 'cascading'}
-                        aria-label="Cascading"
-                        use:tip={'Cascading'}
-                        onclick={() => chooseView('cascading')}
-                        class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {view === 'cascading' ? 'bg-taupe2' : ''}"
-                    >
-                        <StepsDown />
-                    </button>
-                </div>
-            {/if}
-        </div>
+        <!-- View toggle: each click moves to the next view, the icon wiping across like the mode button's -->
+        <button
+            onclick={cycleView}
+            aria-label="Change view"
+            use:tip={`${view[0].toUpperCase() + view.slice(1)} view`}
+            class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+        >
+            {#key view}
+                <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">
+                    {#if view === 'hierarchical'}<Sitemap />{:else if view === 'cascading'}<StepsDown />{:else}<Queue />{/if}
+                </span>
+            {/key}
+        </button>
 
         {#if view === 'cascading'}
             <!-- View-particular settings: shown under the view button, only in this view -->

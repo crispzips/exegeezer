@@ -156,6 +156,15 @@ body {
 .md blockquote { border-left: 3px solid var(--color-taupe2); padding-left: 0.75rem; }
 .md code { font-family: ui-monospace, monospace; font-size: 0.9em; background: var(--color-taupe2); border-radius: 3px; padding: 0 0.25em; }
 .md { overflow-wrap: anywhere; }
+
+/* A line being edited in the linear view looks as it will render: same sizes and weights as the .md headings above */
+.md-edit[data-h] { font-weight: 700; line-height: 1.25; }
+.md-edit[data-h='1'] { font-size: 1.875rem; }
+.md-edit[data-h='2'] { font-size: 1.5rem; }
+.md-edit[data-h='3'] { font-size: 1.25rem; }
+.md-edit[data-h='4'] { font-size: 1.125rem; }
+.md-edit[data-quote] { border-left: 3px solid var(--color-taupe2); padding-left: 0.75rem; }
+.md-edit[data-list] { padding-left: 1.5rem; }
 .md pre { white-space: pre-wrap; }
 .md table { display: block; max-width: 100%; overflow-x: auto; }
 .md hr { border: 0; border-top: 1px solid var(--color-taupe2); }

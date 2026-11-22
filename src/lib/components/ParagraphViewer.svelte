@@ -29,7 +29,7 @@
 	 *   focusId?: string | null,
 	 *   onfocusitem?: (id: string) => void,
 	 *   startEditId?: string | null,
-	 *   onnewbelow?: (id: string) => void,
+	 *   onnewitem?: (id: string, rect: DOMRect) => void,
 	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   onstartedit?: () => void,
 	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
@@ -65,7 +65,7 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, onwrite = undefined, onleave = undefined, markdown = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false } = $props();
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -228,7 +228,9 @@
 			if (!(el instanceof HTMLElement)) return;
 			editHover.clear();
 			gap.clear();
-			editCaret = pendingCaret;
+			// a header is edited as markup, so a fresh one's caret goes after its # marks; a paragraph's is where it was clicked
+			const para = paragraphs.find((q) => q.id === id);
+			editCaret = (para?.level ?? 0) > 0 ? para?.text.length ?? 0 : pendingCaret;
 			pendingCaret = 0;
 			editing = id;
 			el.scrollIntoView({ block: 'center', inline: 'center' });
@@ -275,7 +277,7 @@
 				// on an interstice, Enter opens its menu
 				e.preventDefault();
 				if (oninject) gap.open = true;
-			} else if (onedit && cur.type === 'paragraph' && e.target === el) {
+			} else if (onedit && cur.type !== 'gap' && e.target === el) {
 				e.preventDefault();
 				editCaret = para.text.length;
 				editHover.clear();
@@ -689,9 +691,10 @@
 							}
 						: undefined}
 					ondragend={onmove ? () => dd.end() : undefined}
-					ondblclick={(para.level ?? 0) === 0 && (onedit || onwrite)
+					ondblclick={onedit || onwrite
 						? (e) => {
-								const caret = caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
+								// a header shows rendered, without its # marks: the editor shows the markup, so its caret goes to the end
+								const caret = (para.level ?? 0) > 0 ? para.text.length : caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
 								if (!onedit) {
 									// reading: ask the page for writing mode, which then opens this paragraph for editing
 									pendingCaret = caret;
@@ -712,7 +715,7 @@
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
 						<p
-							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t), onenter: () => onnewbelow?.(para.id) }}
+							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t), onenter: (r) => onnewitem?.(para.id, r), markdown }}
 							class="flex-1 whitespace-pre-wrap outline-none"
 						></p>
 					{:else}

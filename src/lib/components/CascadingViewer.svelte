@@ -27,7 +27,8 @@
 	 *   empty?: string,
 	 *   exploded?: boolean,
 	 *   onmove?: (drop: { id: string, targetId: string, place: import('#lib/utilities/editText.js').DropPlace }) => void,
-	 *   onadd?: (req: { targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean }) => string | void,
+	 *   onnewitem?: (id: string, rect: DOMRect, pick: (kind: 'paragraph' | 'section', level?: number) => void) => void,
+	 *   onadd?: (req: { targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean, level?: number }) => string | void,
 	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void
@@ -51,7 +52,7 @@
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined } = $props();
+	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onnewitem = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined } = $props();
 
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -159,8 +160,8 @@
 		gap.set(locateGap(e, dd.reach), e);
 	}
 
-	/** @param {'paragraph' | 'section'} kind @param {GapSpec} z the gap to add at @param {boolean} [auto] made by Enter in the bubble before it (the page then drops it if it is left empty) */
-	async function add(kind, z, auto = false) {
+	/** @param {'paragraph' | 'section'} kind @param {GapSpec} z the gap to add at @param {boolean} [auto] made by Enter in the bubble before it (the page then drops it if it is left empty) @param {number} [level] a section's heading level */
+	async function add(kind, z, auto = false, level = undefined) {
 		gap.clear();
 		plusOpen = null;
 		if (z?.place === 'inside') {
@@ -168,7 +169,7 @@
 			const p = layout.find((q) => q.node.kind === 'section' && q.node.id === z.id);
 			if (p) selected = [...selected.slice(0, p.depth), z.id];
 		}
-		const id = z ? onadd?.({ targetId: z.id, place: z.place, kind, auto }) : undefined;
+		const id = z ? onadd?.({ targetId: z.id, place: z.place, kind, auto, level }) : undefined;
 		if (!id) return;
 		// once the new bubble is laid out (the grid may grow and re-zoom), bring it to the middle of the view
 		await tick();
@@ -182,6 +183,15 @@
 		} else {
 			titleEditId = id; // the new section's title is editable at once, in place
 		}
+	}
+
+	/**
+	 * Enter in an edited bubble: ask the page what to add next. A paragraph made from a section goes inside it, as its first item;
+	 * anything else goes right after the bubble.
+	 * @param {string} id @param {'paragraph' | 'section'} from what the bubble is @param {DOMRect} rect
+	 */
+	function askNew(id, from, rect) {
+		onnewitem?.(id, rect, (/** @type {'paragraph' | 'section'} */ kind, /** @type {number | undefined} */ level) => add(kind, { id, place: kind === 'paragraph' && from === 'section' ? 'inside' : 'after' }, true, level));
 	}
 
 	/** drag attributes shared by every bubble: a bubble in a row moves along x, in a column along y
@@ -916,7 +926,7 @@
 						<span class="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center break-words text-xl leading-snug">
 							{#if titleEditId === node.id}
 								<!-- double-clicked (or just added): the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
-								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onadd ? () => add('section', { id: node.id, place: 'after' }, true) : undefined }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
+								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onadd && onnewitem ? (r) => askNew(node.id, 'section', r) : undefined }} class="max-w-full min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words outline-2 outline-(--c)"></span>
 							{:else}
 								<!-- long titles are cut off with an ellipsis rather than spilling out of the bubble -->
 								<span class="max-w-full overflow-hidden {t.subtitle ? 'line-clamp-2' : 'line-clamp-3'}" title={node.title}>{#if t.title}{t.title}{:else}<span class="font-normal text-grey2 italic">Untitled section</span>{/if}</span>
@@ -970,7 +980,7 @@
 						{#if /** @type {any} */ (p.node.paragraph).title}<span class="mb-1 text-sm font-semibold">{/** @type {any} */ (p.node.paragraph).title}</span>{/if}
 						{#if inlineEditId === pid}
 							<!-- double-clicked: the text is edited in place; Enter or leaving saves, Esc cancels -->
-							<p use:editable={{ text: p.node.paragraph.text, caret: inlineCaret, onfinish: (t) => finishInline(pid, t), onenter: onadd ? () => add('paragraph', { id: pid, place: 'after' }, true) : undefined }} class="whitespace-pre-wrap outline-none"></p>
+							<p use:editable={{ text: p.node.paragraph.text, caret: inlineCaret, onfinish: (t) => finishInline(pid, t), onenter: onadd && onnewitem ? (r) => askNew(pid, 'paragraph', r) : undefined }} class="whitespace-pre-wrap outline-none"></p>
 						{:else}
 							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
 						{/if}

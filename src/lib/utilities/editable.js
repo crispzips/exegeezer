@@ -7,13 +7,13 @@ export const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
  * commits; Escape cancels. `onfinish` gets the new text, or null when cancelled or unchanged.
  *
  * There are no line breaks in a paragraph: Enter finishes the edit (committing it) and, when the
- * text was changed, calls `onenter`, which starts the next paragraph (an untouched paragraph just
+ * text was changed, calls `onenter` (with where the editor was), which asks what to add next (an untouched paragraph just
  * ends); pasted line breaks become spaces.
  *
  * @param {HTMLElement} node
- * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void, onenter?: () => void }} opts
+ * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void, onenter?: (rect: DOMRect) => void, markdown?: boolean }} opts
  */
-export function editable(node, { text, caret, onfinish, onenter }) {
+export function editable(node, { text, caret, onfinish, onenter, markdown = false }) {
 	node.contentEditable = 'plaintext-only';
 	if (node.contentEditable !== 'plaintext-only') node.contentEditable = 'true'; // older browsers
 	node.textContent = text;
@@ -29,6 +29,22 @@ export function editable(node, { text, caret, onfinish, onenter }) {
 	const sel = getSelection();
 	sel?.removeAllRanges();
 	sel?.addRange(range);
+
+	// With `markdown`, the line is shown formatted as it will render: a # header takes the header's size and weight,
+	// a quote or list item its marker's styling (see `.md-edit` in app.css), updating as the text is typed.
+	function format() {
+		const t = node.textContent ?? '';
+		const h = t.match(/^(#{1,6})\s/);
+		if (h) node.dataset.h = String(h[1].length);
+		else delete node.dataset.h;
+		node.toggleAttribute('data-quote', /^>\s/.test(t));
+		node.toggleAttribute('data-list', /^(?:[-*+]|\d+[.)])\s/.test(t));
+	}
+	if (markdown) {
+		node.classList.add('md-edit');
+		format();
+		node.addEventListener('input', format);
+	}
 
 	let done = false;
 	/** @param {boolean} commit */
@@ -50,8 +66,9 @@ export function editable(node, { text, caret, onfinish, onenter }) {
 		} else if (e.key === 'Enter' && !e.isComposing) {
 			e.preventDefault(); // never a line break: the paragraph ends and the next one begins
 			const changed = oneLine(node.textContent ?? '') !== text;
+			const rect = caretRect(node); // the editor goes once the edit ends: note where the caret was
 			finish(true);
-			if (changed) onenter?.();
+			if (changed) onenter?.(rect);
 		}
 	}
 
@@ -73,12 +90,32 @@ export function editable(node, { text, caret, onfinish, onenter }) {
 	node.addEventListener('blur', onblur);
 	return {
 		destroy() {
+			node.removeEventListener('input', format);
 			node.removeEventListener('keydown', onkeydown);
 			node.removeEventListener('paste', onpaste);
 			node.removeEventListener('beforeinput', onbeforeinput);
 			node.removeEventListener('blur', onblur);
 		}
 	};
+}
+
+/**
+ * Where the caret is on screen (a rectangle as tall as the line, at the caret), or the editor's own corner when
+ * the caret has no box (an empty editor).
+ * @param {HTMLElement} node
+ * @returns {DOMRect}
+ */
+function caretRect(node) {
+	const sel = getSelection();
+	if (sel?.rangeCount && node.contains(sel.anchorNode)) {
+		const range = sel.getRangeAt(0).cloneRange();
+		range.collapse(false);
+		const boxes = range.getClientRects();
+		const r = boxes.length ? boxes[boxes.length - 1] : range.getBoundingClientRect();
+		if (r.height > 0) return r;
+	}
+	const r = node.getBoundingClientRect();
+	return new DOMRect(r.left, r.top, 0, r.height);
 }
 
 /**

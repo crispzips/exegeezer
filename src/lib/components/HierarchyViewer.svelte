@@ -34,7 +34,7 @@
 	 *   startEditId?: string | null,
 	 *   onstartedit?: () => void,
 	 *   empty?: string,
-	 *   onnewbelow?: (id: string) => void,
+	 *   onnewitem?: (id: string, rect: DOMRect) => void,
 	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
@@ -47,7 +47,7 @@
 	 * bubbles (a violet line) to move them there, or onto the first or second half of a
 	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewbelow = undefined, onwrite = undefined, onrename = undefined, onnewsection = undefined, onleave = undefined } = $props();
+	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onrename = undefined, onleave = undefined } = $props();
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -558,7 +558,7 @@
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
 			<p
-				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t), onenter: () => onnewbelow?.(node.paragraph.id) }}
+				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t), onenter: (r) => onnewitem?.(node.paragraph.id, r) }}
 				class="flex-1 whitespace-pre-wrap outline-none"
 			></p>
 		{:else}
@@ -657,7 +657,7 @@
 						<span class="min-w-0 flex-1 {isOpen ? 'whitespace-nowrap' : 'break-words'}">
 							{#if titleEditId === node.id}
 								<!-- double-clicked: the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
-								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewsection ? () => onnewsection(node.id) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
+								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewitem ? (r) => onnewitem(node.id, r) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
 							{:else}
 								{#if t.title}{t.title}{:else}<span class="font-normal italic opacity-60">Untitled section</span>{/if}
 								{#if t.subtitle}

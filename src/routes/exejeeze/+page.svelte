@@ -16,6 +16,7 @@
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
     import NewTextDialog from '#lib/components/NewTextDialog.svelte';
     import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
+    import NewItemChooser from '#lib/components/NewItemChooser.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import OwnTextsDialog from '#lib/components/OwnTextsDialog.svelte';
@@ -377,7 +378,17 @@
 
     /** @param {{ id: string, text: string, title?: string, description?: string }} edit only the fields given change */
     function editParagraph({ id, ...fields }) {
-        commit(mainText.map((p) => (p.id === id ? { ...p, ...fields } : p)));
+        commit(
+            mainText.map((p) => {
+                if (p.id !== id) return p;
+                if ((p.level ?? 0) === 0 || fields.text === undefined) return { ...p, ...fields };
+                // a header edited as markup: its # marks set its level, and it stays a header
+                const m = fields.text.match(/^(#{1,6})\s+(.*)$/);
+                const level = m ? m[1].length : (p.level ?? 1);
+                const title = (m ? m[2] : fields.text.replace(/^#+\s*/, '')).trim();
+                return title ? { ...p, ...fields, level, text: `${'#'.repeat(level)} ${title}` } : p;
+            })
+        );
     }
 
     /**
@@ -403,27 +414,58 @@
         if (focusId === id) focusId = null;
     }
 
-    /** Enter in a section's title: a new empty section directly after it (its sibling), opened for editing. @param {string} id */
-    function newSectionAfter(id) {
-        const newId = addAtGap({ targetId: id, place: 'after', kind: 'section', auto: true });
-        if (newId) startEditId = newId;
+    /** what Enter in an edited bubble is asking: where to show the paragraph-or-section choice, and how to make the pick (default: next to the bubble) */
+    /** @type {{ rect: DOMRect, levels: number[], level: number, pick: (kind: 'paragraph' | 'section', level?: number) => void } | null} */
+    let chooser = $state(null);
+    /** the kind of item made most recently: the choice's first option */
+    /** @type {'paragraph' | 'section'} */
+    let lastKind = $state('paragraph');
+
+    /**
+     * Enter in an edited section or paragraph (any view): ask whether to make a paragraph or a section.
+     * @param {string} id @param {DOMRect} rect @param {(kind: 'paragraph' | 'section', level?: number) => void} [pick] how a view makes it itself
+     */
+    function askNew(id, rect, pick = (kind, level) => createFrom(id, kind, level)) {
+        chooser = { rect, pick, ...sectionLevels(id) };
+    }
+
+    /**
+     * The levels a section made right after the bubble `id` can take, and the one you are in: no deeper than one below the
+     * heading before it (a heading 1 when there is none), and the level of the heading at or before the bubble by default.
+     * @param {string} id
+     */
+    function sectionLevels(id) {
+        const j = mainText.findIndex((p) => p.id === id);
+        const at = gapIndex(mainText, id, 'after', false);
+        let max = 1;
+        for (let k = Math.min(at, mainText.length) - 1; k >= 0; k--) {
+            if ((mainText[k].level ?? 0) > 0) {
+                max = Math.min(6, (mainText[k].level ?? 0) + 1);
+                break;
+            }
+        }
+        let here = 1;
+        for (let k = j; k >= 0; k--) {
+            if ((mainText[k].level ?? 0) > 0) {
+                here = mainText[k].level ?? 1;
+                break;
+            }
+        }
+        return { levels: Array.from({ length: max }, (_, i) => i + 1), level: Math.min(here, max) };
+    }
+
+    /** A new empty paragraph or section after the bubble `id` (a paragraph made from a section is its first item), opened for editing. @param {string} id @param {'paragraph' | 'section'} kind @param {number} [level] a section's level */
+    function createFrom(id, kind, level) {
+        const from = mainText.find((p) => p.id === id);
+        if (!from) return;
+        const newId = addAtGap({ targetId: id, place: kind === 'paragraph' && (from.level ?? 0) > 0 ? 'inside' : 'after', kind, auto: true, level });
+        // once the choice has closed and let go of the focus, so nothing takes it back from the new bubble's editor
+        if (newId) setTimeout(() => (startEditId = newId), 0);
     }
 
     /** a just-injected empty paragraph the view should start editing at once (its body field, or a section's title), or null */
     /** @type {string | null} */
     let startEditId = $state(null);
-
-    /** Enter in a paragraph: a new empty paragraph directly below it, opened for writing. @param {string} id */
-    function newParagraphBelow(id) {
-        const at = mainText.findIndex((p) => p.id === id) + 1;
-        if (at === 0) return;
-        const item = { id: crypto.randomUUID(), originalIndex: 0, text: '', level: 0 };
-        const before = mainText;
-        if (commit(insertAt(mainText, at, [item]))) {
-            fresh.set(item.id, before);
-            startEditId = item.id;
-        }
-    }
 
     // ---- Editing: inject at an interstitial landing zone ----
     /** where the next injection from the Load Text modal goes (a gap in the main text), or null for the usual choice */
@@ -450,7 +492,7 @@
      * @param {{ targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean }} req (auto: made by Enter, so dropped again if left empty)
      * @returns {string | undefined} the new item's id (the view centres its bubble)
      */
-    function addAtGap({ targetId, place, kind, auto = false }) {
+    function addAtGap({ targetId, place, kind, auto = false, level: chosen }) {
         const before = mainText;
         // 'inside': the first item of a section, right after its header
         const target = mainText.findIndex((p) => p.id === targetId);
@@ -461,6 +503,8 @@
         if (kind === 'section' && place === 'inside') {
             const level = Math.min(6, (mainText[target].level ?? 0) + 1);
             item = { ...item, level, text: `${'#'.repeat(level)} ` };
+        } else if (kind === 'section' && chosen) {
+            item = { ...item, level: chosen, text: `${'#'.repeat(chosen)} ` };
         } else if (kind === 'section') {
             let level = 1;
             for (let k = mainText.findIndex((p) => p.id === targetId); k >= 0; k--) {
@@ -473,6 +517,7 @@
             item = { ...item, level, text: `${'#'.repeat(level)} ` };
         }
         if (!commit(insertAt(mainText, at, [item]))) return;
+        lastKind = kind;
         if (auto) fresh.set(item.id, before); // made by Enter: dropped again if it is left empty
         return item.id;
     }
@@ -496,7 +541,10 @@
      */
     function seedText(level = 1) {
         seedStep = 'idle';
-        if (commit([{ id: crypto.randomUUID(), originalIndex: 0, text: `${'#'.repeat(level)} `, level }])) markdown = true;
+        if (commit([{ id: crypto.randomUUID(), originalIndex: 0, text: `${'#'.repeat(level)} `, level }])) {
+            markdown = true;
+            lastKind = 'section';
+        }
     }
 
     // ---- Whole-text menu (in the header): settings, delete, wipe clean ----
@@ -782,11 +830,11 @@
             </div>
         {/if}
         {#if view === 'linear'}
-            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewbelow={editing ? newParagraphBelow : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'cascading'}
-            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onrename={editing ? renameSectionTitle : undefined} onnewsection={editing ? newSectionAfter : undefined} onnewbelow={editing ? newParagraphBelow : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
     </div>
@@ -866,6 +914,22 @@
 </div>
 
 <MenuTip />
+{#if chooser}
+    <!-- the const keeps the props steady while the choice is closing (chooser is already null by then) -->
+    {@const c = chooser}
+    <NewItemChooser
+        rect={c.rect}
+        first={lastKind}
+        levels={c.levels}
+        level={c.level}
+        oncancel={() => (chooser = null)}
+        onpick={(kind, level) => {
+            const pick = chooser?.pick;
+            chooser = null;
+            pick?.(kind, level);
+        }}
+    />
+{/if}
 <ConfirmDialog bind:request={deleteRequest} />
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />

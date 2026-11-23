@@ -14,8 +14,9 @@ export async function POST({ request, locals }) {
 	const items = parseItems(body?.items);
 	if (!items) error(400, 'items must be a list of { id, text, level }');
 	if (!isVisibility(body.visibility)) error(400, "visibility must be 'private' or 'public'");
-	// an empty title is allowed (a text seeded from another starts untitled); none sent means 'Untitled'
-	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : undefined;
+	// every text has a title
+	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : '';
+	if (!title) error(400, 'A text needs a title');
 	const importedDetails = parseImportedDetails(body.importedDetails);
 	if (!importedDetails) error(400, 'importedDetails must be a list of entries with short text fields');
 	return json({ id: await createText(locals, title, items, body.visibility, isRallyStyle(body.rallyStyle) ? body.rallyStyle : null, importedDetails) }, { status: 201 });

@@ -77,13 +77,33 @@ export const OPEN_SOURCES = [
 		structured: true
 	},
 	{
-		id: 'europe-pmc',
-		name: 'Europe PMC',
+		id: 'pubmed',
+		name: 'PubMed',
 		kind: 'Open-access medical and life-science articles',
-		description: 'Full-text research articles that are open access in PubMed Central. Each keeps its own license (shown in the results), and some forbid commercial reuse.',
+		description: 'Full-text research articles from PubMed Central’s open-access subset (PubMed itself holds only abstracts, which are not included). Each keeps its own license, shown in the imported details, and some forbid commercial reuse.',
 		searchHint: 'Topic, title or author',
-		homepage: 'https://europepmc.org/',
-		docs: 'https://europepmc.org/RestfulWebService',
+		homepage: 'https://pmc.ncbi.nlm.nih.gov/',
+		docs: 'https://www.ncbi.nlm.nih.gov/books/NBK25497/',
+		structured: true
+	},
+	{
+		id: 'devdocs',
+		name: 'DevDocs',
+		kind: 'Programming documentation',
+		description: 'The documentation of a few hundred languages, libraries and tools in one place (JavaScript, Python, Svelte, CSS, Node and more). Search a name for its whole documentation or a section of it, or a name and a topic (like "react hooks") for single pages. Code stays as code. Each project’s own license applies.',
+		searchHint: 'A language or library, then optionally a topic',
+		homepage: 'https://devdocs.io/',
+		docs: 'https://github.com/freeCodeCamp/devdocs#readme',
+		structured: true
+	},
+	{
+		id: 'markdown-docs',
+		name: 'Markdown docs',
+		kind: 'Programming documentation, as the sites publish it',
+		description: 'Documentation sites that publish their docs as plain Markdown: a guide listing the pages (at /llms.txt on the site) and sometimes everything in one file. Search a site’s name (Svelte, Stripe, Vite…) or its address (svelte.dev). Only sites that have published a guide work.',
+		searchHint: 'A documentation site’s name or address',
+		homepage: 'https://llmstxt.org/',
+		docs: 'https://llmstxt.org/',
 		structured: true
 	}
 ];

@@ -1,8 +1,14 @@
-import { SourceError, fetchSource, sleep } from './http.js';
+import { SourceError, fetchSource } from './http.js';
 import { xmlToHtml } from './xml.js';
 import { htmlToMarkdown, decodeEntities } from './html.js';
 
-const API = 'https://www.ebi.ac.uk/europepmc/webservices/rest';
+/**
+ * PubMed Central (PMC): the full text of open-access biomedical and life-science articles, from NCBI's own
+ * E-utilities (keyless, and fast: about half a second where Europe PMC's mirror took 10 to 60 seconds).
+ * PubMed proper holds only citations and abstracts; its full-text articles are the ones in PMC.
+ */
+const API = 'https://eutils.ncbi.nlm.nih.gov/entrez/eutils';
+const TOOL = 'tool=exegeezer';
 const PMCID = /^PMC\d{1,10}$/;
 
 /** @param {string} q the user's words, with search syntax taken out */
@@ -12,18 +18,26 @@ const plain = (html) => decodeEntities((html ?? '').replace(/<[^>]*>/g, '')).rep
 
 /** @param {string} q */
 export async function search(q) {
-	// open-access articles with full text in PubMed Central only: those are the ones whose text may be copied
-	const params = new URLSearchParams({ query: `(${words(q)}) AND OPEN_ACCESS:y AND HAS_FT:y AND SRC:PMC`, format: 'json', pageSize: '20', resultType: 'core' });
-	const data = await fetchSource(`${API}/search?${params}`, { label: 'Europe PMC' });
-	return (data?.resultList?.result ?? [])
-		.filter((/** @type {any} */ r) => r.pmcid)
-		.map((/** @type {any} */ r) => ({
-			id: r.pmcid,
-			title: plain(r.title).replace(/\.$/, ''),
-			author: plain(r.authorString).replace(/\.$/, '') || null,
-			detail: [r.journalInfo?.journal?.title ?? r.journalTitle, r.journalInfo?.yearOfPublication ?? r.pubYear, r.license].filter(Boolean).join(' · '),
-			url: `https://europepmc.org/article/PMC/${r.pmcid}`
-		}));
+	// the open-access subset only: those are the articles whose text may be copied
+	const params = new URLSearchParams({ db: 'pmc', term: `(${words(q)}) AND open access[filter]`, retmax: '20', retmode: 'json', sort: 'relevance' });
+	const found = await fetchSource(`${API}/esearch.fcgi?${params}&${TOOL}`, { label: 'PubMed' });
+	/** @type {string[]} */
+	const ids = found?.esearchresult?.idlist ?? [];
+	if (!ids.length) return [];
+	const summary = await fetchSource(`${API}/esummary.fcgi?db=pmc&id=${ids.join(',')}&retmode=json&${TOOL}`, { label: 'PubMed' });
+	return ids
+		.map((uid) => summary?.result?.[uid])
+		.filter(Boolean)
+		.map((/** @type {any} */ r) => {
+			const names = /** @type {{ name: string }[]} */ (r.authors ?? []).map((a) => a.name);
+			return {
+				id: `PMC${r.uid}`,
+				title: plain(r.title).replace(/\.$/, ''),
+				author: names.length ? `${names.slice(0, 4).join(', ')}${names.length > 4 ? ', et al.' : ''}` : null,
+				detail: [r.fulljournalname || r.source, String(r.pubdate ?? '').slice(0, 4)].filter(Boolean).join(' · '),
+				url: `https://pmc.ncbi.nlm.nih.gov/articles/PMC${r.uid}/`
+			};
+		});
 }
 
 /**
@@ -69,21 +83,11 @@ function rule(name, attrs, ancestors) {
 /** @param {string} id a PMC id */
 export async function text(id) {
 	if (!PMCID.test(id)) throw new SourceError(400, 'That is not a PubMed Central id.');
-	// Europe PMC makes an article's XML the first time it is asked for: it answers 500 for a few seconds, then 200
-	let xml = '';
-	for (let attempt = 0; attempt < 4 && !xml; attempt++) {
-		try {
-			xml = await fetchSource(`${API}/${id}/fullTextXML`, { as: 'text', label: 'Europe PMC', maxBytes: 20_000_000, timeoutMs: 40000 });
-		} catch (err) {
-			if (!(err instanceof SourceError) || err.status < 500) throw err;
-			if (attempt === 3) throw new SourceError(503, 'Europe PMC could not prepare that article just now. Try again in a minute.');
-			await sleep(3000);
-		}
-	}
+	const xml = await fetchSource(`${API}/efetch.fcgi?db=pmc&id=${id.slice(3)}&rettype=xml&${TOOL}`, { as: 'text', label: 'PubMed', maxBytes: 20_000_000, timeoutMs: 40000 });
 	const title = plain(/<article-title[^>]*>([\s\S]*?)<\/article-title>/.exec(xml)?.[1]) || id;
 	const abstract = /<abstract(?![^>]*abstract-type)[^>]*>[\s\S]*?<\/abstract>/.exec(xml)?.[0] ?? '';
 	const bodyXml = /<body[^>]*>[\s\S]*<\/body>/.exec(xml)?.[0] ?? '';
-	if (!bodyXml) throw new SourceError(404, 'Europe PMC has no open full text for that article.');
+	if (!bodyXml) throw new SourceError(404, 'PubMed has no open full text for that article.');
 	const authors = [...xml.matchAll(/<contrib [^>]*contrib-type="author"[^>]*>[\s\S]*?<\/contrib>/g)].map((m) => {
 		const surname = plain(/<surname[^>]*>([\s\S]*?)<\/surname>/.exec(m[0])?.[1]);
 		const given = plain(/<given-names[^>]*>([\s\S]*?)<\/given-names>/.exec(m[0])?.[1]);
@@ -105,8 +109,8 @@ export async function text(id) {
 		notes: ['Figures, tables and the reference list are left out. Check the license before reusing the text.'],
 		body: markdown,
 		details: {
-			source: 'Europe PMC',
-			sourceUrl: `https://europepmc.org/article/PMC/${id}`,
+			source: 'PubMed Central',
+			sourceUrl: `https://pmc.ncbi.nlm.nih.gov/articles/${id}/`,
 			title,
 			author: authors.join(', '),
 			published: year,

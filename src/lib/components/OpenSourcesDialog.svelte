@@ -40,12 +40,14 @@
 	/** @type {number | null} */
 	let batchDone = $state(null);
 	let query = $state('');
-	/** @type {{ source: string, sourceName: string, id: string, title: string, author: string | null, detail: string, url: string }[] | null} */
+	/** @type {{ source: string, sourceName: string, id: string, title: string, author: string | null, detail: string, url: string, tooBig?: boolean }[] | null} */
 	let results = $state(null);
 	let searching = $state(false);
 	/** the id of the result being downloaded */
 	let importing = $state('');
 	let message = $state('');
+	/** a search answer that is guidance, not a failure (the source has nothing at that address): shown calmly, not in red */
+	let notice = $state('');
 
 	/** a download is under way, so the dialog is locked */
 	const busy = $derived(!!importing || batchDone !== null);
@@ -61,6 +63,7 @@
 		if (!chosen.length) chosen = shown.filter((s) => s.available).slice(0, 1).map((s) => s.id);
 		results = null;
 		message = '';
+		notice = '';
 	}
 
 	$effect(() => {
@@ -72,6 +75,7 @@
 
 	async function loadSources() {
 		message = '';
+		notice = '';
 		try {
 			const res = await fetch('/api/sources');
 			if (!res.ok) throw new Error(`${res.status}`);
@@ -92,12 +96,14 @@
 		} else chosen = [...chosen, id];
 		results = null;
 		message = '';
+		notice = '';
 	}
 
 	function chooseAll() {
 		chosen = shown.filter((s) => s.available).map((s) => s.id);
 		results = null;
 		message = '';
+		notice = '';
 	}
 
 	/** @param {Response} res */
@@ -112,13 +118,14 @@
 		if (!active.length || !query.trim() || searching) return;
 		searching = true;
 		message = '';
+		notice = '';
 		results = null;
 		const q = encodeURIComponent(query.trim());
 		const answers = await Promise.all(
 			active.map(async (src) => {
 				try {
 					const res = await fetch(`/api/sources/${src.id}/search?q=${q}${wholeOnly ? '&whole=1' : ''}`);
-					if (!res.ok) return { src, error: await failure(res), list: [] };
+					if (!res.ok) return { src, error: await failure(res), soft: res.status === 404, list: [] };
 					const list = (await res.json()).results.map((/** @type {any} */ r) => ({ ...r, source: src.id, sourceName: src.name }));
 					return { src, error: '', list };
 				} catch {
@@ -131,8 +138,10 @@
 		const merged = [];
 		for (let i = 0; answers.some((a) => i < a.list.length); i++) for (const a of answers) if (i < a.list.length) merged.push(a.list[i]);
 		results = merged;
-		const failed = answers.filter((a) => a.error).map((a) => `${a.src.name}: ${a.error}`);
-		message = failed.length ? failed.join(' ') : merged.length ? '' : 'Nothing found. Try other words.';
+		const word = (/** @type {{ src: { name: string }, error: string }} */ a) => `${a.src.name}: ${a.error}`;
+		const failed = answers.filter((a) => a.error && !('soft' in a && a.soft)).map(word);
+		notice = answers.filter((a) => a.error && 'soft' in a && a.soft).map(word).join(' ');
+		message = failed.length ? failed.join(' ') : merged.length || notice ? '' : 'Nothing found. Try other words.';
 		searching = false;
 	}
 
@@ -148,6 +157,7 @@
 	async function importPicked() {
 		if (importing || batchDone !== null || !picked.length) return;
 		message = '';
+		notice = '';
 		batchDone = 0;
 		/** @type {{ title: string, markdown: string, details: Record<string, string>, notes: string[] }[]} */
 		const texts = [];
@@ -175,6 +185,7 @@
 		if (importing) return;
 		importing = `${r.source}\u0000${r.id}`;
 		message = '';
+		notice = '';
 		try {
 			const res = await fetch(`/api/sources/${r.source}/text?id=${encodeURIComponent(r.id)}`);
 			if (!res.ok) return void (message = await failure(res));
@@ -282,6 +293,7 @@
 	{/if}
 
 	<!-- outside the scrolling list, so a failure is seen even when the results are scrolled down -->
+	{#if notice}<p class="mt-3 shrink-0 rounded-md bg-taupe2 px-3 py-2 text-sm">{notice}</p>{/if}
 	{#if message}<p role="alert" class="mt-3 shrink-0 text-sm {results?.length ? 'text-red-700' : 'text-grey3'}">{message}</p>{/if}
 
 	<div class="mt-3 min-h-0 flex-1 overflow-y-auto">
@@ -290,7 +302,7 @@
 				{#each results as r (`${r.source}\u0000${r.id}`)}
 					{@const at = pickedIndex.get(`${r.source}\u0000${r.id}`)}
 					<li class="flex items-center gap-2 py-2">
-						<input type="checkbox" checked={at !== undefined} onchange={() => togglePick(r)} aria-label="Select {r.title} for a batch" />
+						<input type="checkbox" checked={at !== undefined} disabled={r.tooBig} onchange={() => togglePick(r)} aria-label="Select {r.title} for a batch" />
 						<span class="w-5 shrink-0 text-center text-xs font-medium text-grey3">{at !== undefined ? at + 1 : ''}</span>
 						<div class="min-w-0 flex-1">
 							<div class="truncate text-sm font-medium">{r.title}</div>
@@ -298,7 +310,7 @@
 						</div>
 						<span class="shrink-0 rounded bg-taupe2 px-1.5 py-0.5 text-[10px]">{r.sourceName}</span>
 						<a href={r.url} target="_blank" rel="noopener noreferrer" aria-label="Open {r.title} on {r.sourceName}" class="rounded-md p-1 hover:bg-taupe2"><ArrowUpRightSquare width={16} height={16} /></a>
-						<button onclick={() => importText(r)} disabled={!!importing || batchDone !== null} class="shrink-0 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">
+						<button onclick={() => importText(r)} disabled={!!importing || batchDone !== null || r.tooBig} class="shrink-0 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">
 							{importing === `${r.source}\u0000${r.id}` ? 'Importing…' : 'Import'}
 						</button>
 					</li>

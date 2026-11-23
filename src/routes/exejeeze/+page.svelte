@@ -117,6 +117,9 @@
     let previewMarkdown = $state(false);
     /** whether the main text is Markdown, so the linear view renders it */
     let markdown = $state(false);
+    /** the preview as the linear view shows it: front and back matter (the Frontmatter section above all) are folded into bubbles above and below the text */
+    const previewShown = $derived(withoutMatter(paragraphs));
+    const previewMatter = $derived(matterSections(paragraphs));
 
     /**
      * Put the text above the first header into a section called "Frontmatter".
@@ -633,8 +636,8 @@
         }
         try {
             let list = paragraphs.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
-            // paragraphs have to be inside sections: text with none above its first header goes into a Frontmatter section
-            if (list[0] && (list[0].level ?? 0) === 0 && danglingCount(list) > 0) list = withFrontmatter(list);
+            // text above the first header goes into a Frontmatter section; a text with no headers at all stays as it is
+            if (list[0] && (list[0].level ?? 0) === 0 && list.some((p) => (p.level ?? 0) > 0)) list = withFrontmatter(list);
             const title = loadSource === 'own' ? '' : loadName;
             const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility: 'private', items: toItems(list), importedDetails: $state.snapshot(loadDetails) }) });
             if (!res.ok) throw new Error(`${res.status}`);
@@ -835,8 +838,8 @@
                 : where === 'prepend'
                   ? [...added, ...mainText]
                   : [...mainText, ...added];
-        // paragraphs have to be inside sections: text with none above its first header goes into a Frontmatter section
-        if (combined[0] && (combined[0].level ?? 0) === 0 && danglingCount(combined) > (replacing ? 0 : danglingCount(mainText))) {
+        // text above the first header goes into a Frontmatter section; a text with no headers at all stays as it is
+        if (combined[0] && (combined[0].level ?? 0) === 0 && combined.some((p) => (p.level ?? 0) > 0) && danglingCount(combined) > (replacing ? 0 : danglingCount(mainText))) {
             combined = withFrontmatter(combined);
         }
         // the rights and publication details of what came in are saved with the text (a new text starts with just these)
@@ -1244,15 +1247,18 @@
 
     <!-- Vertical menu column -->
     <nav aria-label="Menu" class="flex w-12 shrink-0 flex-col items-center gap-1 border-l border-taupe2 bg-taupe1 py-2">
+        <!-- with no text open there is nothing to load into: the Seed a text button starts one -->
+        {#if !noText}
         <button
             onclick={openModal}
             aria-label="Load text"
-            aria-disabled={!authed || noText}
-            use:tip={!authed ? 'Load text (sign in first)' : noText ? 'Load text (seed a text first)' : 'Load text'}
-            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed && !noText ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
+            aria-disabled={!authed}
+            use:tip={!authed ? 'Load text (sign in first)' : 'Load text'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
         >
             <ArrowOutDownCircleHalf />
         </button>
+        {/if}
 
         <button
             onclick={() => (mapOpen = true)}
@@ -1492,7 +1498,7 @@
         </header>
 
         <div class="min-h-0 flex-1">
-            <ParagraphViewer {paragraphs} markdown={previewMarkdown} empty="No text loaded yet." />
+            <ParagraphViewer paragraphs={previewShown} matter={previewMatter} markdown={previewMarkdown} empty="No text loaded yet." />
         </div>
     </section>
     {/if}

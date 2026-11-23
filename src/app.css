@@ -19,6 +19,39 @@ body {
 		border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
 		box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
 	}
+	/* checkboxes: a small sunk box like the text fields; the tick is dark taupe (or the surrounding --mode accent) */
+	input[type='checkbox'] {
+		appearance: none;
+		flex-shrink: 0;
+		display: inline-grid;
+		place-content: center;
+		width: 1.25rem;
+		height: 1.25rem;
+		margin: 0;
+		vertical-align: middle;
+		cursor: pointer;
+		border-radius: 0.35rem;
+		background-color: var(--color-taupe1);
+		border: 1px solid;
+		border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+		box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+	}
+	input[type='checkbox']::before {
+		content: '';
+		width: 0.75rem;
+		height: 0.75rem;
+		background: var(--mode, var(--color-taupe5));
+		clip-path: polygon(14% 44%, 0 65%, 50% 100%, 100% 16%, 80% 0%, 43% 62%);
+		transform: scale(0);
+		transition: transform 0.12s ease-out;
+	}
+	input[type='checkbox']:checked::before {
+		transform: scale(1);
+	}
+	input[type='checkbox']:disabled {
+		cursor: not-allowed;
+		opacity: 0.5;
+	}
 	/* the closed dropdown sits in the plane of the form: flat, a plain thin border */
 	select {
 		background-color: var(--color-taupe1);
@@ -143,6 +176,21 @@ body {
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0; white-space: pre-wrap; }
+/* reading mode: a paragraph's first and last sentences stand on their own lines, set larger and justified,
+   on a faint highlight with rounded, blurred edges (the glow is a shadow of the same colour) */
+:has(> .sent-end) { text-align: left; } /* the body sentences stay left-aligned, even in the rally's centred bubbles */
+/* the rally's bubbles hold the body sentences further in from the bubble's edge than the first and last */
+.rally-chunk .sent-body { display: block; padding: 0 1.25em; }
+.sent-end {
+  display: block;
+  text-align: justify;
+  font-size: 1.2em;
+  margin: 0.4em 0;
+  padding: 0.2em 0.5em;
+  border-radius: 0.6em;
+  background: color-mix(in srgb, var(--color-taupe3) 30%, transparent);
+  box-shadow: 0 0 0.5em 0.2em color-mix(in srgb, var(--color-taupe3) 30%, transparent);
+}
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-weight: 700; line-height: 1.25; margin: 0; }
 .md h1 { font-size: 1.875rem; }
 .md h2 { font-size: 1.5rem; }
@@ -181,13 +229,60 @@ svg[fill="currentColor"] { color: var(--color-taupe5); }
 }
 .pop-in { animation: pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 
+/* A submenu in the vertical menu (rally settings, editing tools) sits a step down from the menu: shaded, with a soft inner shadow top and bottom */
+.submenu {
+  background: color-mix(in srgb, var(--color-taupe3) 45%, var(--color-taupe1));
+  box-shadow: inset 0 3px 3px -2px color-mix(in srgb, var(--color-taupe5) 30%, transparent), inset 0 -3px 3px -2px color-mix(in srgb, var(--color-taupe5) 30%, transparent);
+}
+.submenu button:hover:not(:disabled) { background: var(--color-taupe3); }
+
 /* Rally view's speed slider: vertical, slowest at the bottom, with unlabelled ticks */
 input[type='range'].rally-speed {
+  -webkit-appearance: none;
+  appearance: none;
   writing-mode: vertical-lr;
   direction: rtl;
   width: 1.25rem;
   height: 7rem;
-  accent-color: var(--color-violet);
+  background: transparent;
+  --thumb: 1.1rem;
+  --fill: calc(var(--p, 0) * (100% - var(--thumb)) + var(--thumb) / 2);
+}
+/* the same sunk, hollow track as the setup sliders, filled from the bottom up to the thumb */
+input[type='range'].rally-speed::-webkit-slider-runnable-track {
+  width: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(to top, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  border: 1px solid;
+  border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+  box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+}
+input[type='range'].rally-speed::-moz-range-track {
+  width: 0.5rem;
+  border-radius: 999px;
+  background: linear-gradient(to top, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  border: 1px solid;
+  border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+  box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
+}
+input[type='range'].rally-speed::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: var(--thumb);
+  height: var(--thumb);
+  margin-left: calc((0.5rem - var(--thumb)) / 2 - 1px);
+  border-radius: 999px;
+  background: var(--mode, var(--color-violet));
+  border: 2px solid var(--color-taupe1);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--color-taupe5) 40%, transparent);
+}
+input[type='range'].rally-speed::-moz-range-thumb {
+  width: var(--thumb);
+  height: var(--thumb);
+  border-radius: 999px;
+  background: var(--mode, var(--color-violet));
+  border: 2px solid var(--color-taupe1);
+  box-sizing: border-box;
 }
 
 /* Sliders in the rally setup: the track is hollow and sunk like our text fields (taupe edges, inner shadow);

@@ -1,18 +1,21 @@
 <script>
-    import { onMount, tick } from 'svelte';
+    import { onMount, tick, untrack } from 'svelte';
+    import { slide } from 'svelte/transition';
     import { EXAMPLE_ITEMS, EXAMPLE_TITLE } from '#lib/exampleText.js';
     import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, Reading, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, Pencil, Copy, Brain, Ear, TextHeight, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import CascadingViewer from '#lib/components/CascadingViewer.svelte';
     import RallySetup from '#lib/components/RallySetup.svelte';
     import RallyViewer from '#lib/components/RallyViewer.svelte';
-    import { READ_WPM, SIZES, STYLES } from '#lib/utilities/rallyChunks.js';
+    import RallyWriter from '#lib/components/RallyWriter.svelte';
+    import { emphasis } from '#lib/emphasis.svelte.js';
+    import { READ_WPM, SIZES, DEFAULT_SIZE, WRITING_COLOUR } from '#lib/utilities/rallyChunks.js';
     import HierarchyViewer from '#lib/components/HierarchyViewer.svelte';
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
@@ -133,6 +136,8 @@
     let textAuthors = $state([]);
     /** 'private' | 'public', chosen in the new-text dialog before a text is first saved */
     let textVisibility = '';
+    /** the loaded text's default rally type (null: it has none yet, so the rally's setup is offered) */
+    let textRallyStyle = $state(/** @type {string | null} */ (null));
     /** @type {{ title: string, run: (v: { title: string, visibility: string }) => void } | null} */
     let newTextRequest = $state(null);
     /** autosave starts once the saved text (if any) has been loaded */
@@ -162,6 +167,7 @@
         textId = saved.id;
         markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
         textTitle = saved.title;
+        textRallyStyle = saved.rallyStyle ?? null;
         textAuthors = saved.authors ?? [];
         mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
         lastSaved = JSON.stringify(toItems(mainText));
@@ -334,7 +340,7 @@
     function onKeydown(e) {
         if (!editing || !(e.metaKey || e.ctrlKey) || e.altKey) return;
         const t = /** @type {HTMLElement | null} */ (e.target);
-        if (t?.closest('input, textarea, select, [contenteditable]')) return;
+        if (t?.closest('input, textarea, select, [contenteditable]') && !t.hasAttribute('data-text-undo')) return; // the rally writer's line has no undo of its own: Cmd+Z there undoes the text
         const key = e.key.toLowerCase();
         if (key === 'z' && !e.shiftKey) undo();
         else if ((key === 'z' && e.shiftKey) || key === 'y') redo();
@@ -624,6 +630,7 @@
         }
         textId = null;
         textVisibility = '';
+        textRallyStyle = null;
         textTitle = 'Untitled';
         textAuthors = [];
         lastSaved = '';
@@ -833,8 +840,11 @@
                 if (authed) mode = saved.mode;
             }
             if (typeof saved.exploded === 'boolean') exploded = saved.exploded;
-            if (STYLES.includes(saved.rallyStyle)) rallyStyle = saved.rallyStyle;
-            if (Number.isInteger(saved.rallySize) && saved.rallySize >= 0 && saved.rallySize < SIZES.length) rallySize = saved.rallySize;
+            // the size is remembered as rem (not as a step), so changing the scale never moves it; an older step-only setting is dropped
+            const found = SIZES.indexOf(saved.rallySizeRem);
+            if (found >= 0) rallySize = found;
+            if (typeof saved.emphasizeFirst === 'boolean') emphasis.first = saved.emphasizeFirst;
+            if (typeof saved.emphasizeLast === 'boolean') emphasis.last = saved.emphasizeLast;
             if (Number.isInteger(saved.rallySpeed) && saved.rallySpeed >= 0 && saved.rallySpeed < READ_WPM.length) rallySpeed = saved.rallySpeed;
         } catch {
             // no saved settings (or storage is blocked): the defaults stand
@@ -843,7 +853,7 @@
     });
 
     $effect(() => {
-        const settings = { view, mode: chosenMode, exploded, rallyStyle, rallySize, rallySpeed };
+        const settings = { view, mode: chosenMode, exploded, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first, emphasizeLast: emphasis.last };
         if (!restored) return;
         try {
             localStorage.setItem(REMEMBER, JSON.stringify(settings));
@@ -878,61 +888,88 @@
     /** @type {('linear' | 'hierarchical' | 'cascading' | 'rally')[]} */
     const VIEWS = ['linear', 'hierarchical', 'cascading', 'rally'];
     // rally view's settings: chunk unit, text size step, speed tick (unlabelled; ranges set in rallyChunks.js), and whether it is running
-    /** @type {'compose' | 'copy' | 'recall' | 'dictate'} */
-    let rallyStyle = $state('compose');
-    let rallySize = $state(4);
+    let rallySize = $state(DEFAULT_SIZE);
     let rallySpeed = $state(6);
+    /** the menu's text size and speed sliders: each is revealed by its icon */
+    let sizeOpen = $state(false);
+    let speedOpen = $state(false);
     let rallyPlaying = $state(false);
     /**
-     * Rally's compose style hands over what was written: a new paragraph after `afterId` (or at the end), or, with `id`, added to that paragraph.
-     * @param {{ afterId: string | null, text: string }} add
-     * @returns {string | null} the paragraph it went into
+     * Rally writing mode: a one-line markdown line injected at the writer's cursor. Hashtags at the front make it a section
+     * (as deep as there are hashtags); anything else is a paragraph.
+     * @param {{ gap: { id: string, place: 'before' | 'after' | 'inside' } | null, text: string }} add
+     * @returns {{ id: string, kind: 'paragraph' | 'section' } | null}
      */
-    function composeInto({ afterId, text }) {
-        // the empty paragraph a rally began with takes the first one written
-        const fill = rallyFillId && mainText.find((p) => p.id === rallyFillId && p.text === '');
-        rallyFillId = null;
-        if (fill) {
-            commit(mainText.map((p) => (p.id === fill.id ? { ...p, text } : p)));
-            return fill.id;
+    function injectLine({ gap, text }) {
+        const line = text.replace(/\s+/g, ' ').trim();
+        const m = /^(#{1,6})(?:\s+(.*))?$/.exec(line);
+        const level = m ? m[1].length : 0;
+        const kind = level ? 'section' : 'paragraph';
+        const body = level ? `${m?.[1]} ${m?.[2] ?? ''}` : line;
+        // a rally begun from nothing starts with an empty section and paragraph: the first things written fill them
+        const emptyPara = rallyFillId && mainText.find((p) => p.id === rallyFillId && p.text === '');
+        const emptyHead = rallyHeadId && mainText.find((p) => p.id === rallyHeadId && (p.level ?? 0) > 0 && p.text.replace(/^#+\s*/, '') === '');
+        if (kind === 'paragraph' && emptyPara) {
+            rallyFillId = null;
+            commit(mainText.map((p) => (p.id === emptyPara.id ? { ...p, text: body } : p)));
+            return { id: emptyPara.id, kind };
         }
-        const at = afterId ? mainText.findIndex((p) => p.id === afterId) : -1;
-        const item = { id: crypto.randomUUID(), originalIndex: 0, text, level: 0 };
-        if (mainText.length === 0) {
-            // composing from nothing: paragraphs have to be inside a section, so an empty first section is begun too
-            const header = { id: crypto.randomUUID(), originalIndex: 0, text: '# ', level: 1 };
-            if (!commit([header, item].map((p, i) => ({ ...p, originalIndex: i })))) return null;
-            markdown = true;
-            return item.id;
+        if (kind === 'section' && emptyHead) {
+            rallyHeadId = null;
+            commit(mainText.map((p) => (p.id === emptyHead.id ? { ...p, text: body, level } : p)));
+            return { id: emptyHead.id, kind };
         }
-        return commit(insertAt(mainText, at === -1 ? mainText.length : at + 1, [item])) ? item.id : null;
+        const target = gap ? mainText.findIndex((p) => p.id === gap.id) : -1;
+        const at = !gap || target === -1 ? mainText.length : gap.place === 'inside' ? target + 1 : gapIndex(mainText, gap.id, gap.place, false);
+        if (at === -1) return null;
+        const item = { id: crypto.randomUUID(), originalIndex: 0, text: body, level };
+        return commit(insertAt(mainText, at, [item])) ? { id: item.id, kind } : null;
     }
     /** the rally has been started from its setup (until then the pane is empty and the setup modal offers the flag) */
     let rallyStarted = $state(false);
     /** the empty paragraph a rally from nothing began with (the first thing composed goes into it) */
     let rallyFillId = /** @type {string | null} */ (null);
+    /** and its empty section (the first section written takes its place) */
+    let rallyHeadId = /** @type {string | null} */ (null);
     let rallySetupOpen = $state(false);
+    /** the writer opened the setup themselves (the cog), so a default rally type does not start the rally over it */
+    let setupAsked = false;
     $effect(() => {
-        if (view !== 'rally') rallyStarted = false;
-        else if (!rallyStarted && !noText) rallySetupOpen = true; // arriving in rally: set it up first (with no text, the Seed a text button opens it)
+        if (view !== 'rally') ((rallyStarted = false), (setupAsked = false));
+        else if (!rallyStarted) {
+            if (untrack(() => editing)) {
+                // writing: a loaded text just begins (no setup modal); with no text loaded the setup opens first
+                if (!noText) rallyStarted = true;
+                else if (!setupAsked) rallySetupOpen = true;
+            } else if (!noText) {
+                // reading: a text with a default rally type just begins, paused; otherwise the pane shows the flag, which opens the setup
+                if (textRallyStyle && !setupAsked) rallyStarted = true;
+            }
+        }
     });
     async function startRally() {
         rallySetupOpen = false;
         rallyStarted = true; // before the text is made, so arriving with a text does not reopen the setup
+        if (textId && !textRallyStyle) {
+            // the text's first rally gives it its default rally type
+            fetch(`/api/texts/${textId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ rallyStyle: 'compose' }) }).then((r) => {
+                if (r.ok) textRallyStyle = 'compose';
+            });
+        }
         if (noText) {
             // a rally from nothing: a new text is made (untitled, private; a section with an empty paragraph) and opened in writing mode
-            rallyStyle = 'compose'; // nothing to copy
             try {
                 const items = [
                     { id: crypto.randomUUID(), text: '# ', level: 1 },
                     { id: crypto.randomUUID(), text: '', level: 0 }
                 ];
-                const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', items }) });
+                const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', rallyStyle: 'compose', items }) });
                 if (!res.ok) throw new Error(`${res.status}`);
                 await showSaved((await res.json()).id);
                 mode = chosenMode = 'writing';
                 markdown = true;
                 rallyFillId = mainText[mainText.length - 1]?.id ?? null;
+                rallyHeadId = mainText[0]?.id ?? null;
                 startEditId = null;
             } catch (err) {
                 console.warn('Could not begin a text', err);
@@ -993,7 +1030,7 @@
         <div class="relative min-h-0 flex-1">
         {#if noText && authed && !(view === 'rally' && rallyStarted)}
             <!-- nothing is loaded: one button to begin (in rally view it opens the rally's setup) -->
-            <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+            <div class="pointer-events-none absolute inset-x-0 top-0 bottom-1/3 z-10 flex items-center justify-center">
                 {#if view === 'rally'}
                     <button onclick={() => (rallySetupOpen = true)} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
                         <Sapling class="text-taupe1!" /> Seed a text
@@ -1020,16 +1057,22 @@
                 {/if}
             </div>
         {/if}
-        {#if view === 'linear'}
+        {#if mode === 'commenting'}
+            <!-- commenting mode is blank for now, in every view -->
+        {:else if view === 'linear'}
             <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'rally'}
             <!-- with no text there is nothing to pace, or to write into: only the Seed a text button shows -->
             {#if rallyStarted}
-                <RallyViewer paragraphs={shownText} writing={editing} style={rallyStyle} oncompose={composeInto} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+                {#if editing}
+                    <RallyWriter paragraphs={shownText} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} oninject={injectLine} ondelete={requestDelete} {focusId} onfocusitem={(id) => (focusId = id)} />
+                {:else}
+                    <RallyViewer paragraphs={shownText} size={rallySize} bind:speed={rallySpeed} bind:playing={rallyPlaying} {focusId} onfocusitem={(id) => (focusId = id)} empty="" />
+                {/if}
             {:else if !noText}
                 <!-- the rally has not started: an empty pane with the violet flag, which opens the setup -->
                 <div class="flex h-full items-center justify-center">
-                    <button onclick={() => (rallySetupOpen = true)} aria-label="Start rally" use:tip={'Start rally'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-violet px-6 py-3 text-taupe1 hover:bg-violet/90"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
+                    <button onclick={() => (rallySetupOpen = true)} aria-label="Rally on!" use:tip={'Rally on!'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-violet px-6 py-3 text-taupe1 hover:bg-violet/90"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
                 </div>
             {/if}
         {:else if view === 'cascading'}
@@ -1052,6 +1095,15 @@
             <ArrowOutDownCircleHalf />
         </button>
 
+        <button
+            onclick={() => (mapOpen = true)}
+            aria-label="Map"
+            use:tip={'Map'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+        >
+            <MapIcon />
+        </button>
+
         <!-- View toggle: each click moves to the next view, the icon wiping across like the mode button's -->
         <button
             onclick={cycleView}
@@ -1068,7 +1120,7 @@
 
         {#if view === 'cascading'}
             <!-- View-particular settings: shown under the view button, only in this view -->
-            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
+            <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button
                     onclick={() => (exploded = !exploded)}
                     aria-label={exploded ? 'Unexplode' : 'Explode'}
@@ -1082,45 +1134,26 @@
         {/if}
 
         {#if view === 'rally'}
-            <!-- Rally settings: chunk unit, text size, and a speed slider (ticks, no labels) -->
-            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
-                <button onclick={() => ((rallyPlaying = false), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
-                {#if editing}
-                    <button
-                        onclick={() => (rallyStyle = STYLES[(STYLES.indexOf(rallyStyle) + 1) % STYLES.length])}
-                        aria-label="Writing style"
-                        use:tip={`Writing: ${{ compose: 'compose new text', copy: 'type it back', recall: 'recall from memory', dictate: 'dictation' }[rallyStyle]}`}
-                        class="inline-grid items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
-                    >
-                        {#key rallyStyle}
-                            <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">{#if rallyStyle === 'copy'}<Copy />{:else if rallyStyle === 'recall'}<Brain />{:else if rallyStyle === 'dictate'}<Ear />{:else}<Pencil />{/if}</span>
-                        {/key}
-                    </button>
+            <!-- Rally settings: the setup and sliders for text size and speed (ticks, no labels) -->
+            <div class="submenu flex w-full flex-col items-center gap-1 py-1">
+                <button onclick={() => ((rallyPlaying = false), (setupAsked = true), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
+                <!-- text size and speed: each a vertical slider (smallest / slowest at the bottom, a tick for every step, no labels), shown when its icon is pressed -->
+                <button onclick={() => (sizeOpen = !sizeOpen)} aria-label="Text size" aria-expanded={sizeOpen} use:tip={'Text size'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {sizeOpen ? 'bg-taupe3' : ''}"><TextHeight /></button>
+                {#if sizeOpen}
+                    <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
+                        <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each SIZES as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
+                        <input type="range" min="0" max={SIZES.length - 1} step="1" bind:value={rallySize} aria-label="Text size" use:tip={'Text size'} class="rally-speed" style="height: 5.5rem; --p: {rallySize / (SIZES.length - 1)}{editing ? `; --mode: var(--color-${WRITING_COLOUR})` : ''}" />
+                    </div>
                 {/if}
-                <button
-                    onclick={() => (rallySize = (rallySize + 1) % SIZES.length)}
-                    aria-label="Text size"
-                    use:tip={'Text size'}
-                    class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
-                >
-                    <TextHeight />
-                </button>
-                <div class="flex items-stretch gap-0.5 py-1">
-                    <!-- the ticks (one per speed, no labels), then the slider -->
-                    <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each READ_WPM as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
-                    <input type="range" min="0" max={READ_WPM.length - 1} step="1" bind:value={rallySpeed} aria-label="Speed" use:tip={'Speed'} class="rally-speed" />
-                </div>
+                <button onclick={() => (speedOpen = !speedOpen)} aria-label="Speed" aria-expanded={speedOpen} use:tip={'Speed'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {speedOpen ? 'bg-taupe3' : ''}"><Tachometer /></button>
+                {#if speedOpen}
+                    <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
+                        <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each READ_WPM as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
+                        <input type="range" min="0" max={READ_WPM.length - 1} step="1" bind:value={rallySpeed} aria-label="Speed" use:tip={'Speed'} class="rally-speed" style="--p: {rallySpeed / (READ_WPM.length - 1)}{editing ? `; --mode: var(--color-${WRITING_COLOUR})` : ''}" />
+                    </div>
+                {/if}
             </div>
         {/if}
-
-        <button
-            onclick={() => (mapOpen = true)}
-            aria-label="Map"
-            use:tip={'Map'}
-            class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
-        >
-            <MapIcon />
-        </button>
 
         <button
             onclick={cycleMode}
@@ -1131,14 +1164,14 @@
         >
             {#key mode}
                 <span in:wipeIn out:wipeOut class="inline-flex [grid-area:1/1]">
-                    {#if mode === 'writing'}<PencilEditCircle />{:else if mode === 'commenting'}<Discussion />{:else}<Reading />{/if}
+                    {#if mode === 'writing'}<PencilEditCircle />{:else if mode === 'commenting'}<Discussion />{:else}<BookOpen />{/if}
                 </span>
             {/key}
         </button>
 
         {#if editing}
             <!-- Writing helpers: shown under the mode button, only in writing mode -->
-            <div class="flex w-full flex-col items-center gap-1 border-y border-taupe2 py-1">
+            <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button onclick={undo} disabled={!history.canUndo} aria-label="Undo" use:tip={'Undo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Undo /></button>
                 <button onclick={redo} disabled={!history.canRedo} aria-label="Redo" use:tip={'Redo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Redo /></button>
             </div>
@@ -1163,7 +1196,7 @@
         }}
     />
 {/if}
-<RallySetup bind:open={rallySetupOpen} writing={editing} empty={noText} bind:style={rallyStyle} bind:size={rallySize} bind:speed={rallySpeed} onstart={startRally} />
+<RallySetup bind:open={rallySetupOpen} writing={editing} bind:size={rallySize} bind:speed={rallySpeed} onstart={startRally} />
 <ConfirmDialog bind:request={deleteRequest} />
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />
@@ -1211,7 +1244,7 @@
             <!-- the import question (not asked for the user's own texts) -->
             {#if loadSource !== 'own'}
                 <label class="flex items-center gap-1.5 text-xs text-dark" title="Saves an unaltered copy of the incoming text in your texts as ORIGINAL--{loadName}">
-                    <input type="checkbox" bind:checked={keepCopy} class="accent-violet" />
+                    <input type="checkbox" bind:checked={keepCopy} />
                     Keep an original copy in my texts
                 </label>
             {/if}

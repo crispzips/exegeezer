@@ -92,7 +92,7 @@ export async function listTexts(locals) {
  * Rebuild a text's ordered list from its items.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, title: string, authors: string[], items: Item[] } | null>}
+ * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, authors: string[], items: Item[] } | null>}
  */
 export async function loadText(id, locals) {
 	const row = await accessible(id, locals);
@@ -126,7 +126,7 @@ export async function loadText(id, locals) {
 					...(r.description ? { description: r.description } : {})
 				}
 	);
-	return { id: row.id, title: row.title, authors: await authorNames(id, locals), items };
+	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, authors: await authorNames(id, locals), items };
 }
 
 /**
@@ -205,11 +205,12 @@ async function writeItems(id, items) {
  * @param {string} title
  * @param {Item[]} items
  * @param {string} visibility 'private' or 'public'
+ * @param {string | null} [rallyStyle] the text's default rally type, when it is made by a rally
  */
-export async function createText(locals, title, items, visibility) {
+export async function createText(locals, title, items, visibility, rallyStyle = null) {
 	const uid = owner(locals);
 	const personaId = uid ? await selfPersonaId(uid) : null;
-	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, title: title ?? 'Untitled' }).returning({ id: text_.id });
+	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, rallyStyle, title: title ?? 'Untitled' }).returning({ id: text_.id });
 	if (personaId) await setAuthors(db, row.id, [personaId]);
 	await writeItems(row.id, items);
 	return row.id;
@@ -230,6 +231,23 @@ export async function saveText(id, locals, items, title, status = {}) {
 	if (title) await db.update(text_).set({ title }).where(eq(text_.id, id));
 	if (status.productionStatus || status.visibility) await db.update(text_).set(status).where(eq(text_.id, id));
 	await writeItems(id, items);
+	return true;
+}
+
+/** @param {unknown} v */
+export const isRallyStyle = (v) => typeof v === 'string' && ['compose', 'copy', 'recall', 'dictate'].includes(v);
+
+/**
+ * Give a text its default rally type.
+ * @param {string} id
+ * @param {App.Locals} locals
+ * @param {string} rallyStyle
+ * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ */
+export async function setRallyStyle(id, locals, rallyStyle) {
+	const row = await accessible(id, locals);
+	if (!row) return false;
+	await db.update(text_).set({ rallyStyle }).where(eq(text_.id, id));
 	return true;
 }
 

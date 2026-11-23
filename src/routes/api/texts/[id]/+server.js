@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { deleteText, isProductionStatus, isVisibility, loadText, parseItems, saveText } from '#lib/server/texts.js';
+import { deleteText, isProductionStatus, isRallyStyle, isVisibility, loadText, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
 
 /** A text with its paragraphs and sections arranged in order. */
 export async function GET({ params, locals }) {
@@ -23,6 +23,15 @@ export async function PUT({ params, request, locals }) {
 		...(body.visibility !== undefined ? { visibility: body.visibility } : {})
 	};
 	if (!(await saveText(params.id, locals, items, title, status))) error(404, 'No such text');
+	return json({ ok: true });
+}
+
+/** Give a text its default rally type: `{ rallyStyle }`. */
+export async function PATCH({ params, request, locals }) {
+	if (!locals.user) error(401, 'Sign in to use your texts');
+	const body = await request.json().catch(() => null);
+	if (!isRallyStyle(body?.rallyStyle)) error(400, 'invalid rallyStyle');
+	if (!(await setRallyStyle(params.id, locals, body.rallyStyle))) error(404, 'No such text');
 	return json({ ok: true });
 }
 

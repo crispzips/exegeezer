@@ -121,6 +121,9 @@ export const text_ = pgTable(
     productionStatus: text("production_status").notNull().default("draft"),
     // 'private' | 'public'; chosen by the user when the text is created
     visibility: text("visibility").notNull().default("private"),
+    // the rally type the text was given when its first rally began ('compose' | 'copy' | 'recall' | 'dictate');
+    // null = none yet, so the rally's setup is offered. Only a starting point: any rally type can be used on any text.
+    rallyStyle: text("rally_style"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()
@@ -132,6 +135,7 @@ export const text_ = pgTable(
     index("text_personaId_idx").on(table.personaId),
     check("text_production_status_check", sql`${table.productionStatus} in ('idea', 'draft', 'under review', 'published')`),
     check("text_visibility_check", sql`${table.visibility} in ('private', 'public')`),
+    check("text_rally_style_check", sql`${table.rallyStyle} is null or ${table.rallyStyle} in ('compose', 'copy', 'recall', 'dictate')`),
   ],
 );
 

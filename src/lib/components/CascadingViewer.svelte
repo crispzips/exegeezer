@@ -2,11 +2,11 @@
 	import { caretOffsetAt, editable, noLineBreaks } from '#lib/utilities/editable.js';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { tick, untrack } from 'svelte';
-	import { Cog, Fullscreen, Minus, PencilEditCircle, Plus, TrashX } from '@boxicons/svelte';
+	import { ChevronsUp, Cog, Fullscreen, Minus, PencilEditCircle, Plus, TrashX } from '@boxicons/svelte';
 	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
-	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
@@ -31,7 +31,9 @@
 	 *   onadd?: (req: { targetId: string, place: 'before' | 'after' | 'inside', kind: 'paragraph' | 'section', auto?: boolean, level?: number }) => string | void,
 	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
-	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void
+	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void,
+	 *   placing?: boolean,
+	 *   cursor?: { id: string, place: 'before' | 'after' | 'inside' } | null
 	 * }}
 	 *
 	 * With `onmove` (editing mode), bubbles can be dragged within their row or column: onto the
@@ -48,11 +50,14 @@
 	 * paragraph edits its text in place, in the bubble; while not writing, `onwrite` is asked first
 	 * to switch to writing mode.
 	 *
+	 * With `placing` (rally view, writing mode), a cursor marks where the next thing will be inserted: a gap between bubbles
+	 * (or just inside a section). Click a gap, or use the arrow keys, to move it; `cursor` is bindable.
+	 *
 	 * Exploded: every section is open at once (children may land on the same cell), the view is
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onnewitem = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined } = $props();
+	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onnewitem = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined, placing = false, cursor = $bindable(null) } = $props();
 
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -298,6 +303,116 @@
 		place(tree, true, 0, 0, 0, null, null);
 		return out;
 	});
+
+	// ---- placing (rally writing mode): the insertion cursor ----
+	/** @param {Placed} q */
+	const idOf = (q) => (q.node.kind === 'section' ? q.node.id : q.node.paragraph.id);
+	/** every gap the cursor can sit in, as a drawn line: before each bubble, after the last of each list, and inside a section with nothing open in it */
+	let slots = $derived.by(() => {
+		if (!placing || exploded) return [];
+		const out = [];
+		for (const p of layout) {
+			const id = idOf(p);
+			const sibs = layout.filter((q) => (q.parent?.id ?? null) === (p.parent?.id ?? null));
+			/** @type {GapSpec[]} */
+			const specs = [{ id, place: 'before' }];
+			if (sibs[sibs.length - 1] === p) specs.push({ id, place: 'after' });
+			if (p.node.kind === 'section' && !(p.open && p.node.children.length)) specs.push({ id, place: 'inside' });
+			for (const z of specs) {
+				const line = lineFor(z);
+				if (line) out.push(line);
+			}
+		}
+		return out;
+	});
+	let cursorLine = $derived(placing && cursor && !exploded ? lineFor(cursor) : null);
+	// the cursor's own section(s) are opened so its gap is on show, and it is brought to the middle of the view
+	$effect(() => {
+		const c = placing ? cursor : null;
+		if (!c) return;
+		untrack(() => {
+			const anc = ancestorsOf(tree, c.id);
+			if (!anc) return;
+			selected = c.place === 'inside' ? [...anc, c.id] : anc;
+			tick().then(() => host?.querySelector(`[data-node="${CSS.escape(c.id)}"]`)?.scrollIntoView({ behavior: 'smooth', block: 'center', inline: 'center' }));
+		});
+	});
+	/**
+	 * Move the cursor to the nearest gap in a direction.
+	 * @param {'left' | 'right' | 'up' | 'down'} dir
+	 * @returns {boolean} whether it moved
+	 */
+	export function moveCursor(dir) {
+		if (!placing || !slots.length) return false;
+		const here = cursorLine;
+		if (!here) {
+			cursor = { id: slots[0].id, place: slots[0].place };
+			return true;
+		}
+		const dx = dir === 'left' ? -1 : dir === 'right' ? 1 : 0;
+		const dy = dir === 'up' ? -1 : dir === 'down' ? 1 : 0;
+		let best = null;
+		let bestScore = Infinity;
+		for (const g of slots) {
+			if (g.id === here.id && g.place === here.place) continue;
+			const along = (g.cx - here.cx) * dx + (g.cy - here.cy) * dy;
+			if (along <= 1) continue;
+			const across = Math.abs((g.cx - here.cx) * dy) + Math.abs((g.cy - here.cy) * dx);
+			const score = along + across * 2;
+			if (score < bestScore) ((best = g), (bestScore = score));
+		}
+		if (!best) return false;
+		cursor = { id: best.id, place: best.place };
+		return true;
+	}
+	/** drag the map to move around it (placing): a drag past a few pixels scrolls the view, and the click that ends it is swallowed */
+	let panning = $state(false);
+	/** @param {PointerEvent} e */
+	function startPan(e) {
+		if (!placing || e.button !== 0 || !stage) return;
+		const view = stage;
+		const x0 = e.clientX;
+		const y0 = e.clientY;
+		const left0 = view.scrollLeft;
+		const top0 = view.scrollTop;
+		let moved = false;
+		/** @param {PointerEvent} m */
+		const move = (m) => {
+			if (!moved && Math.hypot(m.clientX - x0, m.clientY - y0) < 5) return;
+			moved = panning = true;
+			view.scrollLeft = left0 - (m.clientX - x0);
+			view.scrollTop = top0 - (m.clientY - y0);
+		};
+		const up = () => {
+			window.removeEventListener('pointermove', move);
+			window.removeEventListener('pointerup', up);
+			panning = false;
+			if (!moved) return;
+			const swallow = (/** @type {Event} */ c) => (c.stopPropagation(), c.preventDefault());
+			window.addEventListener('click', swallow, true);
+			setTimeout(() => window.removeEventListener('click', swallow, true), 0);
+		};
+		window.addEventListener('pointermove', move);
+		window.addEventListener('pointerup', up);
+	}
+	/** close every section, so only the first level shows, and zoom out until all of it is in view; a cursor inside one moves to the section that held it */
+	async function collapseAll() {
+		selected = [];
+		const anc = cursor ? ancestorsOf(tree, cursor.id) : null;
+		if (cursor && anc?.length) cursor = { id: anc[0], place: 'after' };
+		// then zoom out to the level that fits the whole (now one-level) layout, so every top-level section is in view
+		await tick();
+		wantedCell = levels[levels.length - 1];
+		await tick();
+		if (stage) {
+			stage.scrollLeft = 0;
+			stage.scrollTop = 0;
+		}
+	}
+	/** whether a paragraph can be inserted at a gap (see `paragraphFits`) @param {GapSpec} z */
+	export function canHoldParagraph(z) {
+		return paragraphFits(z);
+	}
 
 	/** exactly one bubble in the layout */
 	let lone = $derived(!exploded && layout.length === 1);
@@ -806,6 +921,11 @@
 			e.preventDefault();
 			return;
 		}
+		if (placing && !openId && !(e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]')) && !e.metaKey && !e.ctrlKey && !e.altKey) {
+			const dir = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' }[e.key];
+			if (dir && moveCursor(/** @type {'left' | 'right' | 'up' | 'down'} */ (dir))) e.preventDefault();
+			return;
+		}
 		if (!openId) return;
 		if (editMode) {
 			// the fields own the keys; only Escape (cancel) and Ctrl/Cmd+Enter (save) are the modal's
@@ -850,7 +970,8 @@
 			bind:this={stage}
 			onscroll={() => stage && ((scrollX = stage.scrollLeft), (scrollY = stage.scrollTop))}
 			class="overflow-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-			style="width:{stageW}px;height:{stageH}px;scroll-snap-type:both mandatory"
+			onpointerdown={startPan}
+			style="width:{stageW}px;height:{stageH}px;scroll-snap-type:{panning ? 'none' : 'both mandatory'};{placing ? `cursor:${panning ? 'grabbing' : 'grab'};` : ''}"
 		>
 		<div class="relative" style="width:{colCount * PITCH}px;height:{rowCount * PITCH}px;zoom:{zoom}">
 			{#if exploded}
@@ -869,7 +990,7 @@
 						{#each tubeGroups as g (g.id)}
 							<mask id={g.id} maskUnits="userSpaceOnUse" x="-500" y="-500" width={colCount * PITCH + 1000} height={rowCount * PITCH + 1000}>
 								<rect x="-500" y="-500" width={colCount * PITCH + 1000} height={rowCount * PITCH + 1000} fill="black" />
-								<path d={g.path} fill="none" stroke="white" stroke-width={TUBE + 2 * RIM} stroke-linecap="round" />
+								<path d={g.path} fill="none" style="stroke: var(--color-taupe1)" stroke-width={TUBE + 2 * RIM} stroke-linecap="round" />
 								<path d={g.path} fill="none" stroke="black" stroke-width={TUBE} stroke-linecap="round" />
 							</mask>
 						{/each}
@@ -982,7 +1103,7 @@
 							<!-- double-clicked: the text is edited in place; Enter or leaving saves, Esc cancels -->
 							<p use:editable={{ text: p.node.paragraph.text, caret: inlineCaret, onfinish: (t) => finishInline(pid, t), onenter: onadd && onnewitem ? (r) => askNew(pid, 'paragraph', r) : undefined }} class="whitespace-pre-wrap outline-none"></p>
 						{:else}
-							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html notes.get(pid)}{:else}{p.node.paragraph.text}{/if}</p>
+							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html onedit ? notes.get(pid) : emphasizeEnds(notes.get(pid) ?? '')}{:else if onedit}{p.node.paragraph.text}{:else}{@html plainEnds(p.node.paragraph.text)}{/if}</p>
 						{/if}
 						{#if !exploded && inlineEditId !== pid}
 							<!-- the bubble's menu: top right, shown on hover, a vertical stack of buttons -->
@@ -1019,6 +1140,23 @@
 			{#each guides as g (gapKey(g))}
 				<div class="pointer-events-none absolute rounded-full bg-taupe3" style="left:{g.left}px;top:{g.top}px;width:{g.width}px;height:{g.height}px"></div>
 			{/each}
+
+			{#if placing}
+				<!-- every gap is a target: click one to put the cursor there -->
+				{#each slots as g (gapKey(g))}
+					{@const vertical = g.width < g.height}
+					<button
+						type="button"
+						aria-label="Insert here"
+						onclick={() => (cursor = { id: g.id, place: g.place })}
+						class="absolute cursor-pointer rounded-full hover:bg-taupe3/60"
+						style="left:{vertical ? g.left - 24 : g.left}px;top:{vertical ? g.top : g.top - 24}px;width:{vertical ? g.width + 48 : g.width}px;height:{vertical ? g.height : g.height + 48}px"
+					></button>
+				{/each}
+				{#if cursorLine}
+					<div class="pointer-events-none absolute z-10 animate-pulse rounded-full bg-violet" style="left:{cursorLine.left - (cursorLine.width < cursorLine.height ? 2 : 0)}px;top:{cursorLine.top - (cursorLine.width < cursorLine.height ? 0 : 2)}px;width:{cursorLine.width + (cursorLine.width < cursorLine.height ? 4 : 0)}px;height:{cursorLine.height + (cursorLine.width < cursorLine.height ? 0 : 4)}px"></div>
+				{/if}
+			{/if}
 		</div>
 		</div>
 		<div class="pointer-events-none absolute top-0 left-0 h-0 w-0">
@@ -1076,8 +1214,12 @@
 		</div>
 		</div>
 
+		{#if placing}
+			<button type="button" onclick={collapseAll} aria-label="Collapse to the first level" use:tip={'Collapse to the first level'} data-tip-place="below" class="absolute top-3 right-3 z-20 rounded-xl border border-taupe3 bg-taupe2 p-1.5 text-dark hover:bg-taupe3"><ChevronsUp /></button>
+		{/if}
+
 		<!-- zoom controls (Ctrl/⌘ + wheel also zooms) -->
-		<div class="absolute right-3 bottom-3 flex {exploded ? 'hidden' : ''} gap-1 rounded-xl border border-taupe3 bg-taupe0 p-1">
+		<div class="absolute right-3 bottom-3 flex {exploded ? 'hidden' : ''} gap-1 rounded-xl border border-taupe3 bg-taupe1 p-1">
 			<button aria-label="Zoom out" disabled={levelIndex >= levels.length - 1} onclick={() => zoomBy(-1)} class="rounded-lg p-1 text-dark hover:bg-taupe2 disabled:opacity-30"><Minus /></button>
 			<button aria-label="Zoom in" disabled={levelIndex <= 0} onclick={() => zoomBy(1)} class="rounded-lg p-1 text-dark hover:bg-taupe2 disabled:opacity-30"><Plus /></button>
 		</div>
@@ -1130,7 +1272,7 @@
 			{#if current.title}<h2 class="mb-1 text-center text-xl font-semibold">{current.title}</h2>{/if}
 			{#if current.description}<p class="mb-4 text-center text-sm text-grey3 italic">{current.description}</p>{/if}
 			<div bind:this={textBox} onscroll={measureMore} class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-				<p class="md whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html notes.get(current.id)}{:else}{current.text}{/if}</p>
+				<p class="md whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html emphasizeEnds(notes.get(current.id) ?? '')}{:else}{@html plainEnds(current.text)}{/if}</p>
 			</div>
 			{#if more}
 				<div class="pointer-events-none -mt-8 h-8 shrink-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] to-transparent text-center text-xl leading-8 text-grey2" aria-hidden="true">…</div>

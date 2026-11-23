@@ -17,7 +17,7 @@
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
-	import { definitionsOf, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -563,7 +563,7 @@
 			></p>
 		{:else}
 			{@const withNotes = node.paragraph.text ? renderFootnoteMarks(node.paragraph.text, defs, node.paragraph.id) : null}
-			<p class="md flex-1 whitespace-pre-wrap">{#if withNotes}{@html withNotes}{:else if node.paragraph.text}{node.paragraph.text}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+			<p class="md flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeEnds(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainEnds(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
 		{/if}
 	</div>
 {/snippet}

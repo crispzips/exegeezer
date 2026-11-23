@@ -6,7 +6,7 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -27,6 +27,7 @@
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
     import OwnTextsDialog from '#lib/components/OwnTextsDialog.svelte';
+    import OpenSourcesDialog from '#lib/components/OpenSourcesDialog.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
     import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
     import { applyDrop, danglingCount, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
@@ -42,8 +43,17 @@
     let paragraphs = $state([]);
 
     /** where the text in the preview came from: this computer, another exegeezer, or the user's own texts */
-    /** @type {'computer' | 'others' | 'own'} */
+    /** @type {'computer' | 'others' | 'own' | 'web'} */
     let loadSource = $state('computer');
+    /** what to tell the user about the text loaded from an open library (e.g. that it was machine-scanned) */
+    /** @type {string[]} */
+    let loadNotes = $state([]);
+    /** where the text in the preview came from and its rights: one entry per work (from an open library, or kept by an own text that was itself imported) */
+    /** @type {Record<string, string>[]} */
+    let loadDetails = $state([]);
+    /** imported details waiting to be saved with the main text (the next autosave sends them) */
+    /** @type {Record<string, string>[]} */
+    let pendingDetails = $state([]);
     /** the loaded file's name without its extension (names the new text and the ORIGINAL-- copy) */
     let loadName = $state('');
     /** the import question: keep an unaltered copy of the incoming text in the user's own texts (as `ORIGINAL--<name>`)? */
@@ -54,6 +64,8 @@
         const latest = uploadedfiles[uploadedfiles.length - 1];
         if (latest) {
             loadSource = 'computer';
+            loadNotes = [];
+            loadDetails = [];
             loadName = latest.name.replace(/\.[^.]+$/, '');
             // Markdown: drop the table of contents and its {#anchor} header links first
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
@@ -71,16 +83,31 @@
     }
 
     let ownTextsOpen = $state(false);
+    let openSourcesOpen = $state(false);
+
+    /** A text chosen in the "Open Libraries" modal becomes the text in the preview.
+     * @param {{ title: string, markdown: string, details: Record<string, string>[], notes: string[] }} t */
+    function onWebTextChosen(t) {
+        loadSource = 'web';
+        loadName = t.title;
+        loadNotes = t.notes ?? [];
+        loadDetails = t.details ?? [];
+        previewMarkdown = true;
+        paragraphs = splitParagraphs(cleanMarkdown(t.markdown));
+        // as with a file: text above the first header goes into a Frontmatter section, then the front and back matter question
+        if (paragraphs.some((p) => p.level > 0)) {
+            if (paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
+            askMatter();
+        }
+    }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
-     * @param {{ title: string, items: any[] }} saved */
+     * @param {{ title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
     function onOwnTextChosen(saved) {
-        if (seedingFromOwn) {
-            seedingFromOwn = false;
-            return void seedFrom(saved);
-        }
         loadSource = 'own';
         loadName = saved.title;
+        loadNotes = [];
+        loadDetails = saved.importedDetails ?? []; // the rights follow the content
         previewMarkdown = saved.items.some((p) => p.level > 0);
         // fresh ids, so the preview shares nothing with the text it came from
         paragraphs = saved.items.map((p, i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
@@ -167,6 +194,7 @@
         const res = await fetch(`/api/texts/${id}`);
         if (!res.ok) throw new Error(`${res.status}`);
         const saved = await res.json();
+        pendingDetails = []; // those belonged to the text that was showing
         textId = saved.id;
         markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
         textTitle = saved.title;
@@ -251,11 +279,13 @@
             return;
         }
         queue = queue.then(async () => {
+            const details = $state.snapshot(pendingDetails);
             try {
                 const res = textId
-                    ? await fetch(`/api/texts/${textId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items }) })
-                    : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, visibility: textVisibility, items }) });
+                    ? await fetch(`/api/texts/${textId}`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ items, addImportedDetails: details }) })
+                    : await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: textTitle, visibility: textVisibility, items, importedDetails: details }) });
                 if (!res.ok) throw new Error(`${res.status}`);
+                pendingDetails = pendingDetails.slice(details.length); // saved with the text
                 if (!textId) {
                     textId = (await res.json()).id;
                     replaceState(`/exejeeze?text=${textId}`, {}); // so a refresh stays on it
@@ -564,8 +594,8 @@
     /** where the "Seed a text" button is: not clicked yet, or offering heading levels (a text begins with a section: paragraphs have to be inside sections) */
     /** @type {'idle' | 'choose' | 'level'} */
     let seedStep = $state('idle');
-    /** the "From Your Texts" list was opened by seeding (a new text from an existing one), not by Load text */
-    let seedingFromOwn = false;
+    /** the Load Text modal was opened by seeding (a new text from an existing one): its button seeds a text instead of injecting into this one */
+    let seeding = $state(false);
     /** what the seed area shows: with no text loaded it starts as the "Seed a text" button; a loaded text that is merely blank goes straight to the choices */
     const seedPhase = $derived(seedStep === 'idle' && textId ? 'level' : seedStep);
     /**
@@ -576,24 +606,45 @@
         Array.from({ length: Math.min(6, mainText.reduce((deepest, p) => Math.max(deepest, p.level ?? 0), 0) + 1) }, (_, i) => i + 1)
     );
 
-    /** Seed from an existing text: pick one of the user's own texts (other users' texts will come later). */
+    /** Seed from an existing text: the Load Text process (any source), ending in a new text instead of an injection. */
     function seedFromExisting() {
-        seedingFromOwn = true;
-        ownTextsOpen = true;
+        if (!authed) return;
+        seeding = true;
+        injectGap = null;
+        paragraphs = [];
+        uploadedfiles = [];
+        dialogEl?.showModal();
     }
 
     /**
-     * A new text with the chosen text's content and nothing else: no title, no settings carried over (it is a draft by its owner,
-     * private until they say otherwise). Made at once and opened.
-     * @param {{ items: any[] }} source
+     * Make a new text from the loaded text (the paragraphs in the preview) and open it: a draft, private until its owner says
+     * otherwise. A text loaded from the user's own texts brings no title and no settings; any other is named after what was loaded.
+     * As with an import, the user may first keep an unaltered `ORIGINAL--<name>` copy.
      */
-    async function seedFrom(source) {
+    async function seedFromPreview() {
+        if (paragraphs.length === 0) return;
+        if (keepCopy && loadSource !== 'own') {
+            try {
+                await saveOriginalCopy();
+            } catch (err) {
+                console.warn('Could not save the original copy', err);
+                if (!confirm('The original copy could not be saved. Seed the text anyway?')) return;
+            }
+        }
         try {
-            const items = toItems(source.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i })));
-            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', items }) });
+            let list = paragraphs.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
+            // paragraphs have to be inside sections: text with none above its first header goes into a Frontmatter section
+            if (list[0] && (list[0].level ?? 0) === 0 && danglingCount(list) > 0) list = withFrontmatter(list);
+            const title = loadSource === 'own' ? '' : loadName;
+            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility: 'private', items: toItems(list), importedDetails: $state.snapshot(loadDetails) }) });
             if (!res.ok) throw new Error(`${res.status}`);
             await showSaved((await res.json()).id);
             seedStep = 'idle';
+            keepCopy = false;
+            paragraphs = [];
+            loadDetails = [];
+            uploadedfiles = [];
+            dialogEl?.close();
         } catch (err) {
             console.warn('Could not seed the text', err);
             alert('Could not seed a text from that one.');
@@ -625,6 +676,7 @@
     }
 
     function unloadText() {
+        pendingDetails = [];
         rallyStarted = false;
         rallyPlaying = false;
         try {
@@ -730,7 +782,7 @@
     let dialogEl;
 
     function openModal() {
-        seedingFromOwn = false;
+        seeding = false;
         if (!authed || noText) return; // with no text there is nothing to load into: the Seed a text button starts one
         injectGap = null;
         dialogEl?.showModal();
@@ -744,6 +796,7 @@
     }
 
     function onModalClosed() {
+        seeding = false;
         injectOpen = false;
         injectGap = null;
     }
@@ -786,6 +839,8 @@
         if (combined[0] && (combined[0].level ?? 0) === 0 && danglingCount(combined) > (replacing ? 0 : danglingCount(mainText))) {
             combined = withFrontmatter(combined);
         }
+        // the rights and publication details of what came in are saved with the text (a new text starts with just these)
+        pendingDetails = makesNewText ? [...loadDetails] : [...pendingDetails, ...loadDetails];
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             textId = null;
@@ -799,6 +854,7 @@
 
         // Reset the load pane: drop the loaded text and close the modal
         paragraphs = [];
+        loadDetails = [];
         uploadedfiles = [];
         dialogEl?.close();
     }
@@ -810,7 +866,7 @@
         const res = await fetch('/api/texts', {
             method: 'POST',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ title: `ORIGINAL--${loadName}`, visibility: 'private', items })
+            body: JSON.stringify({ title: `ORIGINAL--${loadName}`, visibility: 'private', items, importedDetails: $state.snapshot(loadDetails) })
         });
         if (!res.ok) throw new Error(`${res.status}`);
     }
@@ -1239,6 +1295,7 @@
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <OwnTextsDialog bind:open={ownTextsOpen} onchoose={onOwnTextChosen} />
+<OpenSourcesDialog bind:open={openSourcesOpen} onchoose={onWebTextChosen} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
 
 <!-- Load Text modal -->
@@ -1251,10 +1308,11 @@
 >
     <div class="flex shrink-0 items-start justify-between">
         <!-- Load sources: each is its own button, centered until a text is loaded, then top-left -->
-        <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-0 z-40 flex items-center justify-center' : 'inline-block'}>
+        <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-x-0 top-1/3 z-40 flex -translate-y-1/2 justify-center' : 'inline-block'}>
             <div class="pointer-events-auto relative z-50 inline-flex gap-5">
                 <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
-                <SourceButton name="From Your Texts" onclick={() => ((seedingFromOwn = false), (ownTextsOpen = true))}><Swatch width={40} height={40} /></SourceButton>
+                <SourceButton name="From Your Texts" onclick={() => (ownTextsOpen = true)}><Swatch width={40} height={40} /></SourceButton>
+                <SourceButton name="From Open Libraries" onclick={() => (openSourcesOpen = true)}><GlobeAlt2 width={40} height={40} /></SourceButton>
                 <SourceButton name="From Other Exegeezers"><Mesh width={40} height={40} /></SourceButton>
             </div>
         </div>
@@ -1273,7 +1331,7 @@
     <section class="mt-4 flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-taupe2">
         <header class="flex shrink-0 items-center justify-between border-b border-taupe2 bg-taupe2 px-3 py-2">
             <h2 class="text-sm font-semibold text-dark">
-                Preview{#if injectGap !== null}<span class="ml-2 font-normal text-grey3">— will be injected at the chosen location</span>{/if}
+                Preview{#if loadNotes.length}<span class="ml-2 font-normal text-grey3">— {loadNotes.join(' ')}</span>{/if}{#if injectGap !== null}<span class="ml-2 font-normal text-grey3">— will be injected at the chosen location</span>{/if}
             </h2>
 
             <div class="flex items-center gap-4">
@@ -1285,6 +1343,10 @@
                 </label>
             {/if}
 
+            {#if seeding}
+                <!-- seeding: a new text is made from the loaded one, so there is nothing to ask about where it goes -->
+                <button onclick={seedFromPreview} class="inline-flex items-center gap-1 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90">Seed a text</button>
+            {:else}
             <!-- Inject Loaded Text dropdown -->
             <div class="relative" bind:this={injectmenu}>
                 <button
@@ -1313,6 +1375,7 @@
                     </div>
                 {/if}
             </div>
+            {/if}
             </div>
         </header>
 

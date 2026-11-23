@@ -1,6 +1,6 @@
 import { json, error } from '@sveltejs/kit';
 import { LOCKED_MESSAGE } from '#lib/textStatus.js';
-import { deleteText, isProductionStatus, isRallyStyle, isVisibility, loadText, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
+import { deleteText, isProductionStatus, isRallyStyle, isVisibility, loadText, parseImportedDetails, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
 
 /** A text with its paragraphs and sections arranged in order. */
 export async function GET({ params, locals }) {
@@ -10,7 +10,7 @@ export async function GET({ params, locals }) {
 	return json(text);
 }
 
-/** Replace a text's contents with `{ title?, items, productionStatus?, visibility? }`. */
+/** Replace a text's contents with `{ title?, items, productionStatus?, visibility?, addImportedDetails? }` (addImportedDetails: details of texts just imported into it, added to its own). */
 export async function PUT({ params, request, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
 	const body = await request.json().catch(() => null);
@@ -23,7 +23,9 @@ export async function PUT({ params, request, locals }) {
 		...(body.productionStatus !== undefined ? { productionStatus: body.productionStatus } : {}),
 		...(body.visibility !== undefined ? { visibility: body.visibility } : {})
 	};
-	const saved = await saveText(params.id, locals, items, title, status);
+	const addDetails = parseImportedDetails(body.addImportedDetails);
+	if (!addDetails) error(400, 'addImportedDetails must be a list of entries with short text fields');
+	const saved = await saveText(params.id, locals, items, title, status, addDetails);
 	if (saved === 'locked') error(409, LOCKED_MESSAGE);
 	if (!saved) error(404, 'No such text');
 	return json({ ok: true });

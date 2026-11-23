@@ -23,5 +23,10 @@ export const variables = defineEnvVars({
 	},
 	GMAIL_APP_PASSWORD: {
 		description: 'Google app password for GMAIL_USER (myaccount.google.com/apppasswords).'
+	},
+	SOURCES_CONTACT: {
+		description:
+			'Optional. An email address or web address added to the User-Agent of requests to open-access text sources (Wikimedia asks automated clients for a way to reach their operator).',
+		schema: (/** @type {string | undefined} */ value) => value || undefined
 	}
 });

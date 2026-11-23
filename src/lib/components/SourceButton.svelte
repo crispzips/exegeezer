@@ -13,10 +13,12 @@
 	 *   children: import('svelte').Snippet,
 	 *   below?: import('svelte').Snippet,
 	 *   showBelow?: boolean,
-	 *   belowAlign?: 'center' | 'right'
+	 *   belowAlign?: 'center' | 'right',
+	 *   small?: boolean,
+	 *   active?: boolean
 	 * }}
 	 */
-	let { name, onclick, children, below, showBelow = false, belowAlign = 'center' } = $props();
+	let { name, onclick, children, below, showBelow = false, belowAlign = 'center', small = false, active = false } = $props();
 </script>
 
 <span class="group relative inline-flex">
@@ -25,7 +27,8 @@
 		{onclick}
 		aria-label={name}
 		aria-expanded={below ? showBelow : undefined}
-		class="inline-flex items-center justify-center rounded-full border border-taupe3 bg-taupe1 p-4 text-dark [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"
+		aria-pressed={active}
+		class="inline-flex items-center justify-center rounded-full border {small ? 'p-2' : 'p-4'} [box-shadow:0_3px_3px_var(--color-taupe4)] {active ? 'border-violet bg-violet text-white hover:bg-violet/90' : 'border-taupe3 bg-taupe1 text-dark hover:bg-taupe2'}"
 	>
 		{@render children()}
 	</button>

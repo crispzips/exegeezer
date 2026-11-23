@@ -9,7 +9,7 @@ export async function GET({ params, locals }) {
 	return json({ ...properties, authorChoices: await authorChoices(locals) });
 }
 
-/** Change a text's properties: `{ title, personaId, productionStatus, visibility }`. */
+/** Change a text's properties: `{ title, personaId, productionStatus, visibility, commentPolicy }`. */
 export async function PATCH({ params, request, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
 	const body = await request.json().catch(() => null);
@@ -18,7 +18,8 @@ export async function PATCH({ params, request, locals }) {
 		title: str(body?.title).trim().slice(0, 200),
 		personaIds: Array.isArray(body?.personaIds) ? body.personaIds.filter((/** @type {unknown} */ v) => typeof v === 'string') : [],
 		productionStatus: str(body?.productionStatus),
-		visibility: str(body?.visibility)
+		visibility: str(body?.visibility),
+			commentPolicy: str(body?.commentPolicy)
 	});
 	if ('message' in result) return json({ message: result.message }, { status: result.status });
 	return json({ ok: true });

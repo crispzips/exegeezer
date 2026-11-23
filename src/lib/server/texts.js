@@ -1,9 +1,9 @@
 import { and, asc, desc, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.js';
-import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
+import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
-import { isPublicized } from '#lib/textStatus.js';
-import { paragraph, persona, section, text_, textAuthor, textItem, userPersona } from '#lib/server/db/schema.js';
+import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
+import { comment, paragraph, persona, section, text_, textAuthor, textItem, user, userPersona } from '#lib/server/db/schema.js';
 
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
@@ -92,7 +92,7 @@ export async function listTexts(locals) {
  * Rebuild a text's ordered list from its items.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, authors: string[], items: Item[] } | null>}
+ * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, publicized: boolean, authors: string[], items: Item[] } | null>}
  */
 export async function loadText(id, locals) {
 	const row = await accessible(id, locals);
@@ -126,7 +126,7 @@ export async function loadText(id, locals) {
 					...(r.description ? { description: r.description } : {})
 				}
 	);
-	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, authors: await authorNames(id, locals), items };
+	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id, locals), items };
 }
 
 /**
@@ -223,11 +223,12 @@ export async function createText(locals, title, items, visibility, rallyStyle = 
  * @param {Item[]} items
  * @param {string | undefined} title
  * @param {{ productionStatus?: string, visibility?: string }} [status]
- * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
  */
 export async function saveText(id, locals, items, title, status = {}) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
+	if (isPublicized(row)) return 'locked';
 	if (title) await db.update(text_).set({ title }).where(eq(text_.id, id));
 	if (status.productionStatus || status.visibility) await db.update(text_).set(status).where(eq(text_.id, id));
 	await writeItems(id, items);
@@ -242,11 +243,12 @@ export const isRallyStyle = (v) => typeof v === 'string' && ['compose', 'copy', 
  * @param {string} id
  * @param {App.Locals} locals
  * @param {string} rallyStyle
- * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
  */
 export async function setRallyStyle(id, locals, rallyStyle) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
+	if (isPublicized(row)) return 'locked';
 	await db.update(text_).set({ rallyStyle }).where(eq(text_.id, id));
 	return true;
 }
@@ -254,17 +256,23 @@ export async function setRallyStyle(id, locals, rallyStyle) {
 /** @param {unknown} v */
 export const isVisibility = (v) => typeof v === 'string' && VISIBILITIES.includes(v);
 /** @param {unknown} v */
+export const isCommentPolicy = (v) => typeof v === 'string' && COMMENT_POLICIES.includes(v);
+/** @param {unknown} v */
 export const isProductionStatus = (v) => typeof v === 'string' && PRODUCTION_STATUSES.includes(v);
 
 /**
  * Delete a text and the paragraphs and sections that only it used.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ * @returns {Promise<true | false | 'commented' | 'locked'>} false when the text does not exist or is not the requester's; 'commented' when it has commentaries, so it is kept; 'locked' when it is published and public
  */
 export async function deleteText(id, locals) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
+	if (isPublicized(row)) return 'locked';
+	// a text that has commentaries (by anyone) can't go: they exist only in relation to it
+	const [commented] = await db.select({ id: text_.id }).from(text_).where(eq(text_.commentaryOn, id)).limit(1);
+	if (commented) return 'commented';
 	await db.transaction(async (tx) => {
 		const items = await tx.select({ p: textItem.paragraphId, s: textItem.sectionId }).from(textItem).where(eq(textItem.textId, id));
 		await tx.delete(text_).where(eq(text_.id, id)); // its text_item rows go with it
@@ -285,11 +293,12 @@ export async function deleteText(id, locals) {
  * Content only this text used is deleted; content other texts share stays with them.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<boolean>} false when the text does not exist or is not the requester's
+ * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
  */
 export async function wipeText(id, locals) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
+	if (isPublicized(row)) return 'locked';
 	await writeItems(id, []);
 	return true;
 }
@@ -309,6 +318,7 @@ export async function loadTextProperties(id, locals) {
 		personaIds: await authorIds(id),
 		productionStatus: row.productionStatus,
 		visibility: row.visibility,
+		commentPolicy: row.commentPolicy,
 		publicized: isPublicized(row),
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString()
@@ -368,23 +378,27 @@ export async function authorChoices(locals) {
  * Change a text's properties.
  * @param {string} id
  * @param {App.Locals} locals
- * @param {{ title: string, personaIds: string[], productionStatus: string, visibility: string }} next
+ * @param {{ title: string, personaIds: string[], productionStatus: string, visibility: string, commentPolicy: string }} next
  * @returns {Promise<{ ok: true } | { ok: false, status: number, message: string }>}
  */
-export async function updateTextProperties(id, locals, { title, personaIds, productionStatus, visibility }) {
+export async function updateTextProperties(id, locals, { title, personaIds, productionStatus, visibility, commentPolicy }) {
 	const row = await accessible(id, locals);
 	if (!row) return { ok: false, status: 404, message: 'No such text' };
 	if (!title) return { ok: false, status: 400, message: 'Enter a title.' };
-	if (!isProductionStatus(productionStatus) || !isVisibility(visibility)) return { ok: false, status: 400, message: 'Choose a production status and visibility.' };
+	if (!isProductionStatus(productionStatus) || !isVisibility(visibility) || !isCommentPolicy(commentPolicy)) return { ok: false, status: 400, message: 'Choose a production status, visibility and commenting policy.' };
 	const choices = await authorChoices(locals);
 	const unique = [...new Set(personaIds)];
 	if (!unique.length || !unique.every((p) => choices.some((c) => c.id === p))) return { ok: false, status: 400, message: 'Choose at least one of your personae as an author.' };
 	if (isPublicized(row)) {
+		// nothing about a published, public text may change, except who may comment on it
 		const had = await authorIds(id);
-		if (had.length !== unique.length || !had.every((p) => unique.includes(p))) return { ok: false, status: 400, message: "The authors of a published, public text can't be changed." };
+		const same = title === row.title && productionStatus === row.productionStatus && visibility === row.visibility && had.length === unique.length && had.every((p) => unique.includes(p));
+		if (!same) return { ok: false, status: 409, message: LOCKED_MESSAGE };
+		await db.update(text_).set({ commentPolicy }).where(eq(text_.id, id));
+		return { ok: true };
 	}
 	await db.transaction(async (tx) => {
-		await tx.update(text_).set({ title, productionStatus, visibility }).where(eq(text_.id, id));
+		await tx.update(text_).set({ title, productionStatus, visibility, commentPolicy }).where(eq(text_.id, id));
 		await setAuthors(tx, id, unique);
 	});
 	return { ok: true };
@@ -409,10 +423,68 @@ export async function duplicateText(id, locals) {
 			type: row.type,
 			productionStatus: row.productionStatus,
 			visibility: row.visibility,
+			commentPolicy: row.commentPolicy,
 			title: `COPYOF--${row.title}`.slice(0, 200)
 		})
 		.returning({ id: text_.id });
 	await setAuthors(db, copy.id, await authorIds(id));
 	await writeItems(copy.id, loaded.items.map((i) => ({ ...i, id: crypto.randomUUID() })));
 	return copy.id;
+}
+
+/**
+ * The names a text is by, whoever asks (a user's "self" shows as their profile name).
+ * @param {string} textId
+ * @returns {Promise<string[]>}
+ */
+async function publicAuthorNames(textId) {
+	const rows = await db
+		.select({ name: persona.name, isSelf: userPersona.isSelf, userName: user.name })
+		.from(textAuthor)
+		.innerJoin(persona, eq(persona.id, textAuthor.personaId))
+		.leftJoin(userPersona, and(eq(userPersona.personaId, persona.id), eq(userPersona.isSelf, true)))
+		.leftJoin(user, eq(user.id, userPersona.userId))
+		.where(eq(textAuthor.textId, textId))
+		.orderBy(asc(textAuthor.position));
+	return rows.map((r) => (r.isSelf && r.userName ? r.userName : r.name));
+}
+
+/**
+ * Leave a comment on a paragraph of a text. A commentary is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
+ * the commentary is created (named "Comment on <authors>'s <title>") by the first comment, so a comment never
+ * exists without a text to belong to.
+ * For now only the text's owner may comment: the comment policy is not enforced yet because other people can't open
+ * a text they don't own.
+ * @param {string} textId the text commented on
+ * @param {App.Locals} locals
+ * @param {string} paragraphId the paragraph commented on (a paragraph of that text)
+ * @param {string} body the comment
+ * @returns {Promise<{ ok: true, commentaryId: string, commentId: string, created: boolean } | { ok: false, status: number, message: string }>}
+ */
+export async function addComment(textId, locals, paragraphId, body) {
+	const original = await accessible(textId, locals);
+	const uid = owner(locals);
+	if (!original || !uid) return { ok: false, status: 404, message: 'No such text' };
+	if (!body.trim()) return { ok: false, status: 400, message: 'Write a comment.' };
+	if (!UUID.test(paragraphId)) return { ok: false, status: 400, message: 'Choose a paragraph.' };
+	const [onText] = await db.select({ p: textItem.paragraphId }).from(textItem).where(and(eq(textItem.textId, textId), eq(textItem.paragraphId, paragraphId)));
+	if (!onText) return { ok: false, status: 400, message: "That paragraph isn't in this text." };
+	const personaId = await selfPersonaId(uid);
+	const title = commentaryTitle(await publicAuthorNames(textId), original.title);
+
+	return db.transaction(async (tx) => {
+		let [commentary] = await tx.select({ id: text_.id, productionStatus: text_.productionStatus, visibility: text_.visibility }).from(text_).where(and(eq(text_.commentaryOn, textId), eq(text_.userId, uid)));
+		// comments are part of their commentary: once that is published and public they are frozen, and no more can be added
+		if (commentary && isPublicized(commentary)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
+		const created = !commentary;
+		if (!commentary) {
+			[commentary] = await tx.insert(text_).values({ userId: uid, personaId, type: 'commentary', commentaryOn: textId, title }).returning({ id: text_.id });
+			if (personaId) await setAuthors(tx, commentary.id, [personaId]);
+		}
+		const [{ n }] = await tx.select({ n: sql`count(*)::int` }).from(textItem).where(eq(textItem.textId, commentary.id));
+		const [para] = await tx.insert(paragraph).values({ body: body.trim() }).returning({ id: paragraph.id });
+		await tx.insert(textItem).values({ textId: commentary.id, position: Number(n), paragraphId: para.id });
+		const [row] = await tx.insert(comment).values({ commentaryId: commentary.id, paragraphId, bodyParagraphId: para.id }).returning({ id: comment.id });
+		return { ok: true, commentaryId: commentary.id, commentId: row.id, created };
+	});
 }

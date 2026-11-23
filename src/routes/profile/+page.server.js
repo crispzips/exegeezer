@@ -4,7 +4,7 @@ import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.js';
 import { persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
 import { authorIds, deleteText, isProductionStatus, isVisibility, setAuthors } from '#lib/server/texts.js';
-import { isPublicized } from '#lib/textStatus.js';
+import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 import { isReservedName, selfPersonaId } from '#lib/server/personae.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import { APIError } from 'better-auth/api';
@@ -177,7 +177,7 @@ export const actions = {
 			.from(userPersona)
 			.where(and(eq(userPersona.userId, locals.user.id), eq(userPersona.personaId, personaId)));
 		if (!link) return fail(400, { ...keep, textMessage: 'Choose one of your personae as the author.' });
-		if (isPublicized(current) && personaId !== current.personaId) return fail(400, { ...keep, textMessage: 'The author of a published, public text can\'t be changed.' });
+		if (isPublicized(current)) return fail(409, { ...keep, textMessage: LOCKED_MESSAGE });
 		// this table edits the first author; any further authors stay (they are set in the viewer's text settings)
 		const current_ = await authorIds(id);
 		await db.transaction(async (tx) => {
@@ -190,7 +190,10 @@ export const actions = {
 	deleteText: async ({ request, locals }) => {
 		if (!locals.user) redirect(302, '/login');
 		const id = (await request.formData()).get('id')?.toString() ?? '';
-		if (!(await deleteText(id, locals))) return fail(404, { textMessage: 'Text not found.' });
+		const deleted = await deleteText(id, locals);
+		if (deleted === 'locked') return fail(409, { textMessage: LOCKED_MESSAGE });
+		if (deleted === 'commented') return fail(409, { textMessage: "This text has commentaries, so it can't be deleted." });
+		if (!deleted) return fail(404, { textMessage: 'Text not found.' });
 		return { textDeleted: true };
 	}
 };

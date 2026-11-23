@@ -57,7 +57,9 @@ function sameLine(a, b) {
  */
 function normalizeGap(el, place) {
 	if (place === 'after') {
-		const next = el.nextElementSibling;
+		// the interstice elements between neighbours (`data-gap`) are not neighbours themselves
+		let next = el.nextElementSibling;
+		while (next instanceof HTMLElement && next.hasAttribute('data-gap')) next = next.nextElementSibling;
 		if (next instanceof HTMLElement && next.dataset.drop && sameLine(el, next)) return { id: next.dataset.drop, place: 'before' };
 	}
 	return { id: el.dataset.drop ?? '', place };
@@ -141,8 +143,8 @@ function gapCentre(gap, vertical) {
  * @param {'x' | 'y'} axis
  */
 export function gapLineClass(place, axis) {
-	if (place === 'before') return axis === 'y' ? 'shadow-[0_-4px_0_0] shadow-magenta' : 'shadow-[-4px_0_0_0] shadow-magenta';
-	return axis === 'y' ? 'shadow-[0_4px_0_0] shadow-magenta' : 'shadow-[4px_0_0_0] shadow-magenta';
+	if (place === 'before') return axis === 'y' ? 'shadow-[0_-4px_0_0] shadow-taupe3' : 'shadow-[-4px_0_0_0] shadow-taupe3';
+	return axis === 'y' ? 'shadow-[0_4px_0_0] shadow-taupe3' : 'shadow-[4px_0_0_0] shadow-taupe3';
 }
 
 export class DragDrop {

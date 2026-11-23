@@ -10,10 +10,9 @@
 	import DropTip from '#lib/components/DropTip.svelte';
 	import MatterBar from '#lib/components/MatterBar.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
-	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
-	import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
+		import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
 	import { definitionsOf, emphasizeEnds, isDefinition, plainEnds, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
@@ -34,7 +33,8 @@
 	 *   onstartedit?: () => void,
 	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
-	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
+	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void,
+	 *   zoom?: number
 	 * }}
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
@@ -65,7 +65,7 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1 } = $props();
 	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger */
 	const reading = $derived(!ondelete);
 
@@ -136,6 +136,7 @@
 	const GAP_REACH = 12;
 	const dd = new DragDrop();
 	dd.reach = GAP_REACH;
+	dd.gapBar = true; // a drop's line is drawn by the interstice itself
 	const gap = new GapHover();
 
 	/**
@@ -150,10 +151,9 @@
 		lastX = e.clientX;
 		lastY = e.clientY;
 		if (!oninject || dd.dragId || editing) return;
-		const zone = locateGap(e, GAP_REACH);
-		gap.set(zone, e);
-		if (zone) editHover.clear();
-		else if (ondelete && !editHover.target && e.target instanceof Element) {
+		// the interstices are elements of their own (see `gapEl`), which report the pointer themselves
+		if (e.target instanceof Element && e.target.closest('[data-gap]')) return;
+		if (ondelete && !editHover.target && e.target instanceof Element) {
 			const el = e.target.closest('[data-drop]');
 			if (el instanceof HTMLElement) editHover.enter({ id: el.dataset.drop ?? '', kind: el.dataset.kind === 'section' ? 'section' : 'paragraph', el });
 		}
@@ -194,10 +194,17 @@
 	let firstId = $derived(paragraphs[0]?.id ?? '');
 	/** @param {string} id */
 	const isCursor = (id) => (cursor ? cursor.id === id : id === firstId);
-	/** the line of the interstice the cursor is on, drawn on the row it sits before
-	 * @param {string} id */
-	const cursorLine = (id) =>
-		cursor?.type === 'gap' && cursor.id === id ? gapLineClass(cursor.place ?? 'before', 'y') : '';
+	/** whether an interstice shows its line: hovered, under the keyboard cursor, or where a drop would land
+	 * @param {string} id the row it is expressed on
+	 * @param {'before' | 'after'} place */
+	const gapLit = (id, place) =>
+		(gap.lit && gap.target?.id === id && gap.target.place === place) ||
+		(cursor?.type === 'gap' && cursor.id === id && (cursor.place ?? 'before') === place) ||
+		(dd.drop?.id === id && dd.drop.place === place);
+
+	/** the rows of a text column: its interstices sit between them, and are not rows
+	 * @param {Element | null | undefined} parent */
+	const rowsOf = (parent) => /** @type {HTMLElement[]} */ (Array.from(parent?.children ?? []).filter((n) => !(n instanceof HTMLElement && n.hasAttribute('data-gap'))));
 
 	// ---- Synced with the other views: report the focused row, and open centred on the shared one ----
 	$effect(() => {
@@ -398,7 +405,7 @@
 	 * @returns {string | null}
 	 */
 	function sectionColorAt(y) {
-		const rows = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
+		const rows = /** @type {HTMLElement[]} */ (rowsOf(mainContent));
 		if (rows.length === 0 || rows.length !== paragraphs.length) return null;
 
 		let topLevel = Infinity;
@@ -447,8 +454,8 @@
 		const mmH = Math.max(miniInner.offsetHeight * k, 1);
 
 		// Boundaries: each paragraph's top (the first starts at 0), then the very end
-		const rowEls = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
-		const miniEls = /** @type {HTMLElement[]} */ (Array.from(miniInner.children));
+		const rowEls = /** @type {HTMLElement[]} */ (rowsOf(mainContent));
+		const miniEls = /** @type {HTMLElement[]} */ (rowsOf(miniInner));
 		if (rowEls.length === miniEls.length && rowEls.length > 0) {
 			mainB = [0, ...rowEls.slice(1).map((r) => r.offsetTop + lead), sh];
 			miniB = [0, ...miniEls.slice(1).map((r) => r.offsetTop * k), mmH];
@@ -464,7 +471,7 @@
 		// Synoptic blips: one per paragraph row, sized by its real rendered height
 		if (synopsis) {
 			const total = sh; // blips are measured against the whole scrolling area, as the viewport marker is
-			const rows = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? []));
+			const rows = /** @type {HTMLElement[]} */ (rowsOf(mainContent));
 			const levels = paragraphs.map((p) => p.level ?? 0);
 			const deepest = Math.max(0, ...levels);
 
@@ -588,13 +595,32 @@
 		mainEl.scrollTop = Math.max(0, y - pad);
 		// the row at that point becomes the focused one (and so the one the other views centre on)
 		const base = mainEl.getBoundingClientRect().top - mainEl.scrollTop;
-		const row = /** @type {HTMLElement[]} */ (Array.from(mainContent?.children ?? [])).find((r) => Math.abs(r.getBoundingClientRect().top - base - y) < 2);
+		const row = /** @type {HTMLElement[]} */ (rowsOf(mainContent)).find((r) => Math.abs(r.getBoundingClientRect().top - base - y) < 2);
 		const id = row?.dataset.para;
 		if (row && id) {
 			const para = paragraphs.find((p) => p.id === id);
 			cursor = { type: (para?.level ?? 0) > 0 ? 'section' : 'paragraph', id };
 			row.focus({ preventScroll: true });
 		}
+	}
+
+	/**
+	 * Start editing a paragraph with the caret where the pointer is. A header shows rendered, without its # marks:
+	 * the editor shows the markup, so its caret goes to the end. Reading mode has no editor: it asks the page for
+	 * writing mode, which then opens this paragraph for editing.
+	 * @param {MouseEvent & { currentTarget: EventTarget | null }} e
+	 * @param {{ id: string, text: string, level?: number }} para
+	 */
+	function startEdit(e, para) {
+		const caret = (para.level ?? 0) > 0 ? para.text.length : caretOffsetAt(/** @type {HTMLElement} */ (e.currentTarget), e.clientX, e.clientY, para.text);
+		if (!onedit) {
+			pendingCaret = caret;
+			return onwrite?.(para.id);
+		}
+		editCaret = caret;
+		editHover.clear();
+		gap.clear();
+		editing = para.id;
 	}
 
 	/** @param {PointerEvent} e */
@@ -611,16 +637,44 @@
 	}
 </script>
 
-{#snippet body(/** @type {{ id: string, text: string }} */ para, /** @type {string} */ scope)}
+<!-- An interstice: the space between two rows (or before the first, after the last) is an element of its own. It is where hovering
+     offers the inject menu and where a drop lands, it draws its own straight line, and it is the spacing between the rows. -->
+{#snippet gapEl(/** @type {string} */ id, /** @type {'before' | 'after'} */ place)}
+	<div
+		data-gap
+		role="presentation"
+		onpointerenter={(e) => {
+			if (!oninject || dd.dragId || editing || !pointerMoved(e)) return;
+			editHover.clear();
+			// the menu is tethered to the line: it slides along it with the pointer
+			gap.set({ id, place, axis: 'y', at: gap.tether(e.currentTarget, e, 'y') }, e);
+		}}
+		onpointermove={(e) => {
+			if (gap.target?.id !== id || gap.target.place !== place) return;
+			const { x, y } = gap.tether(e.currentTarget, e, 'y');
+			gap.x = x;
+			gap.y = y;
+		}}
+		onpointerleave={(e) => oninject && pointerMoved(e) && gap.leave()}
+		class="relative h-5"
+	>
+		{#if gapLit(id, place)}
+			<div class="pointer-events-none absolute inset-x-0 top-1/2 h-1.5 -translate-y-1/2 rounded-full bg-taupe3"></div>
+		{/if}
+	</div>
+{/snippet}
+
+{#snippet body(/** @type {{ id: string, text: string, level?: number }} */ para, /** @type {string} */ scope)}
+	{@const pt = (para.level ?? 0) === 0 ? 'para-text' : ''}
 	{#if !para.text}
-		<p class="flex-1 whitespace-pre-wrap"><span class="italic text-grey3">empty paragraph</span></p>
+		<p class="flex-1 whitespace-pre-wrap {pt}"><span class="italic text-grey3">empty paragraph</span></p>
 	{:else if markdown && isDefinition(para.text)}
 		<!-- a reference or footnote definition: shown as plain text; its content appears where it is used -->
 		<p class="flex-1 whitespace-pre-wrap text-xs text-grey3">{para.text}</p>
 	{:else if markdown}
-		<div class="md min-w-0 flex-1">{@html reading ? emphasizeEnds(renderMarkdown(para.text, defs, scope + para.id)) : renderMarkdown(para.text, defs, scope + para.id)}</div>
+		<div class="md ends-aligned min-w-0 flex-1 {pt}">{@html reading ? emphasizeEnds(renderMarkdown(para.text, defs, scope + para.id), true) : renderMarkdown(para.text, defs, scope + para.id)}</div>
 	{:else}
-		<p class="flex-1 whitespace-pre-wrap">{#if reading}{@html plainEnds(para.text)}{:else}{para.text}{/if}</p>
+		<p class="ends-aligned flex-1 whitespace-pre-wrap {pt}">{#if reading}{@html plainEnds(para.text, true)}{:else}{para.text}{/if}</p>
 	{/if}
 {/snippet}
 
@@ -643,7 +697,7 @@
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
-<div class="flex h-full min-h-0">
+<div class="flex h-full min-h-0" style="--z: {zoom}">
 	<!-- Main paragraph area (scrolls independently) -->
 	<!-- The text frame: a buffer of space above and below the scrolling text (cqw = the frame's width) -->
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col [container-type:inline-size]">
@@ -671,17 +725,25 @@
 					if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
 				}}
 				class="relative"
-				style="padding: {PAGE_PAD_TOP} {PAGE_PAD_X}"
+				style="padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em"
 			>
 			{#each paragraphs as para (para.id)}
+				{#if oninject}{@render gapEl(para.id, 'before')}{/if}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
 					data-para={para.id}
+					style={(para.level ?? 0) === 0 ? 'margin-inline: var(--ta-mxp, 0%)' : undefined}
 					tabindex={isCursor(para.id) ? 0 : -1}
 					onfocus={() => {
 						if (cursor?.id !== para.id) cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id };
 					}}
-					onclick={() => (cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id })}
+					onclick={(e) => {
+						cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id };
+						// writing mode: a single click puts the editing cursor at that point (links and buttons keep their own clicks)
+						if (!onedit || editing === para.id || window.getSelection()?.type === 'Range') return;
+						if (e.target instanceof Element && e.target.closest('a, button')) return;
+						startEdit(e, para);
+					}}
 					data-drop={onmove ? para.id : undefined}
 					data-kind={(para.level ?? 0) > 0 ? 'section' : 'paragraph'}
 					data-axis="y"
@@ -693,32 +755,18 @@
 							}
 						: undefined}
 					ondragend={onmove ? () => dd.end() : undefined}
-					ondblclick={onedit || onwrite
-						? (e) => {
-								// a header shows rendered, without its # marks: the editor shows the markup, so its caret goes to the end
-								const caret = (para.level ?? 0) > 0 ? para.text.length : caretOffsetAt(e.currentTarget, e.clientX, e.clientY, para.text);
-								if (!onedit) {
-									// reading: ask the page for writing mode, which then opens this paragraph for editing
-									pendingCaret = caret;
-									return onwrite?.(para.id);
-								}
-								editCaret = caret;
-								editHover.clear();
-								gap.clear();
-								editing = para.id;
-							}
-						: undefined}
+					ondblclick={!onedit && onwrite ? (e) => startEdit(e, para) : undefined}
 					onpointerenter={ondelete && !editing
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded py-1.5 pl-1 {oninject ? '[&:not(:first-child)]:mt-5' : ''} {ondelete ? 'pr-10' : 'pr-1'} {ondelete && editHover.is(para.id) ? 'min-h-[5.75rem]' : ''} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(para.id)} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || gap.classes(para.id) || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="flex gap-2 rounded py-1.5 pl-1 pr-1 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
 						<p
 							use:editable={{ text: para.text, caret: editCaret, onfinish: (t) => finishEdit(para.id, t), onenter: (r) => onnewitem?.(para.id, r), markdown }}
-							class="flex-1 whitespace-pre-wrap outline-none"
+							class="flex-1 whitespace-pre-wrap outline-none {(para.level ?? 0) === 0 ? 'para-text' : ''}"
 						></p>
 					{:else}
 						{@render body(para, 'main-')}
@@ -727,6 +775,7 @@
 			{:else}
 				<p class="text-sm text-gray-500">{empty}</p>
 			{/each}
+			{#if oninject && paragraphs.length > 0}{@render gapEl(paragraphs[paragraphs.length - 1].id, 'after')}{/if}
 		</div>
 		{#if matter}<MatterBar sections={matter.back} label="Back matter" edge="bottom" {markdown} />{/if}
 		</div>
@@ -752,14 +801,16 @@
 				<div
 					bind:this={miniInner}
 					class="absolute top-0 left-0 origin-top-left"
-					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; transform: scale({m.k})"
+					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em; transform: scale({m.k})"
 				>
 					{#each paragraphs as para (para.id)}
-						<div class="flex gap-2 py-1.5 pl-1 {oninject ? '[&:not(:first-child)]:mt-5' : ''} {ondelete ? 'pr-10' : 'pr-1'}">
+						{#if oninject}<div data-gap class="h-5"></div>{/if}
+						<div style={(para.level ?? 0) === 0 ? 'margin-inline: var(--ta-mxp, 0%)' : undefined} class="flex gap-2 py-1.5 pl-1 pr-1">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>
 							{@render body(para, 'mini-')}
 						</div>
 					{/each}
+					{#if oninject && paragraphs.length > 0}<div data-gap class="h-5"></div>{/if}
 				</div>
 
 				<!-- Marker showing what the main area currently displays -->

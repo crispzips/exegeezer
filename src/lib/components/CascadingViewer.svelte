@@ -8,7 +8,7 @@
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 	import DropTip from '#lib/components/DropTip.svelte';
-	import { DragDrop, locateGap } from '#lib/utilities/dragDrop.svelte.js';
+	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 
@@ -118,7 +118,7 @@
 	function lineFor(z) {
 		const p = layout.find((q) => (q.node.kind === 'section' ? q.node.id : q.node.paragraph.id) === z.id);
 		if (!p) return null;
-		const LINE = 4;
+		const LINE = 10; // as thick as a bubble's border
 		const step = z.place === 'before' ? 0 : 1;
 		// 'inside' is the gap beyond a section bubble, on the axis its contents open along: beneath a bubble
 		// in a row, to the right of one in a column
@@ -153,18 +153,33 @@
 		return !prev || prev.node.kind === 'paragraph';
 	}
 
-	/** hovering the space between bubbles (or a bubble's thin edge) offers to add something there
-	 * @param {PointerEvent} e */
-	function hoverMove(e) {
-		if (!onadd || exploded || dd.dragId) return;
-		// on the plus or its popup: keep the zone they belong to
-		if (e.target instanceof Element && e.target.closest('[data-gapctl]')) return gap.hold();
-		// the strip beyond a section bubble, where its contents begin
-		const inside = e.target instanceof Element ? e.target.closest('[data-insidezone]') : null;
-		if (inside instanceof HTMLElement) return gap.set({ id: inside.dataset.insidezone ?? '', place: 'inside', axis: inside.dataset.axis === 'x' ? 'x' : 'y' }, e);
-		gap.set(locateGap(e, dd.reach), e);
-	}
-
+	/**
+	 * Every gap on the grid as an element of its own (shown in editing mode): the strip between two neighbouring cells, as wide as
+	 * the grid's gap and as long as a bubble is across. Where a vertical strip crosses a horizontal one (the corner squares between four
+	 * cells) belongs to neither. Hovering a strip lights its line and offers the plus, fixed in the middle of the gap.
+	 */
+	let zones = $derived.by(() => {
+		if (!onadd || exploded) return [];
+		/** @type {(NonNullable<ReturnType<typeof lineFor>> & { zl: number, zt: number, zw: number, zh: number, axis: 'x' | 'y' })[]} */
+		const out = [];
+		for (const p of layout) {
+			const id = p.node.kind === 'section' ? p.node.id : p.node.paragraph.id;
+			const last = layout.filter((q) => (q.parent?.id ?? null) === (p.parent?.id ?? null)).at(-1) === p;
+			/** @type {GapSpec[]} */
+			const specs = [{ id, place: 'before' }];
+			if (last) specs.push({ id, place: 'after' });
+			if (p.node.kind === 'section') specs.push({ id, place: 'inside' });
+			for (const z of specs) {
+				const line = lineFor(z);
+				if (!line) continue;
+				const vertical = line.width < line.height;
+				const zl = vertical ? Math.max(0, line.cx - GAP / 2) : line.left;
+				const zt = vertical ? line.top : Math.max(0, line.cy - GAP / 2);
+				out.push({ ...line, zl, zt, zw: vertical ? Math.min(GAP, colCount * PITCH - zl) : line.width, zh: vertical ? line.height : Math.min(GAP, rowCount * PITCH - zt), axis: vertical ? 'x' : 'y' });
+			}
+		}
+		return out;
+	});
 	/** @param {'paragraph' | 'section'} kind @param {GapSpec} z the gap to add at @param {boolean} [auto] made by Enter in the bubble before it (the page then drops it if it is left empty) @param {number} [level] a section's heading level */
 	async function add(kind, z, auto = false, level = undefined) {
 		gap.clear();
@@ -563,10 +578,11 @@
 	let scrollY = $state(0);
 	/** Where the plus is drawn, in px from the stage's top-left: the gap line's middle, scaled and scrolled.
 	 * It is hidden when that is scrolled out of the stage.
-	 * @param {{ cx: number, cy: number }} z */
+	 * @param {{ id: string, place: 'before' | 'after' | 'inside', left: number, top: number, width: number, height: number, cx: number, cy: number }} z */
 	function plusSpot(z) {
-		const x = z.cx * zoom - scrollX;
-		const y = z.cy * zoom - scrollY;
+		const { cx, cy } = z;
+		const x = cx * zoom - scrollX;
+		const y = cy * zoom - scrollY;
 		const slack = plusSize / 2 + 1;
 		return { x, y, visible: x >= -slack && y >= -slack && x <= stageW + slack && y <= stageH + slack };
 	}
@@ -953,7 +969,6 @@
 
 <div
 	role="presentation"
-	onpointermove={hoverMove}
 	onpointerleave={() => gap.leave()}
 	ondragover={dragOver}
 	ondrop={drop}
@@ -1039,7 +1054,7 @@
 								toggle(p.depth, node.id, e.currentTarget);
 							}
 						}}
-						class="group absolute flex cursor-pointer flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-8 border-(--c) px-8 py-6 text-center text-dark transition-[left,top] focus:outline-none {dd.dragId === node.id ? 'opacity-40' : ''} {mergeClasses(node.id, p.horizontal)} {p.open
+						class="group absolute flex cursor-pointer flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-10 border-(--c) px-8 py-6 text-center text-dark transition-[left,top] focus:outline-none {dd.dragId === node.id ? 'opacity-40' : ''} {mergeClasses(node.id, p.horizontal)} {p.open
 							? 'bg-[color-mix(in_srgb,var(--c)_28%,var(--color-taupe1))] font-semibold'
 							: 'bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] hover:bg-[color-mix(in_srgb,var(--c)_20%,var(--color-taupe1))]'}"
 					>
@@ -1095,7 +1110,7 @@
 						}}
 						{style}
 						{...inlineEditId === pid ? {} : dragAttrs(pid, 'paragraph', p.horizontal)}
-						class="group absolute flex {inlineEditId === pid ? 'cursor-text' : 'cursor-default'} flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
+						class="group absolute flex {inlineEditId === pid ? 'cursor-text' : 'cursor-default'} flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-10 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
 					>
 						<span class="mb-3 text-xs text-gray-500">{p.node.paragraphIndex}</span>
 						{#if /** @type {any} */ (p.node.paragraph).title}<span class="mb-1 text-sm font-semibold">{/** @type {any} */ (p.node.paragraph).title}</span>{/if}
@@ -1122,18 +1137,15 @@
 			{/each}
 
 			{#if onadd && !exploded && !dd.dragId}
-				<!-- beyond every section bubble: the gap where its contents begin (hover it to add the first item) -->
-				{#each layout as p (p.node.kind === 'section' ? p.node.id : p.node.paragraph.id)}
-					{#if p.node.kind === 'section'}
-						<div
-							data-insidezone={p.node.id}
-							data-axis={p.horizontal ? 'y' : 'x'}
-							class="absolute"
-							style={p.horizontal
-								? `left:${p.col * PITCH + GAP / 2}px;top:${p.row * PITCH + GAP / 2 + SIZE}px;width:${SIZE}px;height:${GAP}px`
-								: `left:${p.col * PITCH + GAP / 2 + SIZE}px;top:${p.row * PITCH + GAP / 2}px;width:${GAP}px;height:${SIZE}px`}
-						></div>
-					{/if}
+				{#each zones as z (gapKey(z))}
+					<div
+						data-gapzone
+						role="presentation"
+						onpointerenter={(e) => gap.set({ id: z.id, place: z.place, axis: z.axis }, e)}
+						onpointerleave={() => gap.leave()}
+						class="absolute"
+						style="left:{z.zl}px;top:{z.zt}px;width:{z.zw}px;height:{z.zh}px"
+					></div>
 				{/each}
 			{/if}
 
@@ -1188,7 +1200,7 @@
 								onpointerenter={() => paragraphFits(g) && (plusOpen = gapKey(g))}
 								onclick={() => (paragraphFits(g) ? (plusOpen = gapKey(g)) : add('section', g))}
 								style="width:{plusSize}px;height:{plusSize}px"
-								class="flex items-center justify-center rounded-full border border-taupe3 bg-taupe1 p-px text-taupe4 hover:bg-taupe2 [&_svg]:h-full [&_svg]:w-full"
+								class="flex items-center justify-center rounded-full border-[3px] border-taupe3 bg-taupe1 p-px text-taupe4 hover:bg-taupe2 [&_svg]:h-full [&_svg]:w-full"
 							>
 								<Plus />
 							</button>
@@ -1245,7 +1257,7 @@
 			aria-modal="true"
 			aria-label="Paragraph {current.index}"
 			tabindex="-1"
-			style="width:{modalW}px;height:{modalH}px;border-radius:{modalRadius}px;padding:{modalPad}px;--c:{current.color}"
+			style="width:{modalW}px;height:{modalH}px;border-radius:{modalRadius}px;padding:{modalPad}px;padding-inline:calc({modalPad}px + var(--ta-mx, 0rem));--c:{current.color}"
 			class="bubble-form relative flex flex-col overflow-hidden border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] text-dark shadow-2xl focus:outline-none"
 		>
 			<span class="mb-4 text-center text-sm text-gray-500">{current.index}</span>
@@ -1272,7 +1284,7 @@
 			{#if current.title}<h2 class="mb-1 text-center text-xl font-semibold">{current.title}</h2>{/if}
 			{#if current.description}<p class="mb-4 text-center text-sm text-grey3 italic">{current.description}</p>{/if}
 			<div bind:this={textBox} onscroll={measureMore} class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-				<p class="md whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html emphasizeEnds(notes.get(current.id) ?? '')}{:else}{@html plainEnds(current.text)}{/if}</p>
+				<p class="md para-text whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html emphasizeEnds(notes.get(current.id) ?? '')}{:else}{@html plainEnds(current.text)}{/if}</p>
 			</div>
 			{#if more}
 				<div class="pointer-events-none -mt-8 h-8 shrink-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] to-transparent text-center text-xl leading-8 text-grey2" aria-hidden="true">…</div>

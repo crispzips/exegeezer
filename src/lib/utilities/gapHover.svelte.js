@@ -47,6 +47,23 @@ export class GapHover {
 	}
 
 	/**
+	 * Where the menu sits for a pointer over an interstice element: on the line the interstice draws, so it has one degree of
+	 * freedom: it slides along that line with the pointer (kept clear of the line's ends) and never leaves it.
+	 * @param {HTMLElement} el the interstice element
+	 * @param {PointerEvent} e
+	 * @param {'x' | 'y'} axis 'y' for a horizontal line between stacked bubbles, 'x' for a vertical one between bubbles side by side
+	 * @returns {{ x: number, y: number }}
+	 */
+	tether(el, e, axis) {
+		const r = el.getBoundingClientRect();
+		const half = 20;
+		const along = (/** @type {number} */ v, /** @type {number} */ lo, /** @type {number} */ hi) => Math.max(Math.min(lo + half, hi), Math.min(v, hi - half));
+		return axis === 'y'
+			? { x: along(e.clientX, r.left, r.right), y: r.top + r.height / 2 }
+			: { x: r.left + r.width / 2, y: along(e.clientY, r.top, r.bottom) };
+	}
+
+	/**
 	 * Show a zone at a point without a pointer (keyboard navigation).
 	 * @param {GapTarget} zone
 	 * @param {number} x

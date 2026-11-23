@@ -1,6 +1,6 @@
 <script>
 	/**
-	 * One source for loading a text: an icon-only button (a taupe1 square with a taupe3
+	 * One source for loading a text: an icon-only button (a taupe1 circle with a taupe3
 	 * border and the standard drop shadow) whose name shows in the standard tooltip,
 	 * centred directly below it. The tooltip is drawn here, not by the page-level one,
 	 * which a modal dialog would cover. `name` is the button's name, never a visible label.
@@ -25,7 +25,7 @@
 		{onclick}
 		aria-label={name}
 		aria-expanded={below ? showBelow : undefined}
-		class="inline-flex items-center justify-center rounded-md border border-taupe3 bg-taupe1 p-4 text-dark [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"
+		class="inline-flex items-center justify-center rounded-full border border-taupe3 bg-taupe1 p-4 text-dark [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"
 	>
 		{@render children()}
 	</button>

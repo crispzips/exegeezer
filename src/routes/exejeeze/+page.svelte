@@ -96,8 +96,16 @@
     }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
-     * @param {{ title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
+     * @param {{ id: string, title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
     function onOwnTextChosen(saved) {
+        // with no text open (and not seeding), an existing text of one's own is simply opened: there is nothing to preview or choose
+        if (noText && !seeding) {
+            showSaved(saved.id).catch((err) => {
+                console.warn('Could not open the text', err);
+                alert('Could not open that text.');
+            });
+            return;
+        }
         loadSource = 'own';
         loadName = saved.title;
         loadNotes = [];
@@ -1486,7 +1494,7 @@
 >
     <div class="flex shrink-0 items-start justify-between">
         <!-- Load sources: each is its own button, centered until a text is loaded, then top-left -->
-        <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-x-0 top-1/3 z-40 flex -translate-y-1/2 justify-center' : 'inline-block'}>
+        <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-x-0 top-1/2 z-40 flex -translate-y-1/2 justify-center' : 'inline-block'}>
             <div class="pointer-events-auto relative z-50 inline-flex gap-5">
                 <!-- a computer file or the web comes in as content for a text that already exists (or to seed a new one), so with no text open only your own texts and other exegeezers' texts are offered -->
                 {#if !noText || seeding}
@@ -1496,7 +1504,7 @@
                 {#if !noText || seeding}
                 <SourceButton name="From Open Libraries" onclick={() => (openSourcesOpen = true)} small={paragraphs.length > 0} active={paragraphs.length > 0 && loadSource === 'web'}><GlobeAlt2 width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
                 {/if}
-                <SourceButton name="From Other Exegeezers" small={paragraphs.length > 0}><Mesh width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
+                <SourceButton name="From Other Exegeezers" tipAlign="right" small={paragraphs.length > 0}><Mesh width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
             </div>
         </div>
 

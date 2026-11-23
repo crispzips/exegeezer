@@ -14,11 +14,12 @@
 	 *   below?: import('svelte').Snippet,
 	 *   showBelow?: boolean,
 	 *   belowAlign?: 'center' | 'right',
+	 *   tipAlign?: 'center' | 'right',
 	 *   small?: boolean,
 	 *   active?: boolean
 	 * }}
 	 */
-	let { name, onclick, children, below, showBelow = false, belowAlign = 'center', small = false, active = false } = $props();
+	let { name, onclick, children, below, showBelow = false, belowAlign = 'center', tipAlign = 'center', small = false, active = false } = $props();
 </script>
 
 <span class="group relative inline-flex">
@@ -41,7 +42,7 @@
 	{:else}
 		<span
 			role="tooltip"
-			class="pointer-events-none absolute top-full left-1/2 z-50 mt-3 hidden w-max -translate-x-1/2 rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg group-hover:block group-has-[:focus-visible]:block"
+			class="pointer-events-none absolute top-full z-50 mt-3 hidden w-max rounded-2xl border border-taupe3 bg-taupe1 px-3 py-1.5 text-xs text-taupe5 shadow-lg group-hover:block group-has-[:focus-visible]:block {tipAlign === 'right' ? 'right-0' : 'left-1/2 -translate-x-1/2'}"
 		>
 			{name}
 		</span>

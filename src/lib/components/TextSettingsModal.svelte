@@ -20,6 +20,19 @@
 	let busy = $state(false);
 
 	const typeLabel = /** @type {Record<string, string>} */ ({ original: 'Original text', commentary: 'Commentary' });
+	/** the labelled fields of an imported-details entry, in reading order */
+	const DETAIL_LABELS = /** @type {[string, string][]} */ ([
+		['title', 'Title'],
+		['author', 'Author'],
+		['published', 'Published'],
+		['publisher', 'Publisher'],
+		['citation', 'Citation'],
+		['identifier', 'Identifier'],
+		['language', 'Language'],
+		['license', 'License'],
+		['rights', 'Rights'],
+		['importedAt', 'Imported']
+	]);
 	const fmt = (/** @type {string} */ iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });
 
 	$effect(() => {
@@ -63,6 +76,7 @@
 	}
 </script>
 
+<!-- eslint-disable svelte/no-navigation-without-resolve -- the source link leaves the app for an outside site -->
 <dialog
 	bind:this={dialogEl}
 	onclick={(e) => { if (e.target === dialogEl) dialogEl?.close(); }}
@@ -105,6 +119,25 @@
 					<dt class="text-grey3">Created</dt><dd>{fmt(info.createdAt)}</dd>
 					<dt class="text-grey3">Last changed</dt><dd>{fmt(info.updatedAt)}</dd>
 				</dl>
+				{#if info.importedDetails?.length}
+					<!-- where imported text came from, and its rights (read-only) -->
+					<details class="rounded-md border border-taupe2 p-2">
+						<summary class="cursor-pointer font-medium">Imported details ({info.importedDetails.length})</summary>
+						{#each info.importedDetails as entry, i (i)}
+							<dl class="mt-2 grid grid-cols-[6rem_minmax(0,1fr)] gap-x-2 gap-y-0.5 text-xs">
+								{#each DETAIL_LABELS as [key, label] (key)}
+									{#if entry[key]}<dt class="text-grey3">{label}</dt><dd class="break-words">{entry[key]}</dd>{/if}
+								{/each}
+								{#if entry.source}
+									<dt class="text-grey3">Source</dt>
+									<dd class="break-words">
+										{#if entry.sourceUrl}<a href={entry.sourceUrl} target="_blank" rel="noopener noreferrer" class="underline">{entry.source}</a>{:else}{entry.source}{/if}
+									</dd>
+								{/if}
+							</dl>
+						{/each}
+					</details>
+				{/if}
 			{:else if !message}
 				<p class="text-grey3">Loading…</p>
 			{/if}

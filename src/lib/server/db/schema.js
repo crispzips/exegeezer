@@ -1,6 +1,6 @@
 export * from './schema';
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 
 export const user = pgTable("user", {
@@ -129,6 +129,9 @@ export const text_ = pgTable(
     // the rally type the text was given when its first rally began ('compose' | 'copy' | 'recall' | 'dictate');
     // null = none yet, so the rally's setup is offered. Only a starting point: any rally type can be used on any text.
     rallyStyle: text("rally_style"),
+    // where an imported text came from and its rights: a list with one entry per work imported into the text
+    // (source, source url, author, publication details, license, ...). null = the text was not imported.
+    importedDetails: jsonb("imported_details"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at")
       .defaultNow()

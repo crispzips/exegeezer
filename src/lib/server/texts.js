@@ -46,6 +46,35 @@ export function parseItems(raw) {
 	return items;
 }
 
+/** the fields an imported-details entry may have: short strings describing where a text came from and its rights */
+const DETAIL_FIELDS = ['source', 'sourceUrl', 'title', 'author', 'published', 'publisher', 'citation', 'identifier', 'license', 'rights', 'language', 'importedAt'];
+const MAX_DETAILS = 100;
+
+/**
+ * Check and clean the imported details sent by the client: a list of entries, each a few short strings.
+ * @param {unknown} raw
+ * @returns {Record<string, string>[] | null} null when malformed; an empty list when none
+ */
+export function parseImportedDetails(raw) {
+	if (raw === undefined || raw === null) return [];
+	if (!Array.isArray(raw) || raw.length > MAX_DETAILS) return null;
+	/** @type {Record<string, string>[]} */
+	const entries = [];
+	for (const entry of raw) {
+		if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+		/** @type {Record<string, string>} */
+		const clean = {};
+		for (const field of DETAIL_FIELDS) {
+			const v = /** @type {Record<string, unknown>} */ (entry)[field];
+			if (v === undefined || v === null || v === '') continue;
+			if (typeof v !== 'string') return null;
+			clean[field] = v.slice(0, 2000);
+		}
+		if (Object.keys(clean).length) entries.push(clean);
+	}
+	return entries;
+}
+
 /**
  * The user a request acts for (null when not signed in).
  * @param {App.Locals} locals
@@ -92,7 +121,7 @@ export async function listTexts(locals) {
  * Rebuild a text's ordered list from its items.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, publicized: boolean, authors: string[], items: Item[] } | null>}
+ * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, publicized: boolean, authors: string[], importedDetails: Record<string, string>[], items: Item[] } | null>}
  */
 export async function loadText(id, locals) {
 	const row = await accessible(id, locals);
@@ -126,7 +155,7 @@ export async function loadText(id, locals) {
 					...(r.description ? { description: r.description } : {})
 				}
 	);
-	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id, locals), items };
+	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id, locals), importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []), items };
 }
 
 /**
@@ -206,11 +235,12 @@ async function writeItems(id, items) {
  * @param {Item[]} items
  * @param {string} visibility 'private' or 'public'
  * @param {string | null} [rallyStyle] the text's default rally type, when it is made by a rally
+ * @param {Record<string, string>[]} [importedDetails] where the text was imported from, and its rights (from parseImportedDetails)
  */
-export async function createText(locals, title, items, visibility, rallyStyle = null) {
+export async function createText(locals, title, items, visibility, rallyStyle = null, importedDetails = []) {
 	const uid = owner(locals);
 	const personaId = uid ? await selfPersonaId(uid) : null;
-	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, rallyStyle, title: title ?? 'Untitled' }).returning({ id: text_.id });
+	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, rallyStyle, title: title ?? 'Untitled', importedDetails: importedDetails.length ? importedDetails : null }).returning({ id: text_.id });
 	if (personaId) await setAuthors(db, row.id, [personaId]);
 	await writeItems(row.id, items);
 	return row.id;
@@ -223,14 +253,20 @@ export async function createText(locals, title, items, visibility, rallyStyle = 
  * @param {Item[]} items
  * @param {string | undefined} title
  * @param {{ productionStatus?: string, visibility?: string }} [status]
+ * @param {Record<string, string>[]} [addDetails] imported details to add to the text's own (an import into an existing text)
  * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
  */
-export async function saveText(id, locals, items, title, status = {}) {
+export async function saveText(id, locals, items, title, status = {}, addDetails = []) {
 	const row = await accessible(id, locals);
 	if (!row) return false;
 	if (isPublicized(row)) return 'locked';
 	if (title) await db.update(text_).set({ title }).where(eq(text_.id, id));
 	if (status.productionStatus || status.visibility) await db.update(text_).set(status).where(eq(text_.id, id));
+	if (addDetails.length) {
+		const had = /** @type {Record<string, string>[]} */ (row.importedDetails ?? []);
+		const fresh = addDetails.filter((d) => !had.some((h) => h.source === d.source && h.sourceUrl === d.sourceUrl && h.title === d.title));
+		if (fresh.length) await db.update(text_).set({ importedDetails: [...had, ...fresh].slice(0, MAX_DETAILS) }).where(eq(text_.id, id));
+	}
 	await writeItems(id, items);
 	return true;
 }
@@ -319,6 +355,7 @@ export async function loadTextProperties(id, locals) {
 		productionStatus: row.productionStatus,
 		visibility: row.visibility,
 		commentPolicy: row.commentPolicy,
+		importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []),
 		publicized: isPublicized(row),
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString()
@@ -424,6 +461,7 @@ export async function duplicateText(id, locals) {
 			productionStatus: row.productionStatus,
 			visibility: row.visibility,
 			commentPolicy: row.commentPolicy,
+			importedDetails: row.importedDetails,
 			title: `COPYOF--${row.title}`.slice(0, 200)
 		})
 		.returning({ id: text_.id });

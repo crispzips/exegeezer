@@ -6,7 +6,7 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, Search, FontFamily, LineSpacing, LetterSpacing, MarginLeft, MarginTop, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -928,6 +928,14 @@
                 if (authed) mode = saved.mode;
             }
             if (typeof saved.exploded === 'boolean') exploded = saved.exploded;
+            const z = ZOOMS.indexOf(saved.zoom);
+            const look = saved.appearance ?? {};
+            const at = (/** @type {number[]} */ list, /** @type {unknown} */ v, /** @type {number} */ d) => (list.indexOf(/** @type {number} */ (v)) >= 0 ? list.indexOf(/** @type {number} */ (v)) : d);
+            sizeStep = at(SIZE_STEPS, look.size, DEFAULT_SIZE_STEP);
+            lineStep = at(LINE_STEPS, look.line, DEFAULT_LINE);
+            letterStep = at(LETTER_STEPS, look.letter, DEFAULT_LETTER);
+            sideStep = at(MARGIN_STEPS, look.side, DEFAULT_MARGIN);
+            if (z >= 0) zoomStep = z;
             // the size is remembered as rem (not as a step), so changing the scale never moves it; an older step-only setting is dropped
             const found = SIZES.indexOf(saved.rallySizeRem);
             if (found >= 0) rallySize = found;
@@ -941,7 +949,7 @@
     });
 
     $effect(() => {
-        const settings = { view, mode: chosenMode, exploded, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first, emphasizeLast: emphasis.last };
+        const settings = { view, mode: chosenMode, exploded, zoom: ZOOMS[zoomStep], appearance: { size: SIZE_STEPS[sizeStep], line: LINE_STEPS[lineStep], letter: LETTER_STEPS[letterStep], side: MARGIN_STEPS[sideStep] }, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first, emphasizeLast: emphasis.last };
         if (!restored) return;
         try {
             localStorage.setItem(REMEMBER, JSON.stringify(settings));
@@ -973,6 +981,63 @@
     let view = $state('linear');
     /** cascading view only: every section open at once, zoomed all the way out, colours only */
     let exploded = $state(false);
+    /** linear view only: the text's zoom (a step of ZOOMS) and whether its slider is showing */
+    const ZOOMS = [0.75, 0.875, 1, 1.25, 1.5, 2];
+    let zoomStep = $state(2);
+    let zoomOpen = $state(false);
+
+    // ---- Text appearance, in every view: size, line spacing, letter spacing, side margins, top and bottom margins ----
+    // each is a step in a list, the default one in the middle-ish; a step is remembered as its value, so changing the lists never moves a choice
+    const SIZE_STEPS = [0.7, 0.85, 1, 1.2, 1.4, 1.65, 1.9, 2.2, 2.5];
+    const LINE_STEPS = [1.2, 1.35, 1.5, 1.75, 2, 2.4, 2.9, 3.5];
+    const LETTER_STEPS = [-0.02, 0, 0.02, 0.05, 0.1, 0.16]; // em
+    // side margins, as the share of the page's width left empty on each side of paragraph text: from close to the page's edge (2%) to a skinny
+    // column a word or two wide (42%). 12% is the linear view's own margin, the default; the other views' bubbles can only widen from theirs
+    const MARGIN_STEPS = [0.02, 0.04, 0.06, 0.09, 0.12, 0.18, 0.26, 0.34, 0.42];
+    const DEFAULT_SIZE_STEP = 2;
+    const DEFAULT_LINE = 2;
+    const DEFAULT_LETTER = 1;
+    const DEFAULT_MARGIN = 4;
+    let sizeStep = $state(DEFAULT_SIZE_STEP);
+    let lineStep = $state(DEFAULT_LINE);
+    let letterStep = $state(DEFAULT_LETTER);
+    let sideStep = $state(DEFAULT_MARGIN);
+    /** the appearance menu: whether its submenu is open, and which slider is showing */
+    let appearanceOpen = $state(false);
+    /** @type {'size' | 'line' | 'letter' | 'side' | null} */
+    let appearanceSlider = $state(null);
+    /** the appearance settings apply in every mode, but not in the rally view */
+    const appearanceOn = $derived(view !== 'rally');
+    const appearanceStyle = $derived(`--ta-size: ${SIZE_STEPS[sizeStep]}; --ta-lh: ${LINE_STEPS[lineStep]}; --ta-ls: ${LETTER_STEPS[letterStep]}em; --ta-mxp: ${(((MARGIN_STEPS[sideStep] - 0.12) / 0.76) * 100).toFixed(3)}%; --ta-mx: ${(Math.max(0, MARGIN_STEPS[sideStep] - 0.12) * 20).toFixed(3)}rem`);
+    const APPEARANCE = /** @type {const} */ ([
+        { id: 'size', label: 'Font size', steps: SIZE_STEPS },
+        { id: 'line', label: 'Line spacing', steps: LINE_STEPS },
+        { id: 'letter', label: 'Kerning', steps: LETTER_STEPS },
+        { id: 'side', label: 'Side margins', steps: MARGIN_STEPS }
+    ]);
+    /** @param {string} id */
+    const appearanceStep = (id) => (id === 'size' ? sizeStep : id === 'line' ? lineStep : id === 'letter' ? letterStep : sideStep);
+    /** @param {string} id @param {number} v */
+    function setAppearanceStep(id, v) {
+        if (id === 'size') sizeStep = v;
+        else if (id === 'line') lineStep = v;
+        else if (id === 'letter') letterStep = v;
+        else sideStep = v;
+    }
+    /** the appearance as it was when this text was opened in the viewer: what the revert button goes back to
+     * @type {{ size: number, line: number, letter: number, side: number } | null} */
+    let appearanceAtOpen = null;
+    $effect(() => {
+        void textId;
+        if (!restored) return;
+        untrack(() => (appearanceAtOpen = { size: sizeStep, line: lineStep, letter: letterStep, side: sideStep }));
+    });
+    function resetAppearance() {
+        sizeStep = appearanceAtOpen?.size ?? DEFAULT_SIZE_STEP;
+        lineStep = appearanceAtOpen?.line ?? DEFAULT_LINE;
+        letterStep = appearanceAtOpen?.letter ?? DEFAULT_LETTER;
+        sideStep = appearanceAtOpen?.side ?? DEFAULT_MARGIN;
+    }
     /** @type {('linear' | 'hierarchical' | 'cascading' | 'rally')[]} */
     const VIEWS = ['linear', 'hierarchical', 'cascading', 'rally'];
     // rally view's settings: chunk unit, text size step, speed tick (unlabelled; ranges set in rallyChunks.js), and whether it is running
@@ -1145,8 +1210,10 @@
                 {/if}
             </div>
         {/if}
+        <!-- Text appearance (every view): the settings reach the views as CSS variables, which app.css turns into sizes and spacing -->
+        <div class="h-full {appearanceOn ? 'appearance' : ''} {appearanceOn && lineStep !== DEFAULT_LINE ? 'ta-line' : ''}" style={appearanceOn ? appearanceStyle : undefined}>
         {#if view === 'linear'}
-            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} zoom={ZOOMS[zoomStep]} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'rally' && mode === 'commenting'}
             <!-- commenting isn't available in rally view yet: the view stays inactive and says so -->
             <div class="flex h-full items-center justify-center px-8 text-center text-grey3" role="status">
@@ -1171,6 +1238,7 @@
         {:else}
             <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
+        </div>
         </div>
     </div>
 
@@ -1209,6 +1277,19 @@
             {/key}
         </button>
 
+        {#if view === 'linear'}
+            <!-- Linear settings: the zoom, a vertical slider (smallest at the bottom, a tick for every step) revealed by its icon -->
+            <div class="submenu flex w-full flex-col items-center gap-1 py-1">
+                <button onclick={() => (zoomOpen = !zoomOpen)} aria-label="Zoom" aria-expanded={zoomOpen} use:tip={'Zoom'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {zoomOpen ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}"><Search /></button>
+                {#if zoomOpen}
+                    <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
+                        <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each ZOOMS as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
+                        <input type="range" min="0" max={ZOOMS.length - 1} step="1" bind:value={zoomStep} aria-label="Zoom" use:tip={'Zoom'} class="rally-speed" style="height: 5.5rem; --p: {zoomStep / (ZOOMS.length - 1)}{editing ? `; --mode: var(--color-${WRITING_COLOUR})` : ''}" />
+                    </div>
+                {/if}
+            </div>
+        {/if}
+
         {#if view === 'cascading'}
             <!-- View-particular settings: shown under the view button, only in this view -->
             <div class="submenu flex w-full flex-col items-center gap-1 py-1">
@@ -1229,14 +1310,14 @@
             <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button onclick={() => ((rallyPlaying = false), (setupAsked = true), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
                 <!-- text size and speed: each a vertical slider (smallest / slowest at the bottom, a tick for every step, no labels), shown when its icon is pressed -->
-                <button onclick={() => (sizeOpen = !sizeOpen)} aria-label="Text size" aria-expanded={sizeOpen} use:tip={'Text size'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {sizeOpen ? 'bg-taupe3' : ''}"><TextHeight /></button>
+                <button onclick={() => (sizeOpen = !sizeOpen)} aria-label="Text size" aria-expanded={sizeOpen} use:tip={'Text size'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {sizeOpen ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}"><TextHeight /></button>
                 {#if sizeOpen}
                     <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
                         <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each SIZES as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
                         <input type="range" min="0" max={SIZES.length - 1} step="1" bind:value={rallySize} aria-label="Text size" use:tip={'Text size'} class="rally-speed" style="height: 5.5rem; --p: {rallySize / (SIZES.length - 1)}{editing ? `; --mode: var(--color-${WRITING_COLOUR})` : ''}" />
                     </div>
                 {/if}
-                <button onclick={() => (speedOpen = !speedOpen)} aria-label="Speed" aria-expanded={speedOpen} use:tip={'Speed'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {speedOpen ? 'bg-taupe3' : ''}"><Tachometer /></button>
+                <button onclick={() => (speedOpen = !speedOpen)} aria-label="Speed" aria-expanded={speedOpen} use:tip={'Speed'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {speedOpen ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}"><Tachometer /></button>
                 {#if speedOpen}
                     <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
                         <div aria-hidden="true" class="flex flex-col justify-between py-[7px]">{#each READ_WPM as _, i (i)}<span class="h-px w-1.5 bg-taupe4"></span>{/each}</div>
@@ -1265,6 +1346,37 @@
             <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button onclick={undo} disabled={!history.canUndo} aria-label="Undo" use:tip={'Undo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Undo /></button>
                 <button onclick={redo} disabled={!history.canRedo} aria-label="Redo" use:tip={'Redo'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 disabled:opacity-30 disabled:hover:bg-transparent"><Redo /></button>
+            </div>
+        {/if}
+        {#if view !== 'rally'}
+            <!-- Text appearance: under the mode button (and its helpers), in every mode; hidden in the rally view, which has its own size and speed -->
+            <div class="submenu flex w-full flex-col items-center gap-1 py-1">
+                <button
+                    onclick={() => (appearanceOpen = !appearanceOpen)}
+                    aria-label="Text appearance"
+                    aria-expanded={appearanceOpen}
+                    use:tip={'Text appearance'}
+                    class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe3 {appearanceOpen ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}"
+                >
+                    <FontFamily />
+                </button>
+                {#if appearanceOpen}
+                    <div transition:slide={{ duration: 200 }} class="flex w-full flex-col items-center gap-1">
+                        {#each APPEARANCE as a (a.id)}
+                            <button onclick={() => (appearanceSlider = appearanceSlider === a.id ? null : a.id)} aria-label={a.label} aria-expanded={appearanceSlider === a.id} use:tip={a.label} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe3 {appearanceSlider === a.id ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}">
+                                {#if a.id === 'size'}<TextHeight />{:else if a.id === 'line'}<LineSpacing />{:else if a.id === 'letter'}<LetterSpacing />{:else}<MarginLeft />{/if}
+                            </button>
+                            {#if appearanceSlider === a.id}
+                                <div transition:slide={{ duration: 200 }} class="flex items-stretch gap-0.5 py-1">
+                                    <input type="range" min="0" max={a.steps.length - 1} step="1" value={appearanceStep(a.id)} oninput={(e) => setAppearanceStep(a.id, +e.currentTarget.value)} aria-label={a.label} use:tip={a.label} class="rally-speed" style="height: 5.5rem; --p: {appearanceStep(a.id) / (a.steps.length - 1)}" />
+                                    <!-- the ticks sit on the slider's right, like a ruler: every other one shorter -->
+                                    <div aria-hidden="true" class="flex flex-col items-end justify-between py-[7px]">{#each a.steps as _, i (i)}<span class="h-px {i % 2 === 0 ? 'w-2' : 'w-1'} bg-taupe4"></span>{/each}</div>
+                                </div>
+                            {/if}
+                        {/each}
+                        <button onclick={resetAppearance} aria-label="Revert text appearance" use:tip={'Revert to how it was when you opened this text'} class="inline-flex items-center justify-center rounded-md p-1 text-xs text-dark hover:bg-taupe3">↺</button>
+                    </div>
+                {/if}
             </div>
         {/if}
     </nav>

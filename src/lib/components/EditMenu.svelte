@@ -47,10 +47,10 @@
 			const r = t.el.getBoundingClientRect();
 			const h = menuEl?.offsetHeight ?? 32;
 			const w = menuEl?.offsetWidth ?? 40;
-			// `inside`: stacked down the item's right-hand side, within its outline, so the pointer reaches it without leaving the item;
+			// `inside`: in a row in the left margin, outside the item, just left of its index (the grace period lets the pointer cross);
 			// otherwise above the item, aligned to its left edge (if there is no room above, overlapping its top edge)
 			pos = inside
-				? { top: Math.max(r.top + 4, 4), left: Math.max(4, Math.min(r.right - w - 4, window.innerWidth - w - 4)) }
+				? { top: Math.max(r.top, 4), left: Math.max(4, r.left - w - 8) }
 				: { top: Math.max(4, r.top - h), left: Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) };
 		});
 	});
@@ -76,7 +76,7 @@
 		tabindex="-1"
 		onpointerenter={() => hover.hold()}
 		onpointerleave={() => hover.leave()}
-		class="fixed z-40 flex {inside ? 'flex-col' : ''} items-center gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
+		class="fixed z-40 flex items-center gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
 		style="top: {pos.top}px; left: {pos.left}px"
 	>
 		{#if onexpand}

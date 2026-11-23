@@ -11,11 +11,10 @@
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import DropTip from '#lib/components/DropTip.svelte';
 	import MatterBubble from '#lib/components/MatterBubble.svelte';
-	import { DragDrop, locateGap, gapBox } from '#lib/utilities/dragDrop.svelte.js';
+	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
-	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 
@@ -121,12 +120,8 @@
 	const editHover = new EditHover();
 	const dd = new DragDrop();
 	dd.gapBar = true;
-	/** while dragging over a gap: the interstitial space, drawn as a taupe3 bar */
-	const dropBar = $derived.by(() => {
-		const d = dd.drop;
-		return d && (d.place === 'before' || d.place === 'after') ? gapBox({ id: d.id, place: d.place }, 8) : null;
-	});
-	const gap = new GapHover({ nudge: true });
+	dd.reach = 16; // the interstices are 16 to 24px wide: a drop in one finds the bubble beside it
+	const gap = new GapHover();
 
 	/**
 	 * Hovering the space between bubbles (or a bubble's thin edge) lights it magenta and
@@ -140,10 +135,9 @@
 		lastX = e.clientX;
 		lastY = e.clientY;
 		if (!oninject || dd.dragId || editing) return;
-		const zone = locateGap(e);
-		gap.set(zone, e);
-		if (zone) editHover.clear();
-		else if (ondelete && !editHover.target && e.target instanceof Element) {
+		// the interstices are elements of their own (see `gapEl`), which report the pointer themselves
+		if (e.target instanceof Element && e.target.closest('[data-gap]')) return;
+		if (ondelete && !editHover.target && e.target instanceof Element) {
 			const el = e.target.closest('[data-drop]');
 			if (el instanceof HTMLElement) editHover.enter({ id: el.dataset.drop ?? '', kind: el.dataset.kind === 'section' ? 'section' : 'paragraph', el });
 		}
@@ -238,10 +232,13 @@
 
 	/** @param {string} id */
 	const isCursor = (id) => (cursor ? cursor.id === id : id === firstId);
-	/** the magenta line of the interstice the cursor is on, drawn on the bubble it sits before
-	 * @param {string} id */
-	const cursorLine = (id) =>
-		cursor?.type === 'gap' && cursor.id === id ? gapLineClass(cursor.place ?? 'before', cursor.axis ?? 'x') : '';
+	/** whether an interstice shows its line: hovered, under the keyboard cursor, or where a drop would land
+	 * @param {string} id the bubble it is expressed on
+	 * @param {'before' | 'after'} place */
+	const gapLit = (id, place) =>
+		(gap.lit && gap.target?.id === id && gap.target.place === place) ||
+		(cursor?.type === 'gap' && cursor.id === id && (cursor.place ?? 'before') === place) ||
+		(dd.drop?.id === id && dd.drop.place === place);
 
 	/** Keep a bubble that is coming into focus centred in its row (once it has finished resizing).
 	 * @param {Element} el */
@@ -553,17 +550,44 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="m-2 flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-2 py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {cursorLine(node.paragraph.id)} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || gap.classes(node.paragraph.id) || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
+		class="{stacked ? 'mx-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
 			<p
 				use:editable={{ text: node.paragraph.text, caret: editCaret, onfinish: (t) => finishEdit(node.paragraph.id, t), onenter: (r) => onnewitem?.(node.paragraph.id, r) }}
-				class="flex-1 whitespace-pre-wrap outline-none"
+				class="para-text flex-1 whitespace-pre-wrap outline-none"
 			></p>
 		{:else}
 			{@const withNotes = node.paragraph.text ? renderFootnoteMarks(node.paragraph.text, defs, node.paragraph.id) : null}
-			<p class="md flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeEnds(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainEnds(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+			<p class="md para-text flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeEnds(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainEnds(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+		{/if}
+	</div>
+{/snippet}
+
+<!-- An interstice: the space between two bubbles (or before the first, after the last) is an element of its own. It is where hovering
+     offers the inject menu and where a drop lands, it draws its own straight line, and it is the spacing between the bubbles. -->
+{#snippet gapEl(/** @type {string} */ id, /** @type {'before' | 'after'} */ place, /** @type {'x' | 'y'} */ axis)}
+	<div
+		data-gap
+		role="presentation"
+		onpointerenter={(e) => {
+			if (!oninject || dd.dragId || editing || !pointerMoved(e)) return;
+			editHover.clear();
+			// the menu is tethered to the line: it slides along it with the pointer
+			gap.set({ id, place, axis, at: gap.tether(e.currentTarget, e, axis) }, e);
+		}}
+		onpointermove={(e) => {
+			if (gap.target?.id !== id || gap.target.place !== place) return;
+			const { x, y } = gap.tether(e.currentTarget, e, axis);
+			gap.x = x;
+			gap.y = y;
+		}}
+		onpointerleave={(e) => oninject && pointerMoved(e) && gap.leave()}
+		class="relative shrink-0 {axis === 'x' ? 'w-6 self-stretch' : 'h-4 w-full'}"
+	>
+		{#if gapLit(id, place)}
+			<div class="pointer-events-none absolute rounded-full bg-taupe3 {axis === 'x' ? 'inset-y-0 left-1/2 w-1.5 -translate-x-1/2' : 'inset-x-0 top-1/2 h-1.5 -translate-y-1/2'}"></div>
 		{/if}
 	</div>
 {/snippet}
@@ -592,17 +616,22 @@
 			{'#'.repeat(lvl)}
 		</div>
 
-		<div class="flex h-full items-stretch gap-2 py-2 pr-2">
+		<div class="flex h-full items-stretch py-2 pr-2">
 			<!-- front matter: small bubbles, first in the top row -->
 			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
-				<div data-front class="flex h-full min-h-0 w-86 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
+				<div data-front class="mx-2 flex h-full min-h-0 w-86 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
-						{#if node.kind === 'paragraph'}{@render paragraphBubble(node, true)}{/if}
+						{#if node.kind === 'paragraph'}
+							{#if oninject}{@render gapEl(node.paragraph.id, 'before', 'y')}{/if}
+							{@render paragraphBubble(node, true)}
+						{/if}
 					{/each}
+					{#if oninject}{@const last = front[front.length - 1]}{#if last.kind === 'paragraph'}{@render gapEl(last.paragraph.id, 'after', 'y')}{/if}{/if}
 				</div>
 			{/if}
 			{#each r.nodes.slice(front.length) as node (node.kind === 'section' ? node.id : node.paragraph.id)}
+				{#if oninject}{@render gapEl(node.kind === 'section' ? node.id : node.paragraph.id, 'before', 'x')}{/if}
 				{#if node.kind === 'section'}
 					{@const isOpen = selected[d] === node.id}
 					{@const t = splitTitle(node.title)}
@@ -638,7 +667,7 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="m-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {cursorLine(node.id)} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || gap.classes(node.id) || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
+						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -672,6 +701,7 @@
 			{:else}
 				{#if !front.length}<p class="self-center text-sm text-gray-500">{r.parent ? 'This section is empty.' : empty}</p>{/if}
 			{/each}
+			{#if oninject && r.nodes.length > front.length}{@const last = r.nodes[r.nodes.length - 1]}{@render gapEl(last.kind === 'section' ? last.id : last.paragraph.id, 'after', 'x')}{/if}
 			<!-- back matter: small bubbles, last in the top row -->
 			{#if d === 0 && matter}{#each matter.back as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 		</div>
@@ -700,12 +730,6 @@
 
 {#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
-{#if dropBar}
-	{@const vertical = dropBar.width > dropBar.height}
-	<div class="pointer-events-none fixed z-40" style="left: {dropBar.left}px; top: {dropBar.top}px; width: {dropBar.width}px; height: {dropBar.height}px">
-		<div class="absolute rounded-full bg-taupe3 {vertical ? 'inset-x-0 top-1/2 h-1.5 -translate-y-1/2' : 'inset-y-0 left-1/2 w-1.5 -translate-x-1/2'}"></div>
-	</div>
-{/if}
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
 <!-- svelte-ignore a11y_no_static_element_interactions -->

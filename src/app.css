@@ -181,6 +181,8 @@ body {
 :has(> .sent-end) { text-align: left; } /* the body sentences stay left-aligned, even in the rally's centred bubbles */
 /* the rally's bubbles hold the body sentences further in from the bubble's edge than the first and last */
 .rally-chunk .sent-body { display: block; padding: 0 1.25em; }
+/* the linear view: the sentences between the emphasised first and last are indented past where the emphasised text starts (that is 0.6em: 0.5em of their own, larger, size) */
+.ends-aligned .sent-body { display: block; padding-left: 1.4em; }
 .sent-end {
   display: block;
   text-align: justify;
@@ -192,11 +194,11 @@ body {
   box-shadow: 0 0 0.5em 0.2em color-mix(in srgb, var(--color-taupe3) 30%, transparent);
 }
 .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { font-weight: 700; line-height: 1.25; margin: 0; }
-.md h1 { font-size: 1.875rem; }
-.md h2 { font-size: 1.5rem; }
-.md h3 { font-size: 1.25rem; }
-.md h4 { font-size: 1.125rem; }
-.md h5, .md h6 { font-size: 1rem; }
+.md h1 { font-size: calc(1.875rem * var(--z, 1)); }
+.md h2 { font-size: calc(1.5rem * var(--z, 1)); }
+.md h3 { font-size: calc(1.25rem * var(--z, 1)); }
+.md h4 { font-size: calc(1.125rem * var(--z, 1)); }
+.md h5, .md h6 { font-size: calc(1rem * var(--z, 1)); }
 .md a { color: var(--color-violet); text-decoration: underline; }
 .md img { max-width: 100%; height: auto; }
 .md ul { list-style: disc; padding-left: 1.5rem; }
@@ -330,3 +332,9 @@ input[type='range'].form-range::-moz-range-thumb {
   border: 2px solid var(--color-taupe1);
   box-sizing: border-box;
 }
+
+/* Text appearance (the vertical menu's settings, set as variables on .appearance): size, line spacing and letter spacing reach
+   paragraph text only (.para-text), never section titles, headings, tooltips or controls. A size is relative to the text's own. */
+.appearance .para-text { font-size: calc(1em * var(--ta-size, 1)); letter-spacing: var(--ta-ls, 0); }
+/* line spacing only once it has been moved off its default, so every view keeps its own until then */
+.appearance.ta-line .para-text, .appearance.ta-line .para-text * { line-height: var(--ta-lh); }

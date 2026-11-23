@@ -1,5 +1,8 @@
-// Solarized accent colours from the theme (src/app.css), in order
-export const ACCENTS = ['yellow', 'orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green'];
+// Solarized accent colours from the theme (src/app.css), in order. Yellow is not among them: it is kept for front and back matter.
+export const ACCENTS = ['orange', 'red', 'magenta', 'violet', 'blue', 'cyan', 'green'];
+
+/** the colour of front and back matter, in every view (and of nothing else) */
+export const MATTER_COLOR = 'var(--color-yellow)';
 
 /**
  * Colour for a section: the top-level section's accent (cycling through the

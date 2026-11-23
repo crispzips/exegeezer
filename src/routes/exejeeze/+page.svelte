@@ -7,7 +7,7 @@
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
     import { page } from '$app/state';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, Search, FontFamily, LineSpacing, LetterSpacing, MarginLeft, MarginTop, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus, Plus } from '@boxicons/svelte';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, CompassTool, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, Search, FontFamily, LineSpacing, LetterSpacing, MarginLeft, MarginTop, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus, Plus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -31,7 +31,7 @@
     import OpenSourcesDialog from '#lib/components/OpenSourcesDialog.svelte';
     import { History } from '#lib/utilities/history.svelte.js';
     import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
-    import { applyDrop, danglingCount, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
+    import { appendToSection, moveToGap, sectionBlocks, applyDrop, danglingCount, describeSection, gapIndex, insertAt, moveItem, removeParagraph, removeSection, renameSection } from '#lib/utilities/editText.js';
 
     /** the layout's data: `user` is the signed-in user, or null (then the app shows the example text and nothing else works) */
     let { data } = $props();
@@ -500,19 +500,15 @@
         if (!(await activate(next.key, { closing: true })) && !tabs.find((x) => x.key === next.key)) await addTab();
     }
 
-    /** The X in the title bar: close this text's tab (the text stays saved). */
-    function closeText() {
-        if (activeKey) closeTab(activeKey);
-    }
-
     /** the stored tabs: which texts were open, with each one's view and focus, and which was active */
     function readStoredTabs() {
         try {
-            const saved = JSON.parse(localStorage.getItem(REMEMBER_TABS) ?? '{}');
+            const raw = localStorage.getItem(REMEMBER_TABS);
+            const saved = JSON.parse(raw ?? '{}');
             const list = Array.isArray(saved.tabs) ? saved.tabs.filter((/** @type {any} */ t) => t && typeof t.textId === 'string') : [];
-            return { tabs: /** @type {{ textId: string, title?: string, view?: string, focusId?: string | null }[]} */ (list), active: typeof saved.active === 'string' ? saved.active : null };
+            return { tabs: /** @type {{ textId: string, title?: string, view?: string, focusId?: string | null }[]} */ (list), active: typeof saved.active === 'string' ? saved.active : null, /** whether tabs were ever remembered (if so, an empty list means they were all closed on purpose) */ known: raw !== null };
         } catch {
-            return { tabs: [], active: null };
+            return { tabs: [], active: null, known: false };
         }
     }
 
@@ -534,7 +530,7 @@
             .map((s) => newTab({ textId: s.textId, title: byId.get(s.textId).title, view: VIEWS.includes(/** @type {any} */ (s.view)) ? /** @type {any} */ (s.view) : view, focusId: s.focusId ?? null }));
 
         const startNew = params.has('new');
-        const wanted = params.get('text') ?? (startNew ? null : (stored.active ?? rememberedText()));
+        const wanted = params.get('text') ?? (startNew ? null : (stored.active ?? (stored.known ? null : rememberedText())));
         /** @type {Tab | undefined} */
         let pick = wanted && byId.has(wanted) ? tabs.find((t) => t.textId === wanted) : undefined;
         if (!pick && wanted && byId.has(wanted)) {
@@ -542,7 +538,7 @@
             else notify('Ten tabs are open, the most there can be. Close one to open another text.');
         }
         if (!pick && startNew && tabs.length < MAX_TABS) tabs = [...tabs, (pick = blankTab())];
-        if (!pick && !startNew && !tabs.length && texts.length) tabs = [(pick = newTab({ textId: texts[0].id, title: texts[0].title }))];
+        if (!pick && !startNew && !stored.known && !tabs.length && texts.length) tabs = [(pick = newTab({ textId: texts[0].id, title: texts[0].title }))];
         pick ??= tabs.find((t) => t.textId === stored.active) ?? tabs[0];
         if (pick && (await activate(pick.key))) return;
         if (pick) tabs = tabs.filter((t) => t.key !== pick.key);
@@ -708,6 +704,36 @@
     function moveByDrag(drop) {
         commit(applyDrop(mainText, drop, view === 'linear'));
     }
+
+    /**
+     * Something dragged on the map. Paragraphs dropped on a section go at its end; a section dropped on a section is joined
+     * to the end of it (see applyDrop); either dropped in a gap lands there.
+     * @param {{ kind: 'paragraphs' | 'section', ids: string[], into?: string, before?: string, after?: string, parentId?: string | null }} move
+     */
+    function moveFromMap({ kind, ids, into, before, after, parentId }) {
+        /** @type {typeof mainText} */
+        let next = mainText;
+        if (into !== undefined && kind === 'section') {
+            // each section in turn is joined to the end of the target, in the order of the text (one inside another picked goes with it)
+            const heads = sectionBlocks(mainText, ids).map((b) => b[0].id);
+            for (const id of heads) next = applyDrop(next, { id, targetId: into, place: 'merge-after' }, false);
+        } else if (into !== undefined) next = appendToSection(mainText, ids, into);
+        else next = moveToGap(mainText, ids, { before, after }, mainText.find((p) => p.id === parentId)?.level ?? 0);
+        if (next !== mainText && commit(next)) mapChanged = true;
+    }
+
+    /** @param {{ id: string, kind: 'front' | 'back' | null }} change a top-level section made front matter, back matter, or neither, on the map */
+    function setMatter({ id, kind }) {
+        if (commit(mainText.map((p) => (p.id === id ? { ...p, frontmatter: kind === 'front', backmatter: kind === 'back' } : p)))) mapChanged = true;
+    }
+
+    /** the map was used to rearrange the text: when it closes, the changes stay and undo / redo start afresh */
+    let mapChanged = false;
+    $effect(() => {
+        if (mapOpen || !mapChanged) return;
+        mapChanged = false;
+        history.clear();
+    });
 
     /** @param {{ id: string, text: string, title?: string, description?: string }} edit only the fields given change */
     function editParagraph({ id, ...fields }) {
@@ -1447,10 +1473,10 @@
         <!-- the tabs: up to ten texts open at once (only the three most recently used keep their content in memory; the others reload when opened) -->
         {#if authed && tabs.length}
             <div class="relative shrink-0">
-            <div role="tablist" aria-label="Open texts" class="flex items-end gap-0.5 overflow-x-auto border-b border-taupe3 bg-taupe2 px-3 pt-1.5">
+            <div role="tablist" aria-label="Open texts" class="flex items-end gap-0.5 overflow-x-auto bg-taupe2 bg-[linear-gradient(var(--color-taupe3),var(--color-taupe3))] bg-[length:100%_1px] bg-bottom bg-no-repeat px-3 pt-1.5">
                 {#each tabs as t (t.key)}
                     {@const on = t.key === activeKey}
-                    <div data-tab={t.key} data-loaded={t.items !== null || on} class="flex max-w-56 min-w-0 shrink-0 items-center rounded-t-md border border-b-0 {on ? 'border-violet bg-taupe1 text-dark' : 'border-taupe3 bg-taupe2 text-grey3 hover:bg-taupe1'}">
+                    <div data-tab={t.key} data-loaded={t.items !== null || on} class="flex max-w-56 min-w-0 shrink-0 items-center rounded-t-md border border-taupe3 {on ? 'border-b-transparent bg-taupe1 text-dark' : 'bg-taupe2 text-grey3 hover:bg-taupe1'}">
                         <button role="tab" aria-selected={on} onclick={() => activate(t.key)} use:tip={on ? tabLabel(t) : t.items === null ? `${tabLabel(t)} (not in memory: it loads when opened)` : tabLabel(t)} data-tip-place="below" class="min-w-0 flex-1 truncate py-1 pr-1 pl-3 text-left text-sm {t.items === null && !on ? 'italic' : ''} {on ? 'font-semibold' : ''}">{tabLabel(t)}</button>
                         <button onclick={() => closeTab(t.key)} aria-label="Close tab" use:tip={'Close tab'} data-tip-place="below" class="mr-1 inline-flex shrink-0 items-center justify-center rounded-md p-0.5 hover:bg-taupe2"><X width={16} height={16} /></button>
                     </div>
@@ -1482,8 +1508,6 @@
                     <button role="menuitem" onclick={() => requestWhole('delete')} aria-label="Delete text" use:tip={'Delete text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><Trash /></button>
                     <button role="menuitem" onclick={() => requestWhole('wipe')} aria-label="Wipe clean" use:tip={'Wipe clean'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><ToiletRoll /></button>
                 </div>
-                <!-- exit this text: empties the viewer (the text stays saved) -->
-                <button onclick={closeText} aria-label="Close text" use:tip={'Close text'} data-tip-place="below" class="ml-auto inline-flex shrink-0 items-center justify-center rounded-md p-1 hover:bg-taupe2"><X /></button>
             {/if}
             {#if !authed}
                 <span class="ml-auto flex shrink-0 items-center gap-3 text-sm text-grey3">
@@ -1563,7 +1587,7 @@
             use:tip={'Map'}
             class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
         >
-            <MapIcon />
+            {#if editing}<CompassTool />{:else}<MapIcon />{/if}
         </button>
 
         <!-- View toggle: each click moves to the next view, the icon wiping across like the mode button's -->
@@ -1707,7 +1731,7 @@
 <CommentDialog bind:request={commentRequest} />
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors, publicized }) => ((textTitle = title), (textAuthors = authors), (textPublicized = publicized))} />
-<MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
+<MapModal bind:open={mapOpen} writing={editing} onmove={editing ? moveFromMap : undefined} onmatter={editing ? setMatter : undefined} onundo={editing ? undo : undefined} onredo={editing ? redo : undefined} canundo={history.canUndo} canredo={history.canRedo} title={textTitle} paragraphs={editing ? mainText : shownText} onnavigate={goToSection} />
 <OwnTextsDialog bind:open={ownTextsOpen} onchoose={onOwnTextChosen} />
 <OpenSourcesDialog bind:open={openSourcesOpen} onchoose={onWebTextChosen} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />

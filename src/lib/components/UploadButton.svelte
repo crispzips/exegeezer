@@ -6,8 +6,8 @@
 	/** @type {HTMLInputElement | undefined} */
 	let fileInput;
 
-	/** @type {{ uploadedfiles?: { name: string, text: string }[], onloaded?: () => void }} */
-	let { uploadedfiles = $bindable([]), onloaded } = $props();
+	/** @type {{ uploadedfiles?: { name: string, text: string }[], onloaded?: () => void, onclick?: () => void, oncancel?: () => void, small?: boolean, active?: boolean }} */
+	let { uploadedfiles = $bindable([]), onloaded, onclick, oncancel, small = false, active = false } = $props();
 
 	/** @param {Event & { currentTarget: HTMLInputElement }} e */
 	async function onFilesChosen(e) {
@@ -33,9 +33,10 @@
 	type="file"
 	accept=".txt,.md,.xml,.docx,text/*"
 	onchange={onFilesChosen}
+	oncancel={() => oncancel?.()}
 	class="hidden"
 />
 
-<SourceButton name="Browse Computer" onclick={() => fileInput?.click()}>
-	<Computer width={40} height={40} />
+<SourceButton name="Browse Computer" onclick={() => (onclick?.(), fileInput?.click())} {small} {active}>
+	<Computer width={small ? 22 : 40} height={small ? 22 : 40} />
 </SourceButton>

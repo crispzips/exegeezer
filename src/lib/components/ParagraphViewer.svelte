@@ -34,7 +34,9 @@
 	 *   matter?: { front: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[], back: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] }[] },
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void,
-	 *   zoom?: number
+	 *   zoom?: number,
+	 *   jumpToId?: string | null,
+	 *   emphasizeEnds?: boolean
 	 * }}
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
@@ -65,9 +67,9 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1 } = $props();
-	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger */
-	const reading = $derived(!ondelete);
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1, jumpToId = null, emphasizeEnds: setOffEnds = true } = $props();
+	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger (unless `emphasizeEnds` is false: the import preview) */
+	const reading = $derived(!ondelete && setOffEnds);
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -224,6 +226,22 @@
 			cursor = { type: (para?.level ?? 0) > 0 ? 'section' : 'paragraph', id };
 			el.scrollIntoView({ block: 'center' });
 			el.focus({ preventScroll: true });
+		});
+	});
+
+	// ---- Jump to: the id of a section header (or of a front or back matter section) the view jumps to when it changes ----
+	$effect(() => {
+		const id = jumpToId;
+		void paragraphs.length;
+		if (!id) return;
+		tick().then(() => {
+			if (!mainEl || !mainContent) return;
+			if (matter?.front.some((m) => m.id === id)) return void mainEl.scrollTo({ top: 0, behavior: 'instant' });
+			if (matter?.back.some((m) => m.id === id)) return void mainEl.scrollTo({ top: mainEl.scrollHeight, behavior: 'instant' });
+			const el = mainContent.querySelector(`[data-para="${CSS.escape(id)}"]`);
+			if (!(el instanceof HTMLElement)) return;
+			const pad = parseFloat(getComputedStyle(mainContent).paddingTop) || 0;
+			mainEl.scrollTo({ top: Math.max(0, el.getBoundingClientRect().top - mainEl.getBoundingClientRect().top + mainEl.scrollTop - pad), behavior: 'instant' });
 		});
 	});
 
@@ -760,7 +778,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded py-1.5 pl-1 pr-1 {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}

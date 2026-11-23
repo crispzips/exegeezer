@@ -71,14 +71,10 @@
             const isMarkdown = /\.(md|markdown)$/i.test(latest.name);
             previewMarkdown = isMarkdown;
             paragraphs = splitParagraphs(isMarkdown ? cleanMarkdown(latest.text) : latest.text);
-            // Headers present but text above the first one: ask what to do with it
-            const hasHeaders = paragraphs.some((p) => p.level > 0);
-            // Text above the first header goes into a Frontmatter section (chosen as front matter
-            // in the next step); then the front and back matter question
-            if (hasHeaders) {
-                if (paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
-                askMatter();
-            }
+            showLoadModal();
+            // Text above the first header goes into a Frontmatter section, marked as front matter to begin with
+            // (the map beside the preview is where front and back matter are chosen)
+            if (paragraphs.some((p) => p.level > 0) && paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
         }
     }
 
@@ -94,11 +90,9 @@
         loadDetails = t.details ?? [];
         previewMarkdown = true;
         paragraphs = splitParagraphs(cleanMarkdown(t.markdown));
-        // as with a file: text above the first header goes into a Frontmatter section, then the front and back matter question
-        if (paragraphs.some((p) => p.level > 0)) {
-            if (paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
-            askMatter();
-        }
+        showLoadModal();
+        // as with a file: text above the first header goes into a Frontmatter section
+        if (paragraphs.some((p) => p.level > 0) && paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
     }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
@@ -111,6 +105,7 @@
         previewMarkdown = saved.items.some((p) => p.level > 0);
         // fresh ids, so the preview shares nothing with the text it came from
         paragraphs = saved.items.map((p, i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
+        showLoadModal();
     }
 
     /** whether the text loaded in the preview is Markdown */
@@ -120,6 +115,8 @@
     /** the preview as the linear view shows it: front and back matter (the Frontmatter section above all) are folded into bubbles above and below the text */
     const previewShown = $derived(withoutMatter(paragraphs));
     const previewMatter = $derived(matterSections(paragraphs));
+    /** whether the loaded text has sections to mark as front or back matter (the preview then has the map beside it) */
+    const previewHasSections = $derived(paragraphs.some((p) => p.level > 0));
 
     /**
      * Put the text above the first header into a section called "Frontmatter".
@@ -140,12 +137,10 @@
         return [header, ...list].map((p, i) => ({ ...p, originalIndex: i }));
     }
 
-    // ---- Front and back matter question: after import, which top-level sections (if any) are which ----
-    let matterOpen = $state(false);
-
-    function askMatter() {
-        if (paragraphs.some((p) => p.level > 0)) matterOpen = true;
-    }
+    // ---- Front and back matter: chosen on the map beside the preview, which marks the sections as it is clicked ----
+    /** the section the map is hovered over: the preview jumps to it */
+    /** @type {string | null} */
+    let previewSpot = $state(null);
 
     /** @param {{ front: string[], back: string[] }} choice */
     function applyMatter({ front, back }) {
@@ -595,12 +590,54 @@
     }
 
     /** where the "Seed a text" button is: not clicked yet, or offering heading levels (a text begins with a section: paragraphs have to be inside sections) */
-    /** @type {'idle' | 'choose' | 'level'} */
+    /** @type {'idle' | 'choose' | 'level' | 'existing'} */
     let seedStep = $state('idle');
     /** the Load Text modal was opened by seeding (a new text from an existing one): its button seeds a text instead of injecting into this one */
     let seeding = $state(false);
     /** what the seed area shows: with no text loaded it starts as the "Seed a text" button; a loaded text that is merely blank goes straight to the choices */
-    const seedPhase = $derived(seedStep === 'idle' && textId ? 'level' : seedStep);
+    /** the first choice made in the tree of buttons with no text open: Seed a text, Load a text, or none yet */
+    /** @type {'' | 'seed' | 'load'} */
+    let beginRoot = $state('');
+    /** the source chosen in the last layer of that tree (it opens a modal, so it stays highlighted beneath it) */
+    /** @type {'' | 'computer' | 'own' | 'web'} */
+    let beginSource = $state('');
+    /** @param {'seed' | 'load'} root */
+    function chooseRoot(root) {
+        beginRoot = root;
+        seedStep = 'idle';
+        beginSource = '';
+        clearLoaded();
+    }
+    /** @param {'level' | 'existing'} step */
+    function chooseSeedKind(step) {
+        seedStep = step;
+        beginSource = '';
+        clearLoaded();
+    }
+    /** a choice made again starts the loading over: nothing left from an earlier try waits in the Load Text modal */
+    function clearLoaded() {
+        injectGap = null;
+        paragraphs = [];
+        uploadedfiles = [];
+    }
+    /** @param {'computer'} source @param {boolean} forSeeding */
+    function pickSource(source, forSeeding) {
+        clearLoaded();
+        beginSource = source;
+        seeding = forSeeding;
+    }
+    // a picker closed without choosing a text: the button that opened it is deselected (once a text is chosen the Load Text modal takes over, and its closing deselects)
+    $effect(() => {
+        if (beginSource && beginSource !== 'computer' && !ownTextsOpen && !openSourcesOpen && paragraphs.length === 0) beginSource = '';
+    });
+    // once there is a text, the tree starts over next time
+    $effect(() => {
+        if (!noText) {
+            beginRoot = '';
+            beginSource = '';
+            seedStep = 'idle';
+        }
+    });
     /**
      * The heading levels a new section may have: 1 up to one deeper than the text already goes
      * (so the first section is a heading 1 and no needless depth is created).
@@ -610,14 +647,6 @@
     );
 
     /** Seed from an existing text: the Load Text process (any source), ending in a new text instead of an injection. */
-    function seedFromExisting() {
-        if (!authed) return;
-        seeding = true;
-        injectGap = null;
-        paragraphs = [];
-        uploadedfiles = [];
-        dialogEl?.showModal();
-    }
 
     /**
      * Make a new text from the loaded text (the paragraphs in the preview) and open it: a draft, private until its owner says
@@ -784,12 +813,18 @@
     /** @type {HTMLDialogElement | undefined} */
     let dialogEl;
 
+    /** the Load Text modal, opened when a text has been chosen in the tree of buttons (the pickers open over the tree; this one shows what they chose) */
+    function showLoadModal() {
+        if (dialogEl && !dialogEl.open) dialogEl.showModal();
+    }
+
     function openModal() {
         seeding = false;
-        if (!authed || noText) return; // with no text there is nothing to load into: the Seed a text button starts one
+        if (!authed) return;
         injectGap = null;
         dialogEl?.showModal();
     }
+
 
     /** @param {MouseEvent} e */
     function onDialogClick(e) {
@@ -800,6 +835,8 @@
 
     function onModalClosed() {
         seeding = false;
+        beginSource = '';
+        previewSpot = null;
         injectOpen = false;
         injectGap = null;
     }
@@ -827,7 +864,7 @@
         }
         const replacing = injectGap === null && (mainText.length === 0 || where === 'replace');
         // one of the user's own texts only ever brings its body: it goes into the current text, which keeps its title and settings
-        const makesNewText = replacing && loadSource !== 'own';
+        const makesNewText = replacing && (loadSource !== 'own' || noText); // (with no text open there is nothing for an own text's body to go into: it makes the new text)
         // Copy with fresh ids so keys stay unique if the same text is injected twice
         const added = paragraphs.map((/** @type {any} */ p) => ({ id: crypto.randomUUID(), originalIndex: 0, text: p.text, level: p.level, ...(p.frontmatter ? { frontmatter: true } : {}), ...(p.backmatter ? { backmatter: true } : {}), ...(p.title ? { title: p.title } : {}), ...(p.description ? { description: p.description } : {}) }));
         let combined =
@@ -1185,31 +1222,17 @@
         {/if}
         <div class="relative min-h-0 flex-1">
         {#if noText && authed && !(view === 'rally' && rallyStarted)}
-            <!-- nothing is loaded: one button to begin (in rally view it opens the rally's setup) -->
-            <div class="pointer-events-none absolute inset-x-0 top-0 bottom-1/3 z-10 flex items-center justify-center">
-                {#if view === 'rally'}
-                    <button onclick={() => (rallySetupOpen = true)} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
-                        <Sapling class="text-taupe1!" /> Seed a text
-                    </button>
-                {:else if seedPhase === 'level'}
-                    <!-- the heading levels on offer: only as deep as the text already goes, plus one -->
+            <!-- nothing is loaded: a tree of round buttons to begin. Each choice opens the next layer beneath it (the layers stay, with the choices made in violet) until a modal has to open, which appears over the tree -->
+            <div class="pointer-events-none absolute inset-x-0 top-0 bottom-0 z-10 flex items-start justify-center overflow-y-auto pt-[12%]">
+                {#if textId && view !== 'rally'}
+                    <!-- a blank text is open: only its first heading level is left to choose -->
                     <div class="pointer-events-auto flex items-center gap-5">
                         {#each seedLevels as n (n)}
-                            <button onclick={() => seedText(n)} aria-label="Heading {n}" use:tip={`Heading ${n}`} data-tip-place="below" class="pop-in flex h-16 w-16 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2">
-                                <span class="text-3xl leading-none font-semibold" style="font-family: Georgia, serif">{'#'.repeat(n)}</span>
-                            </button>
+                            <SourceButton name="Heading {n}" onclick={() => seedText(n)}><span class="flex h-10 w-10 items-center justify-center text-3xl leading-none font-semibold" style="font-family: Georgia, serif">{'#'.repeat(n)}</span></SourceButton>
                         {/each}
                     </div>
-                {:else if seedPhase === 'choose'}
-                    <!-- a fresh text, or one seeded from an existing text -->
-                    <div class="pointer-events-auto flex items-center gap-8">
-                        <button onclick={() => (seedStep = 'level')} aria-label="Fresh text" use:tip={'A fresh text'} data-tip-place="below" class="pop-in flex h-20 w-20 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"><Clipboard width={40} height={40} /></button>
-                        <button onclick={seedFromExisting} aria-label="Seed from an existing text" use:tip={'Seed from an existing text'} data-tip-place="below" class="pop-in flex h-20 w-20 items-center justify-center rounded-full border border-taupe3 bg-taupe1 text-taupe5 [box-shadow:0_3px_3px_var(--color-taupe4)] hover:bg-taupe2"><ClipboardPlus width={40} height={40} /></button>
-                    </div>
                 {:else}
-                    <button onclick={() => (seedStep = 'choose')} class="pop-in pointer-events-auto inline-flex items-center gap-2 rounded-md bg-violet px-5 py-3 text-lg font-medium text-taupe1 hover:bg-violet/90">
-                        <Sapling class="text-taupe1!" /> Seed a text
-                    </button>
+                    {@render beginTree()}
                 {/if}
             </div>
         {/if}
@@ -1411,10 +1434,47 @@
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors, publicized }) => ((textTitle = title), (textAuthors = authors), (textPublicized = publicized))} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
-<MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <OwnTextsDialog bind:open={ownTextsOpen} onchoose={onOwnTextChosen} />
 <OpenSourcesDialog bind:open={openSourcesOpen} onchoose={onWebTextChosen} />
 <EditModal bind:request={editRequest} list={mainText} onsave={saveEdit} />
+
+<!-- With no text open: the tree of round buttons. Layer 1: Seed a text, Load a text. Seed a text leads to a fresh text (then its first heading level) or seeding from an existing text
+     (then where it comes from); Load a text leads to your own texts or other exegeezers' texts. Each layer stays visible beneath the one above it, the choices made in violet. -->
+{#snippet beginTree()}
+    <div class="pointer-events-auto flex flex-col items-center gap-14">
+        <div class="pop-in flex items-center gap-6">
+            <SourceButton name="Seed a text or commentary" active={beginRoot === 'seed'} onclick={() => (view === 'rally' ? (rallySetupOpen = true) : chooseRoot('seed'))}><Sapling width={36} height={36} /></SourceButton>
+            <SourceButton name="Load a text" active={beginRoot === 'load'} onclick={() => chooseRoot('load')}><ArrowOutDownCircleHalf width={36} height={36} /></SourceButton>
+        </div>
+
+        {#if beginRoot === 'seed'}
+            <div class="pop-in flex items-center gap-6">
+                <SourceButton name="A fresh text" active={seedStep === 'level'} onclick={() => chooseSeedKind('level')}><Clipboard width={36} height={36} /></SourceButton>
+                <SourceButton name="Seed from an existing text" active={seedStep === 'existing'} onclick={() => chooseSeedKind('existing')}><ClipboardPlus width={36} height={36} /></SourceButton>
+            </div>
+            {#if seedStep === 'level'}
+                <div class="pop-in flex items-center gap-6">
+                    {#each seedLevels as n (n)}
+                        <SourceButton name="Heading {n}" onclick={() => seedText(n)}><span class="flex h-9 w-9 items-center justify-center text-3xl leading-none font-semibold" style="font-family: Georgia, serif">{'#'.repeat(n)}</span></SourceButton>
+                    {/each}
+                </div>
+            {:else if seedStep === 'existing'}
+                <div class="pop-in flex items-center gap-6">
+                    <UploadButton bind:uploadedfiles onclick={() => pickSource('computer', true)} oncancel={() => (beginSource = '')} onloaded={onFileLoaded} active={beginSource === 'computer'} />
+                    <SourceButton name="From Your Texts" active={beginSource === 'own'} onclick={() => (clearLoaded(), (beginSource = 'own'), (seeding = true), (ownTextsOpen = true))}><Swatch width={36} height={36} /></SourceButton>
+                    <SourceButton name="From Open Libraries" active={beginSource === 'web'} onclick={() => (clearLoaded(), (beginSource = 'web'), (seeding = true), (openSourcesOpen = true))}><GlobeAlt2 width={36} height={36} /></SourceButton>
+                    <SourceButton name="From Other Exegeezers"><Mesh width={36} height={36} /></SourceButton>
+                </div>
+            {/if}
+        {:else if beginRoot === 'load'}
+            <!-- with no text open, only your own texts and other exegeezers' texts: a computer file or the web comes in as content for a text that exists -->
+            <div class="pop-in flex items-center gap-6">
+                <SourceButton name="From Your Texts" active={beginSource === 'own'} onclick={() => (clearLoaded(), (beginSource = 'own'), (seeding = false), (ownTextsOpen = true))}><Swatch width={36} height={36} /></SourceButton>
+                <SourceButton name="From Other Exegeezers"><Mesh width={36} height={36} /></SourceButton>
+            </div>
+        {/if}
+    </div>
+{/snippet}
 
 <!-- Load Text modal -->
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -1422,16 +1482,21 @@
     bind:this={dialogEl}
     onclick={onDialogClick}
     onclose={onModalClosed}
-    class="relative m-auto {paragraphs.length === 0 ? 'h-64 w-[min(92vw,26rem)]' : 'h-[80vh] w-[min(92vw,64rem)]'} overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
+    class="relative m-auto {paragraphs.length === 0 ? 'h-64 w-[min(92vw,26rem)]' : previewHasSections ? 'h-[80vh] w-[min(94vw,88rem)]' : 'h-[80vh] w-[min(92vw,64rem)]'} overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
     <div class="flex shrink-0 items-start justify-between">
         <!-- Load sources: each is its own button, centered until a text is loaded, then top-left -->
         <div class={paragraphs.length === 0 ? 'pointer-events-none absolute inset-x-0 top-1/3 z-40 flex -translate-y-1/2 justify-center' : 'inline-block'}>
             <div class="pointer-events-auto relative z-50 inline-flex gap-5">
-                <UploadButton bind:uploadedfiles onloaded={onFileLoaded} />
-                <SourceButton name="From Your Texts" onclick={() => (ownTextsOpen = true)}><Swatch width={40} height={40} /></SourceButton>
-                <SourceButton name="From Open Libraries" onclick={() => (openSourcesOpen = true)}><GlobeAlt2 width={40} height={40} /></SourceButton>
-                <SourceButton name="From Other Exegeezers"><Mesh width={40} height={40} /></SourceButton>
+                <!-- a computer file or the web comes in as content for a text that already exists (or to seed a new one), so with no text open only your own texts and other exegeezers' texts are offered -->
+                {#if !noText || seeding}
+                <UploadButton bind:uploadedfiles onloaded={onFileLoaded} small={paragraphs.length > 0} active={paragraphs.length > 0 && loadSource === 'computer'} />
+                {/if}
+                <SourceButton name="From Your Texts" onclick={() => (ownTextsOpen = true)} small={paragraphs.length > 0} active={paragraphs.length > 0 && loadSource === 'own'}><Swatch width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
+                {#if !noText || seeding}
+                <SourceButton name="From Open Libraries" onclick={() => (openSourcesOpen = true)} small={paragraphs.length > 0} active={paragraphs.length > 0 && loadSource === 'web'}><GlobeAlt2 width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
+                {/if}
+                <SourceButton name="From Other Exegeezers" small={paragraphs.length > 0}><Mesh width={paragraphs.length > 0 ? 22 : 40} height={paragraphs.length > 0 ? 22 : 40} /></SourceButton>
             </div>
         </div>
 
@@ -1497,8 +1562,16 @@
             </div>
         </header>
 
-        <div class="min-h-0 flex-1">
-            <ParagraphViewer paragraphs={previewShown} matter={previewMatter} markdown={previewMarkdown} empty="No text loaded yet." />
+        <div class="flex min-h-0 flex-1">
+            {#if previewHasSections}
+                <!-- the map: front and back matter are chosen here, beside the preview, which pans to whatever is hovered -->
+                <aside aria-label="Front and back matter" class="flex w-2/5 min-w-64 shrink-0 flex-col border-r border-taupe2 p-3">
+                    <MapModal mode="matter" open={true} onchoose={applyMatter} onhover={(id) => (previewSpot = id)} title={loadName} paragraphs={paragraphs} />
+                </aside>
+            {/if}
+            <div class="min-h-0 min-w-0 flex-1">
+                <ParagraphViewer paragraphs={previewShown} matter={previewMatter} markdown={previewMarkdown} zoom={0.75} jumpToId={previewSpot} emphasizeEnds={false} empty="No text loaded yet." />
+            </div>
         </div>
     </section>
     {/if}

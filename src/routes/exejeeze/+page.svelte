@@ -6,7 +6,8 @@
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
-    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, Search, FontFamily, LineSpacing, LetterSpacing, MarginLeft, MarginTop, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus } from '@boxicons/svelte';
+    import { page } from '$app/state';
+    import { ArrowOutDownCircleHalf, Discussion, PencilEditCircle, MapIcon, Queue, BookOpen, Redo, Sitemap, Undo, Mesh, Swatch, StepsDown, Bomb, Explosion, Scroll, Sapling, FlagChequered, TextHeight, Tachometer, Search, FontFamily, LineSpacing, LetterSpacing, MarginLeft, MarginTop, GlobeAlt2, FileCog, CopyPlus, Trash, ToiletRoll, Cog, X, Clipboard, ClipboardPlus, Plus } from '@boxicons/svelte';
     import UploadButton from '#lib/components/UploadButton.svelte';
     import SourceButton from '#lib/components/SourceButton.svelte';
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
@@ -96,6 +97,7 @@
     }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
+<<<<<<< HEAD
      * @param {{ id: string, title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
     function onOwnTextChosen(saved) {
         // with no text open (and not seeding), an existing text of one's own is simply opened: there is nothing to preview or choose
@@ -106,6 +108,12 @@
             });
             return;
         }
+=======
+     * @param {{ id?: string, title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
+    function onOwnTextChosen(saved) {
+        // "Load a text" with nothing open (not seeding): the text itself opens, in a tab
+        if (noText && !seeding && /** @type {any} */ (saved).id) return void openText(/** @type {any} */ (saved).id);
+>>>>>>> origin/develip
         loadSource = 'own';
         loadName = saved.title;
         loadNotes = [];
@@ -195,11 +203,20 @@
             ...(level === 0 && description ? { description } : {})
         }));
 
+    /** Fetch a saved text from the database. @param {string} id */
+    async function fetchSaved(id) {
+        const res = await fetch(`/api/texts/${id}`);
+        if (!res.ok) throw Object.assign(new Error(`${res.status}`), { status: res.status });
+        return res.json();
+    }
+
     /** Replace what the main pane shows with a saved text. @param {string} id */
     async function showSaved(id) {
-        const res = await fetch(`/api/texts/${id}`);
-        if (!res.ok) throw new Error(`${res.status}`);
-        const saved = await res.json();
+        applySaved(await fetchSaved(id));
+    }
+
+    /** Make a fetched saved text the one in the main pane. @param {any} saved */
+    function applySaved(saved) {
         pendingDetails = []; // those belonged to the text that was showing
         textId = saved.id;
         markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
@@ -209,7 +226,7 @@
         textAuthors = saved.authors ?? [];
         mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
         lastSaved = JSON.stringify(toItems(mainText));
-        history.clear();
+        history = new History();
         focusId = null;
         startEditId = null;
         replaceState(`/exejeeze?text=${saved.id}`, {});
@@ -227,22 +244,6 @@
         } catch (err) {
             console.warn('Could not duplicate the text', err);
             alert('Could not duplicate the text.');
-        }
-    }
-
-    /** Show the most recently changed saved text, if there is one. */
-    async function loadSaved() {
-        try {
-            const texts = await (await fetch('/api/texts')).json();
-            if (!texts.length) return false;
-            // ?text=<id> (from the profile page) picks which text to open; otherwise the most recent
-            const wanted = new URLSearchParams(location.search).get('text') ?? rememberedText();
-            const pick = texts.find((/** @type {any} */ t) => t.id === wanted) ?? texts[0];
-            await showSaved(pick.id);
-            return true;
-        } catch (err) {
-            console.warn('Could not load the saved text', err);
-            return false;
         }
     }
 
@@ -319,22 +320,292 @@
             mainText = EXAMPLE_ITEMS.map((p) => ({ ...p }));
             return;
         }
-        // ?new (from the profile page): start a blank text, in writing mode
-        const startNew = new URLSearchParams(location.search).has('new');
-        if (!startNew && !(await loadSaved())) {
-            const load = Object.values(dissertationFiles)[0];
-            if (load) {
-                const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
-                const hasHeaders = list.some((p) => p.level > 0);
-                textTitle = 'Dissertation';
-                markdown = true;
-                mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({
-                    ...p,
-                    originalIndex: i
-                }));
-            }
-        }
+        await restoreTabs();
         ready = true;
+    });
+
+    // ---- Tabs: up to MAX_TABS texts open at once; only the MAX_LOADED most recently active keep their content in memory ----
+    // The active tab's text lives in the page's own variables (mainText, history, textId ...). Leaving a tab files them away in its record;
+    // a tab that falls out of the most recent MAX_LOADED has its content dropped (it was saved when it was left) and reloads from the
+    // database when it is opened again.
+    const MAX_TABS = 10;
+    const MAX_LOADED = 3;
+    const REMEMBER_TABS = 'exegeezer.tabs';
+
+    /**
+     * @typedef {{
+     *   key: string, textId: string | null, title: string, view: 'linear' | 'hierarchical' | 'cascading' | 'rally', focusId: string | null,
+     *   items: typeof mainText | null, history: History<typeof mainText> | null, lastSaved: string, authors: string[], publicized: boolean,
+     *   rallyStyle: string | null, markdown: boolean, pendingDetails: Record<string, string>[], lastActive: number
+     * }} Tab
+     * (`items` is null while the tab is deloaded)
+     */
+    /** @type {Tab[]} */
+    let tabs = $state.raw([]);
+    let activeKey = $state(/** @type {string | null} */ (null));
+    let clock = 0;
+    /** a tab is being opened: clicks on tabs wait */
+    let switching = $state(false);
+    /** a message under the tab strip (the tab limit) */
+    let tabNotice = $state('');
+    /** @type {ReturnType<typeof setTimeout> | undefined} */
+    let noticeTimer;
+
+    /** @param {string} message */
+    function notify(message) {
+        tabNotice = message;
+        clearTimeout(noticeTimer);
+        noticeTimer = setTimeout(() => (tabNotice = ''), 5000);
+    }
+
+    /** @param {Partial<Tab>} [from] @returns {Tab} */
+    function newTab(from = {}) {
+        return { key: crypto.randomUUID(), textId: null, title: 'Untitled', view, focusId: null, items: null, history: null, lastSaved: '', authors: [], publicized: false, rallyStyle: null, markdown: false, pendingDetails: [], lastActive: 0, ...from };
+    }
+
+    /** an empty tab: its content is the empty-state tree @returns {Tab} */
+    const blankTab = () => newTab({ items: [], history: new History() });
+
+    /** @param {Tab} t */
+    const tabLabel = (t) => (t.textId ? t.title || 'Untitled text' : t.title && t.title !== 'Untitled' ? t.title : 'New tab');
+
+    /** the active tab's record follows the text open in it (its id and title change as it is saved, renamed or replaced) */
+    $effect(() => {
+        const id = textId;
+        const title = textTitle;
+        untrack(() => {
+            const t = tabs.find((x) => x.key === activeKey);
+            if (t && (t.textId !== id || t.title !== title)) patchTab(t.key, { textId: id, title });
+        });
+    });
+
+    /** Change a tab's record (records are replaced, not mutated, so the strip notices). @param {string} key @param {Partial<Tab>} patch */
+    function patchTab(key, patch) {
+        tabs = tabs.map((t) => (t.key === key ? { ...t, ...patch } : t));
+    }
+
+    /** File the page's live state away in the active tab's record. */
+    function captureActive() {
+        if (activeKey) patchTab(activeKey, { textId, title: textTitle, authors: textAuthors, publicized: textPublicized, rallyStyle: textRallyStyle, markdown, items: mainText, history, lastSaved, pendingDetails: $state.snapshot(pendingDetails), view, focusId });
+    }
+
+    /** Whether a loaded tab (not the active one) has changes the database does not have. @param {Tab} t */
+    const isDirty = (t) => t.items !== null && JSON.stringify(toItems(t.items)) !== t.lastSaved;
+
+    /** Save the active tab's text and wait for it. @returns {Promise<boolean>} whether it is safe to leave the tab */
+    async function flushActive() {
+        save();
+        await queue;
+        if (newTextRequest) return false; // a new text waiting to be named: it is not saved yet
+        if (textId && JSON.stringify(toItems($state.snapshot(mainText))) !== lastSaved) return confirm('The latest changes to this text could not be saved. Leave it anyway?');
+        return true;
+    }
+
+    /** Keep only the MAX_LOADED most recently active texts in memory: drop the content of the rest (never one with unsaved changes). */
+    function enforceLoadLimit() {
+        const keep = new Set(
+            tabs
+                .filter((t) => t.textId && (t.key === activeKey || t.items !== null))
+                .sort((a, b) => (b.key === activeKey ? Infinity : b.lastActive) - (a.key === activeKey ? Infinity : a.lastActive))
+                .slice(0, MAX_LOADED)
+                .map((t) => t.key)
+        );
+        tabs = tabs.map((t) => (t.textId && t.items !== null && !keep.has(t.key) && !isDirty(t) ? { ...t, items: null, history: null, pendingDetails: [] } : t));
+    }
+
+    /** Put a tab's own settings in the page (the text itself is already there). @param {Tab} t */
+    function applyTabSettings(t) {
+        view = t.view;
+        focusId = t.focusId;
+        startEditId = null;
+        fresh.clear();
+        rallyFillId = rallyHeadId = null;
+        rallyStarted = false;
+        rallyPlaying = false;
+        seedStep = 'idle';
+        textVisibility = '';
+        mode = chosenMode === 'writing' || chosenMode === 'commenting' || chosenMode === 'reading' ? /** @type {Mode} */ (chosenMode) : 'reading';
+        replaceState(t.textId ? `/exejeeze?text=${t.textId}` : '/exejeeze?new', {});
+    }
+
+    /**
+     * Make a tab the active one: the open text is saved first, a deloaded tab is read from the database again, and the least recently
+     * active texts beyond MAX_LOADED are deloaded.
+     * @param {string} key
+     * @param {{ closing?: boolean }} [opts] closing: the tab that was active has just been removed (nothing of it to save or file away)
+     * @returns {Promise<boolean>} whether it is open now
+     */
+    async function activate(key, { closing = false } = {}) {
+        const target = tabs.find((t) => t.key === key);
+        if (!target || switching || (key === activeKey && !closing)) return false;
+        switching = true;
+        try {
+            if (!closing && !(await flushActive())) return false;
+            /** @type {any} */
+            let saved = null;
+            if (target.items === null && target.textId) {
+                try {
+                    saved = await fetchSaved(target.textId);
+                } catch (err) {
+                    console.warn('Could not load the text', err);
+                    if (/** @type {any} */ (err).status === 404) {
+                        tabs = tabs.filter((t) => t.key !== key); // the text is gone
+                        notify('That text no longer exists.');
+                    } else notify('Could not load that text.');
+                    return false;
+                }
+            }
+            if (!closing) captureActive();
+            activeKey = key;
+            patchTab(key, { lastActive: ++clock });
+            if (saved) applySaved(saved);
+            else {
+                const t = /** @type {typeof mainText} */ (target.items);
+                textId = target.textId;
+                textTitle = target.title;
+                textAuthors = target.authors;
+                textPublicized = target.publicized;
+                textRallyStyle = target.rallyStyle;
+                markdown = target.markdown;
+                pendingDetails = target.pendingDetails;
+                lastSaved = target.lastSaved;
+                mainText = t;
+                history = target.history ?? new History();
+            }
+            applyTabSettings(target);
+            enforceLoadLimit();
+            return true;
+        } finally {
+            switching = false;
+        }
+    }
+
+    /** The + : a new, empty tab (it shows the tree of buttons to seed or load a text). */
+    async function addTab() {
+        const blank = tabs.find((t) => !t.textId && t.items?.length === 0);
+        if (blank) return void (await activate(blank.key));
+        if (tabs.length >= MAX_TABS) return notify(`Ten tabs are open, the most there can be. Close one to open another.`);
+        const t = blankTab();
+        tabs = [...tabs, t];
+        if (!(await activate(t.key))) tabs = tabs.filter((x) => x.key !== t.key);
+    }
+
+    /** Close a tab. The text stays saved; closing the last one leaves an empty tab. @param {string} key */
+    async function closeTab(key) {
+        if (switching) return;
+        const t = tabs.find((x) => x.key === key);
+        if (!t) return;
+        if (key === activeKey) {
+            if (!(await flushActive())) return;
+        } else if (isDirty(t) && !confirm('This text has changes that could not be saved. Close it anyway?')) return;
+        removeTab(key);
+    }
+
+    /** Take a tab out of the strip and open its neighbour (the most recently active one), or an empty tab if it was the last. @param {string} key */
+    async function removeTab(key) {
+        const wasActive = key === activeKey;
+        const rest = tabs.filter((x) => x.key !== key);
+        tabs = rest;
+        if (!wasActive) return;
+        activeKey = null;
+        const next = [...rest].sort((a, b) => b.lastActive - a.lastActive)[0] ?? blankTab();
+        if (!rest.length) tabs = [next];
+        if (!(await activate(next.key, { closing: true })) && !tabs.find((x) => x.key === next.key)) await addTab();
+    }
+
+    /** The X in the title bar: close this text's tab (the text stays saved). */
+    function closeText() {
+        if (activeKey) closeTab(activeKey);
+    }
+
+    /** the stored tabs: which texts were open, with each one's view and focus, and which was active */
+    function readStoredTabs() {
+        try {
+            const saved = JSON.parse(localStorage.getItem(REMEMBER_TABS) ?? '{}');
+            const list = Array.isArray(saved.tabs) ? saved.tabs.filter((/** @type {any} */ t) => t && typeof t.textId === 'string') : [];
+            return { tabs: /** @type {{ textId: string, title?: string, view?: string, focusId?: string | null }[]} */ (list), active: typeof saved.active === 'string' ? saved.active : null };
+        } catch {
+            return { tabs: [], active: null };
+        }
+    }
+
+    /** Open the tabs left open last time (deloaded), then the one asked for: ?text=<id> (from the profile page), ?new, or the one that was active. */
+    async function restoreTabs() {
+        const params = new URLSearchParams(location.search);
+        /** @type {any[]} */
+        let texts = [];
+        try {
+            texts = await (await fetch('/api/texts')).json();
+        } catch (err) {
+            console.warn('Could not load the saved texts', err);
+        }
+        const byId = new Map(texts.map((t) => [t.id, t]));
+        const stored = readStoredTabs();
+        tabs = stored.tabs
+            .filter((s, i) => byId.has(s.textId) && stored.tabs.findIndex((x) => x.textId === s.textId) === i)
+            .slice(0, MAX_TABS)
+            .map((s) => newTab({ textId: s.textId, title: byId.get(s.textId).title, view: VIEWS.includes(/** @type {any} */ (s.view)) ? /** @type {any} */ (s.view) : view, focusId: s.focusId ?? null }));
+
+        const startNew = params.has('new');
+        const wanted = params.get('text') ?? (startNew ? null : (stored.active ?? rememberedText()));
+        /** @type {Tab | undefined} */
+        let pick = wanted && byId.has(wanted) ? tabs.find((t) => t.textId === wanted) : undefined;
+        if (!pick && wanted && byId.has(wanted)) {
+            if (tabs.length < MAX_TABS) tabs = [...tabs, (pick = newTab({ textId: wanted, title: byId.get(wanted).title }))];
+            else notify('Ten tabs are open, the most there can be. Close one to open another text.');
+        }
+        if (!pick && startNew && tabs.length < MAX_TABS) tabs = [...tabs, (pick = blankTab())];
+        if (!pick && !startNew && !tabs.length && texts.length) tabs = [(pick = newTab({ textId: texts[0].id, title: texts[0].title }))];
+        pick ??= tabs.find((t) => t.textId === stored.active) ?? tabs[0];
+        if (pick && (await activate(pick.key))) return;
+        if (pick) tabs = tabs.filter((t) => t.key !== pick.key);
+
+        // nothing could be opened: an empty tab (and, TEMPORARILY, with nothing saved yet, Dissertation.md from the gitignored assets)
+        const blank = blankTab();
+        tabs = [...tabs, blank];
+        await activate(blank.key);
+        const load = texts.length ? undefined : Object.values(dissertationFiles)[0];
+        if (load) {
+            const list = splitParagraphs(cleanMarkdown(/** @type {string} */ (await load())));
+            const hasHeaders = list.some((p) => p.level > 0);
+            textTitle = 'Dissertation';
+            markdown = true;
+            mainText = (hasHeaders && list[0]?.level === 0 ? withFrontmatter(list) : list).map((p, i) => ({ ...p, originalIndex: i }));
+        }
+    }
+
+    /** Open a saved text in a tab: its own tab if it is open already, else a new one (an empty tab that is showing is used up). @param {string} id */
+    async function openText(id) {
+        const open = tabs.find((t) => t.textId === id);
+        if (open) return void (await activate(open.key));
+        const blank = tabs.find((t) => t.key === activeKey && !t.textId && !mainText.length);
+        if (tabs.length >= MAX_TABS && !blank) {
+            replaceState(textId ? `/exejeeze?text=${textId}` : '/exejeeze?new', {}); // the link was not followed
+            return notify('Ten tabs are open, the most there can be. Close one to open another text.');
+        }
+        const t = newTab({ textId: id, title: '' });
+        tabs = [...tabs, t];
+        if (await activate(t.key)) {
+            if (blank) tabs = tabs.filter((x) => x.key !== blank.key);
+        } else tabs = tabs.filter((x) => x.key !== t.key);
+    }
+
+    // a link to /exejeeze?text=<id> followed while the page is open (the profile's Texts table): that text opens in a tab
+    $effect(() => {
+        const wanted = page.url.searchParams.get('text');
+        if (ready && wanted && wanted !== untrack(() => textId)) untrack(() => openText(wanted));
+    });
+
+    // the open tabs are remembered, so a refresh returns to them (the content is not: it is fetched when a tab is opened)
+    $effect(() => {
+        if (!ready) return;
+        const active = tabs.find((t) => t.key === activeKey);
+        const data = { active: active?.textId ?? null, tabs: tabs.filter((t) => t.textId).map((t) => (t.key === activeKey ? { textId: t.textId, title: textTitle, view, focusId } : { textId: t.textId, title: t.title, view: t.view, focusId: t.focusId })) };
+        try {
+            localStorage.setItem(REMEMBER_TABS, JSON.stringify(data));
+        } catch {
+            // storage is blocked: nothing is remembered
+        }
     });
 
     /** The main text shown in the main pane */
@@ -347,7 +618,7 @@
 
     // ---- Undo / redo: one step per edit; kept for the whole session (not reset by changing mode) ----
     /** @type {History<typeof mainText>} */
-    const history = new History();
+    let history = $state.raw(new History());
 
     /**
      * Apply an edit to the main text, remembering the text it replaces. Paragraphs have to be inside sections, in
@@ -661,7 +932,14 @@
      * otherwise. A text loaded from the user's own texts brings no title and no settings; any other is named after what was loaded.
      * As with an import, the user may first keep an unaltered `ORIGINAL--<name>` copy.
      */
-    async function seedFromPreview() {
+    function seedFromPreview() {
+        if (paragraphs.length === 0) return;
+        // the new text needs a title (and visibility) of its own: asked first, offering the loaded name
+        newTextRequest = { title: loadSource === 'own' ? '' : loadName, run: ({ title, visibility }) => makeSeed(title, visibility) };
+    }
+
+    /** @param {string} title @param {string} visibility */
+    async function makeSeed(title, visibility) {
         if (paragraphs.length === 0) return;
         if (keepCopy && loadSource !== 'own') {
             try {
@@ -675,8 +953,7 @@
             let list = paragraphs.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
             // text above the first header goes into a Frontmatter section; a text with no headers at all stays as it is
             if (list[0] && (list[0].level ?? 0) === 0 && list.some((p) => (p.level ?? 0) > 0)) list = withFrontmatter(list);
-            const title = loadSource === 'own' ? '' : loadName;
-            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility: 'private', items: toItems(list), importedDetails: $state.snapshot(loadDetails) }) });
+            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility, items: toItems(list), importedDetails: $state.snapshot(loadDetails) }) });
             if (!res.ok) throw new Error(`${res.status}`);
             await showSaved((await res.json()).id);
             seedStep = 'idle';
@@ -707,36 +984,9 @@
     /** @type {{ id: string } | null} */
     let settingsRequest = $state(null);
 
-    /** Show no text at all: the viewer as it is when nothing is loaded. */
-    /** The X in the title bar: leave this text (it stays saved) and empty the viewer. */
-    async function closeText() {
-        save(); // any last edits go first
-        await queue;
-        unloadText();
-    }
-
+    /** The text in the active tab is gone (deleted): its tab closes. */
     function unloadText() {
-        pendingDetails = [];
-        rallyStarted = false;
-        rallyPlaying = false;
-        try {
-            localStorage.removeItem(REMEMBER_TEXT);
-        } catch {
-            // storage is blocked
-        }
-        textId = null;
-        textVisibility = '';
-        textRallyStyle = null;
-        textPublicized = false;
-        textTitle = 'Untitled';
-        textAuthors = [];
-        lastSaved = '';
-        mainText = [];
-        seedStep = 'idle';
-        history.clear();
-        focusId = null;
-        startEditId = null;
-        replaceState('/exejeeze?new', {});
+        if (activeKey) removeTab(activeKey);
     }
 
     /** After a wipe: the same text stays loaded (title, authors, settings), with no content. */
@@ -1148,8 +1398,17 @@
             }
         }
     });
-    async function startRally() {
+    function startRally() {
         rallySetupOpen = false;
+        if (noText) {
+            // a rally from nothing makes a new text, which needs a title first
+            newTextRequest = { title: '', run: ({ title, visibility }) => beginRally(title, visibility) };
+            return;
+        }
+        beginRally('', 'private');
+    }
+    /** @param {string} title @param {string} visibility */
+    async function beginRally(title, visibility) {
         rallyStarted = true; // before the text is made, so arriving with a text does not reopen the setup
         if (textId && !textRallyStyle) {
             // the text's first rally gives it its default rally type
@@ -1164,7 +1423,7 @@
                     { id: crypto.randomUUID(), text: '# ', level: 1 },
                     { id: crypto.randomUUID(), text: '', level: 0 }
                 ];
-                const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: '', visibility: 'private', rallyStyle: 'compose', items }) });
+                const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility, rallyStyle: 'compose', items }) });
                 if (!res.ok) throw new Error(`${res.status}`);
                 await showSaved((await res.json()).id);
                 mode = chosenMode = 'writing';
@@ -1198,6 +1457,24 @@
 <!-- Main pane -->
 <div class="flex h-[calc(100vh-57px)] bg-taupe1">
     <div class="flex min-w-0 flex-1 flex-col" bind:this={mainPane}>
+        <!-- the tabs: up to ten texts open at once (only the three most recently used keep their content in memory; the others reload when opened) -->
+        {#if authed && tabs.length}
+            <div class="relative shrink-0">
+            <div role="tablist" aria-label="Open texts" class="flex items-end gap-0.5 overflow-x-auto border-b border-taupe3 bg-taupe2 px-3 pt-1.5">
+                {#each tabs as t (t.key)}
+                    {@const on = t.key === activeKey}
+                    <div data-tab={t.key} data-loaded={t.items !== null || on} class="flex max-w-56 min-w-0 shrink-0 items-center rounded-t-md border border-b-0 {on ? 'border-violet bg-taupe1 text-dark' : 'border-taupe3 bg-taupe2 text-grey3 hover:bg-taupe1'}">
+                        <button role="tab" aria-selected={on} onclick={() => activate(t.key)} use:tip={on ? tabLabel(t) : t.items === null ? `${tabLabel(t)} (not in memory: it loads when opened)` : tabLabel(t)} data-tip-place="below" class="min-w-0 flex-1 truncate py-1 pr-1 pl-3 text-left text-sm {t.items === null && !on ? 'italic' : ''} {on ? 'font-semibold' : ''}">{tabLabel(t)}</button>
+                        <button onclick={() => closeTab(t.key)} aria-label="Close tab" use:tip={'Close tab'} data-tip-place="below" class="mr-1 inline-flex shrink-0 items-center justify-center rounded-md p-0.5 hover:bg-taupe2"><X width={16} height={16} /></button>
+                    </div>
+                {/each}
+                <button onclick={addTab} aria-label="New tab" aria-disabled={tabs.length >= MAX_TABS && !tabs.some((t) => !t.textId && t.items?.length === 0)} use:tip={tabs.length >= MAX_TABS ? 'Ten tabs are open: close one first' : 'New tab'} data-tip-place="below" class="mb-0.5 inline-flex shrink-0 items-center justify-center rounded-md p-1 text-dark hover:bg-taupe3 {tabs.length >= MAX_TABS ? 'opacity-50' : ''}"><Plus width={18} height={18} /></button>
+            </div>
+            {#if tabNotice}
+                <p role="status" class="raised absolute top-full right-3 z-20 mt-1 rounded-md px-3 py-1.5 text-sm text-dark shadow-lg">{tabNotice}</p>
+            {/if}
+            </div>
+        {/if}
         <!-- the text's title: floats above every view, never part of the text; there is none until a text has been seeded -->
         {#if !noText}
         <header class="flex shrink-0 items-center gap-2 border-b border-taupe2 bg-taupe1 px-6 py-2 text-dark">
@@ -1245,6 +1522,7 @@
             </div>
         {/if}
         <!-- Text appearance (every view): the settings reach the views as CSS variables, which app.css turns into sizes and spacing -->
+        {#key activeKey}
         <div class="h-full {appearanceOn ? 'appearance' : ''} {appearanceOn && lineStep !== DEFAULT_LINE ? 'ta-line' : ''}" style={appearanceOn ? appearanceStyle : undefined}>
         {#if view === 'linear'}
             <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} zoom={ZOOMS[zoomStep]} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
@@ -1273,6 +1551,7 @@
             <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
+        {/key}
         </div>
     </div>
 

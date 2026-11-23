@@ -1,24 +1,23 @@
 <script>
 	import { fade } from 'svelte/transition';
-	import { Pencil, Copy, Brain, Ear, TextHeight, Stopwatch, FlagChequered } from '@boxicons/svelte';
+	import { TextHeight, Tachometer, FlagChequered } from '@boxicons/svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { READ_WPM, SIZES, STYLES, readMs, writeMs, composeMs } from '#lib/utilities/rallyChunks.js';
+	import { emphasis } from '#lib/emphasis.svelte.js';
+	import { READ_WPM, SIZES, readMs, composeMs, WRITING_COLOUR } from '#lib/utilities/rallyChunks.js';
 
 	/**
-	 * The rally's setup: every setting in one modal, then a violet checkered-flag button (Start rally)
+	 * The rally's setup: every setting in one modal, then a violet checkered-flag button (Rally on!)
 	 * at the bottom. Open it by setting `open`; `onstart` is called when the flag is clicked.
 	 *
 	 * @type {{
 	 *   open: boolean,
 	 *   writing: boolean,
-	 *   empty?: boolean,
-	 *   style: 'compose' | 'copy' | 'recall' | 'dictate',
 	 *   size: number,
 	 *   speed: number,
 	 *   onstart: () => void
 	 * }}
 	 */
-	let { open = $bindable(false), writing, empty = false, style = $bindable('compose'), size = $bindable(4), speed = $bindable(6), onstart } = $props();
+	let { open = $bindable(false), writing, size = $bindable(5), speed = $bindable(6), onstart } = $props();
 
 	/** @type {HTMLDialogElement | undefined} */
 	let dialogEl = $state();
@@ -34,32 +33,18 @@
 	}
 
 	// ---- the preview: sample paragraphs dealt out as the rally will, at the chosen size and pace, looping while the modal is open ----
-	const SAMPLE = [
-		'The quick brown fox jumps over the lazy dog.',
-		'Pack my box with five dozen liquor jugs.',
-		'How vexingly quick daft zebras jump!',
-		'Sphinx of black quartz, judge my vow.',
-		'Jackdaws love my big sphinx of quartz.'
-	];
+	const SAMPLE = ['The quick brown fox jumps over the lazy dog.', 'The lazy brown fox sidles around the sleeping dog.'];
 	let at = $state(0);
 	/** how long the current sample stays: what a real paragraph would get with these settings */
-	const dwell = $derived.by(() => {
-		const shown = SAMPLE[at];
-		if (!writing || empty || style === 'dictate') return readMs(shown, speed);
-		if (style === 'compose') return composeMs(speed);
-		return writeMs(shown, speed);
-	});
+	const dwell = $derived(writing ? composeMs(speed) : readMs(SAMPLE[at], speed)); // writing: a fixed time for the tick, whatever the length
 	$effect(() => {
 		if (!open) return;
 		void at;
 		const t = setTimeout(() => (at = (at + 1) % SAMPLE.length), dwell);
 		return () => clearTimeout(t);
 	});
-	/** each writing style has its own accent from the theme */
-	const STYLE_COLOURS = { compose: 'green', copy: 'blue', recall: 'magenta', dictate: 'orange' };
-	/** the modal's own accent: the chosen writing style's colour (violet when there is no style to choose) */
-	const mode = $derived(writing && !empty ? `var(--color-${STYLE_COLOURS[style]})` : 'var(--color-violet)');
-	const STYLE_TIPS = { compose: 'Compose new text', copy: 'Type it back', recall: 'Recall from memory', dictate: 'Dictation' };
+	/** the modal's own accent: violet, in writing and reading alike */
+	const mode = $derived(writing ? `var(--color-${WRITING_COLOUR})` : 'var(--color-violet)');
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->
@@ -75,17 +60,6 @@
 			</div>
 		</div>
 
-		<!-- how writing works: only in writing mode -->
-		{#if writing && !empty}
-			<div class="flex items-center justify-center gap-2" role="group" aria-label="Writing style">
-				{#each STYLES as s (s)}
-					<button type="button" onclick={() => (style = s)} aria-label={STYLE_TIPS[s]} aria-pressed={style === s} use:tip={STYLE_TIPS[s]} data-tip-place="below" style="--a: var(--color-{STYLE_COLOURS[s]})" class="inline-flex items-center justify-center rounded-md border-2 p-2 text-(--a) hover:bg-[color-mix(in_srgb,var(--a)_15%,var(--color-taupe1))] {style === s ? 'border-(--a) bg-[color-mix(in_srgb,var(--a)_22%,var(--color-taupe1))]' : 'border-transparent'}">
-						{#if s === 'copy'}<Copy class="text-(--a)!" />{:else if s === 'recall'}<Brain class="text-(--a)!" />{:else if s === 'dictate'}<Ear class="text-(--a)!" />{:else}<Pencil class="text-(--a)!" />{/if}
-					</button>
-				{/each}
-			</div>
-		{/if}
-
 		<!-- text size: a slider with a tick for every size, and a sample -->
 		<div class="flex items-center gap-3">
 			<TextHeight class="shrink-0" />
@@ -98,7 +72,7 @@
 
 		<!-- speed: a slider with a tick for every speed, no labels -->
 		<div class="flex items-center gap-3">
-			<Stopwatch class="shrink-0" />
+			<Tachometer class="shrink-0" />
 			<div class="min-w-0 flex-1">
 				<input type="range" min="0" max={READ_WPM.length - 1} step="1" bind:value={speed} aria-label="Speed" class="form-range w-full" style="--p: {speed / (READ_WPM.length - 1)}" />
 				<div aria-hidden="true" class="flex justify-between px-4">{#each READ_WPM as _, i (i)}<span class="h-1.5 w-px bg-taupe4"></span>{/each}</div>
@@ -106,7 +80,16 @@
 			<span class="w-10 shrink-0"></span>
 		</div>
 
-		<button type="button" onclick={onstart} aria-label="Start rally" use:tip={'Start rally'} data-tip-place="below" class="mx-auto inline-flex items-center justify-center rounded-md bg-(--mode) px-6 py-2.5 text-taupe1 hover:brightness-110"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
+		<!-- reading mode sets each paragraph's first and last sentences apart; either can be turned off -->
+		<div class="flex items-center justify-center gap-6 text-sm text-dark">
+			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={emphasis.first} /> Emphasize first sentence</label>
+			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={emphasis.last} /> Emphasize last sentence</label>
+		</div>
+
+		<div class="flex items-center justify-center gap-3">
+			<button type="button" onclick={() => dialogEl?.close()} class="rounded-md px-4 py-2.5 text-sm text-dark/60 hover:bg-taupe2 hover:text-dark">On second thought, nah.</button>
+			<button type="button" onclick={onstart} aria-label="Rally on!" use:tip={'Rally on!'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-(--mode) px-6 py-2.5 text-taupe1 hover:brightness-110"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
+		</div>
 	</div>
 </dialog>
 

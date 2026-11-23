@@ -41,33 +41,23 @@ export function rallyChunks(paragraphs) {
 
 /** ms to read a chunk at a speed tick, with a beat to start @param {string} text @param {number} speed */
 export const readMs = (text, speed) => Math.max(1200, (wordCount(text) / (READ_WPM[speed] ?? 200)) * 60000 + 500);
-/** ms to write a chunk back at a speed tick @param {string} text @param {number} speed */
-export const writeMs = (text, speed) => Math.max(1500, (wordCount(text) / (WRITE_WPM[speed] ?? 20)) * 60000 + 1000);
+
 /** ms to compose a new paragraph at a speed tick @param {number} speed */
 export const composeMs = (speed) => (COMPOSE_SECONDS[speed] ?? 20) * 1000 * PARAGRAPH_FACTOR;
 
 /** @param {string} text */
 export const wordCount = (text) => text.trim().split(/\s+/).filter(Boolean).length;
 
-/** Plain text for matching typed input: markdown marks dropped, whitespace and case flattened. @param {string} text */
-export function plain(text) {
-	return text
-		.replace(/^#{1,6}\s+/, '')
-		.replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-		.replace(/\[\^[^\]]*\]/g, '')
-		.replace(/[*_`]/g, '')
-		.replace(/\s+/g, ' ')
-		.trim();
-}
-
-/** speed ticks (0 slowest) -> reading words per minute, and writing words per minute */
+/** speed ticks (0 slowest) -> reading words per minute */
 export const READ_WPM = [30, 50, 75, 100, 150, 200, 260, 340, 450, 600];
-export const WRITE_WPM = [3, 5, 8, 11, 15, 20, 28, 38, 52, 70];
 /** text size steps -> rem */
-export const SIZES = [1.1, 1.3, 1.5, 1.75, 2, 2.375, 2.75, 3.25, 3.75];
-/** writing styles, the default first: compose (new text, no source), copy (type the chunk as shown), recall (shown, hidden, typed from memory), dictate (shown once, written at your own pace) */
-/** @type {('compose' | 'copy' | 'recall' | 'dictate')[]} */
-export const STYLES = ['compose', 'copy', 'recall', 'dictate'];
-/** compose: seconds for a sentence at each speed tick (a paragraph gets PARAGRAPH_FACTOR times as long, and rally is all paragraphs) */
+export const SIZES = [0.95, 1.1, 1.3, 1.5, 1.75, 2];
+/** the size step a rally starts at (2rem) */
+export const DEFAULT_SIZE = SIZES.length - 1;
+
+/** writing: seconds for a sentence at each speed tick (a paragraph gets PARAGRAPH_FACTOR times as long) */
 export const COMPOSE_SECONDS = [180, 120, 90, 60, 40, 28, 20, 14, 10, 7];
 export const PARAGRAPH_FACTOR = 5;
+
+/** the writing rally's accent colour (a theme colour name) */
+export const WRITING_COLOUR = 'violet';

@@ -14,7 +14,7 @@
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { gapLineClass } from '#lib/utilities/dragDrop.svelte.js';
 	import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
-	import { definitionsOf, isDefinition, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeEnds, isDefinition, plainEnds, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * A scrolling list of paragraphs with a minimap-style overview column.
@@ -66,6 +66,8 @@
 	 * append (merge) it. A header row drags its whole section.
 	 */
 	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false } = $props();
+	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger */
+	const reading = $derived(!ondelete);
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
@@ -616,9 +618,9 @@
 		<!-- a reference or footnote definition: shown as plain text; its content appears where it is used -->
 		<p class="flex-1 whitespace-pre-wrap text-xs text-grey3">{para.text}</p>
 	{:else if markdown}
-		<div class="md min-w-0 flex-1">{@html renderMarkdown(para.text, defs, scope + para.id)}</div>
+		<div class="md min-w-0 flex-1">{@html reading ? emphasizeEnds(renderMarkdown(para.text, defs, scope + para.id)) : renderMarkdown(para.text, defs, scope + para.id)}</div>
 	{:else}
-		<p class="flex-1 whitespace-pre-wrap">{para.text}</p>
+		<p class="flex-1 whitespace-pre-wrap">{#if reading}{@html plainEnds(para.text)}{:else}{para.text}{/if}</p>
 	{/if}
 {/snippet}
 

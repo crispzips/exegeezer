@@ -1,5 +1,6 @@
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
+import { emphasis } from '#lib/emphasis.svelte.js';
 
 /** A reference definition line: "[image1]: <https://example.com/a.png>" or a footnote "[^1]: Note text" */
 const DEFINITION = /^\s*\[([^\]]+)\]:\s*\S/;
@@ -158,4 +159,112 @@ export function renderFootnoteMarks(text, definitions, scope) {
 		found = true;
 	}
 	return found ? html + md.utils.escapeHtml(text.slice(last)) : null;
+}
+
+/** Words that end in a full stop without ending a sentence ("Dr. Smith", "e.g. this") */
+const ABBREVIATION = /(?:^|[\s("'“‘])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|fig|no|vol|cf|ch|pp|p|e\.g|i\.e|al)\.$/i;
+/** The end of a sentence: . ! or ? (with any closing quote or bracket), then space, then what begins another sentence */
+const SENTENCE_BREAK = /([.!?]+["'”’)\]]*)\s+(?=["“‘(\[]*[A-Z0-9])/g;
+
+/**
+ * Reading mode shows a paragraph's first and last sentences larger than the sentences between
+ * them (each can be turned off, see `emphasis`): wraps those two in `<span class="sent-end">` (set apart on lines of their own by the stylesheet),
+ * and the sentences between in `<span class="sent-body">`. Works on rendered HTML (tags are left
+ * alone, and a footnote mark is not counted as text); a paragraph of fewer than three sentences
+ * has no body to set them off from, and a heading is left as it is.
+ * @param {string} html
+ */
+export function emphasizeEnds(html) {
+	const { first, last } = emphasis;
+	if (!html || (!first && !last) || /^\s*<h[1-6]\b/i.test(html)) return html;
+	const tokens = html.split(/(<[^>]*>)/);
+	// the text a reader sees (footnote marks left out), with where each piece of it begins
+	let plain = '';
+	let skip = 0;
+	/** @type {(number | null)[]} */
+	const starts = [];
+	tokens.forEach((tok, i) => {
+		if (i % 2) {
+			if (/^<sup\b/i.test(tok)) skip++;
+			else if (/^<\/sup>/i.test(tok)) skip = Math.max(0, skip - 1);
+			starts.push(null);
+		} else if (skip) starts.push(null);
+		else {
+			starts.push(plain.length);
+			plain += tok;
+		}
+	});
+	/** where each sentence after the first begins, and where the sentence before it ends */
+	/** @type {{ start: number, prevEnd: number }[]} */
+	const breaks = [];
+	for (const m of plain.matchAll(SENTENCE_BREAK)) {
+		const end = m.index + m[1].length;
+		if (m[1].startsWith('.') && ABBREVIATION.test(plain.slice(0, end))) continue;
+		breaks.push({ start: m.index + m[0].length, prevEnd: end });
+	}
+	if (breaks.length < 2) return html;
+	// the first sentence takes the space after it with it, so the body does not begin with a blank
+	// (with one of them turned off, that sentence is simply part of the body)
+	const firstEnd = first ? breaks[0].start : 0;
+	const lastStart = last ? breaks[breaks.length - 1].start : plain.length + 1;
+	const lastEnd = last ? plain.trimEnd().length : 0;
+	const OPEN = { end: '<span class="sent-end">', body: '<span class="sent-body">' };
+	const VOID = /^<(?:img|br|hr|input|wbr)\b/i;
+	let out = '';
+	/** the elements open at this point, and how many were open where the span began (-1: no span is open) */
+	/** @type {{ open: string, close: string }[]} */
+	const stack = [];
+	let spanDepth = -1;
+	/** which kind of span is open: the large first and last sentences, or the body between them */
+	let kind = '';
+	/** shut the span: first the elements opened inside it, which are opened again after it */
+	const closeSpan = () => {
+		const inner = stack.slice(spanDepth);
+		out += inner.map((e) => e.close).reverse().join('') + '</span>' + inner.map((e) => e.open).join('');
+		spanDepth = -1;
+	};
+	tokens.forEach((tok, i) => {
+		const a = starts[i];
+		if (i % 2) {
+			const name = /^<\/?([a-zA-Z0-9]+)/.exec(tok)?.[1] ?? '';
+			if (tok.startsWith('</')) {
+				if (spanDepth >= 0 && stack.length <= spanDepth) closeSpan();
+				stack.pop();
+			} else if (!VOID.test(tok) && !tok.endsWith('/>') && !tok.startsWith('<!')) stack.push({ open: tok, close: `</${name}>` });
+			out += tok;
+			return;
+		}
+		if (a === null || a === undefined) {
+			out += tok;
+			return;
+		}
+		// cut this piece of text where a large part begins or ends
+		const cuts = [a, a + tok.length];
+		for (const c of [firstEnd, lastStart, lastEnd]) if (c > a && c < a + tok.length) cuts.push(c);
+		cuts.sort((x, y) => x - y);
+		for (let k = 0; k < cuts.length - 1; k++) {
+			const x = cuts[k];
+			const piece = tok.slice(x - a, cuts[k + 1] - a);
+			if (piece.trim() !== '') {
+				const want = x < firstEnd || (x >= lastStart && x < lastEnd) ? 'end' : x >= firstEnd && x < lastStart ? 'body' : '';
+				if (spanDepth >= 0 && want !== kind) closeSpan();
+				if (want && spanDepth < 0) {
+					out += OPEN[/** @type {'end' | 'body'} */ (want)];
+					spanDepth = stack.length;
+					kind = want;
+				}
+			}
+			out += piece;
+		}
+	});
+	if (spanDepth >= 0) closeSpan();
+	return out;
+}
+
+/**
+ * Plain paragraph text (shown as written, line breaks kept) as HTML with its first and last sentences marked.
+ * @param {string} text
+ */
+export function plainEnds(text) {
+	return emphasizeEnds(md.utils.escapeHtml(text));
 }

@@ -97,23 +97,10 @@
     }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
-<<<<<<< HEAD
-     * @param {{ id: string, title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
-    function onOwnTextChosen(saved) {
-        // with no text open (and not seeding), an existing text of one's own is simply opened: there is nothing to preview or choose
-        if (noText && !seeding) {
-            showSaved(saved.id).catch((err) => {
-                console.warn('Could not open the text', err);
-                alert('Could not open that text.');
-            });
-            return;
-        }
-=======
      * @param {{ id?: string, title: string, items: any[], importedDetails?: Record<string, string>[] }} saved */
     function onOwnTextChosen(saved) {
         // "Load a text" with nothing open (not seeding): the text itself opens, in a tab
         if (noText && !seeding && /** @type {any} */ (saved).id) return void openText(/** @type {any} */ (saved).id);
->>>>>>> origin/develip
         loadSource = 'own';
         loadName = saved.title;
         loadNotes = [];

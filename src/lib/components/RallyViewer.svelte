@@ -60,7 +60,16 @@
 		untrack(() => {
 			const here = list[index]?.paraId;
 			if (id && id !== here && id !== lastPara) {
-				const found = list.findIndex((c) => c.paraId === id);
+				let found = list.findIndex((c) => c.paraId === id);
+				if (found < 0) {
+					// the focused item is one rally skips (a definition, an empty paragraph): land on the nearest chunk at or before it
+					const order = new Map(paragraphs.map((p, k) => [p.id, k]));
+					const at = order.get(id);
+					if (at !== undefined) {
+						for (let k = list.length - 1; k >= 0; k--) if ((order.get(list[k].paraId) ?? Infinity) <= at) { found = k; break; }
+						if (found < 0) found = 0;
+					}
+				}
 				if (found >= 0) index = found;
 			} else if (index >= list.length) index = Math.max(0, list.length - 1);
 		});
@@ -139,7 +148,7 @@
 		<!-- the stage: the paragraph in the middle, its neighbours stacked close above and below it, faded -->
 		<div class="relative min-h-0 flex-1 overflow-hidden text-dark [container-type:size]" style={fontStyle}>
 			{#each around as { c, offset } (c.id)}
-				<div bind:offsetHeight={heights[c.id]} class="rally-chunk absolute top-1/2 left-1/2 flex max-h-[90%] w-1/2 -translate-y-1/2 items-center justify-center overflow-hidden text-center transition-[transform,opacity] duration-500 ease-out {BUBBLE} {offset === 0 ? 'z-20' : ''} {c.header ? 'font-semibold' : ''}" style="{slide(offset)}; {tint(c.paraId)}">
+				<div role="presentation" onclick={() => { const k = chunks.findIndex((x) => x.id === c.id); if (k >= 0) index = k; }} bind:offsetHeight={heights[c.id]} class="rally-chunk {offset === 0 ? '' : 'cursor-pointer'} absolute top-1/2 left-1/2 flex max-h-[90%] w-1/2 -translate-y-1/2 items-center justify-center overflow-hidden text-center transition-[transform,opacity] duration-500 ease-out {BUBBLE} {offset === 0 ? 'z-20' : ''} {c.header ? 'font-semibold' : ''}" style="{slide(offset)}; {tint(c.paraId)}">
 					<div>{@html emphasizeEnds(renderMarkdown(c.text, defs, c.id))}</div>
 				</div>
 			{/each}

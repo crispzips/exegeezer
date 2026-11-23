@@ -20,6 +20,7 @@
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+    import CommentDialog from '#lib/components/CommentDialog.svelte';
     import NewTextDialog from '#lib/components/NewTextDialog.svelte';
     import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
     import NewItemChooser from '#lib/components/NewItemChooser.svelte';
@@ -137,6 +138,8 @@
     /** 'private' | 'public', chosen in the new-text dialog before a text is first saved */
     let textVisibility = '';
     /** the loaded text's default rally type (null: it has none yet, so the rally's setup is offered) */
+    /** the loaded text is published and public: it can't be altered, so there is no writing mode */
+    let textPublicized = $state(false);
     let textRallyStyle = $state(/** @type {string | null} */ (null));
     /** @type {{ title: string, run: (v: { title: string, visibility: string }) => void } | null} */
     let newTextRequest = $state(null);
@@ -168,6 +171,7 @@
         markdown = saved.items.some((/** @type {any} */ p) => p.level > 0);
         textTitle = saved.title;
         textRallyStyle = saved.rallyStyle ?? null;
+        textPublicized = !!saved.publicized;
         textAuthors = saved.authors ?? [];
         mainText = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
         lastSaved = JSON.stringify(toItems(mainText));
@@ -631,6 +635,7 @@
         textId = null;
         textVisibility = '';
         textRallyStyle = null;
+        textPublicized = false;
         textTitle = 'Untitled';
         textAuthors = [];
         lastSaved = '';
@@ -656,15 +661,36 @@
     async function wholeTextCall(url, method) {
         await queue; // let any save in flight finish first
         const res = await fetch(url, { method });
-        if (!res.ok) throw new Error(`${res.status}`);
+        if (!res.ok) throw new Error(res.status === 409 ? ((await res.json().catch(() => null))?.message ?? `${res.status}`) : `${res.status}`);
     }
 
     /** A double-click on a paragraph while not writing: switch to writing mode and open that paragraph for editing (the cascading view edits the bubble in place). @param {string} id */
     function writeAt(id) {
-        if (!authed || noText) return;
+        if (!authed || noText || textPublicized) return;
         mode = chosenMode = 'writing';
         if (view !== 'cascading') startEditId = id;
     }
+
+    /** @type {{ excerpt: string, run: (body: string) => Promise<string | void> } | null} */
+    let commentRequest = $state(null);
+
+    /** A double-click on a paragraph in commenting mode: ask for a comment on it. The first one creates the commentary. @param {string} id */
+    function commentAt(id) {
+        const id0 = textId;
+        const para = mainText.find((p) => p.id === id);
+        if (!authed || !id0 || !para) return;
+        commentRequest = {
+            excerpt: para.text.replace(/^#+\s*/, '').slice(0, 300),
+            run: async (body) => {
+                await queue; // let any save in flight finish first, so the paragraph exists on the server
+                const res = await fetch(`/api/texts/${id0}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paragraphId: id, body }) });
+                if (!res.ok) return (await res.json().catch(() => null))?.message ?? 'Could not post the comment.';
+            }
+        };
+    }
+
+    /** a double-click on a paragraph, outside writing: it comments in commenting mode, and starts writing otherwise @param {string} id */
+    const onparagraph = (id) => (mode === 'commenting' ? commentAt(id) : writeAt(id));
 
     /** @param {'delete' | 'wipe'} kind */
     function requestWhole(kind) {
@@ -693,7 +719,7 @@
             await wholeTextCall(url, method);
         } catch (err) {
             console.warn(`Could not ${what}`, err);
-            alert(`Could not ${what}.`);
+            alert(err instanceof Error && /\s/.test(err.message) ? err.message : `Could not ${what}.`);
             return;
         }
         after();
@@ -805,7 +831,7 @@
     const noText = $derived(ready && mainText.length === 0);
     $effect(() => {
         if (noText) mode = 'writing';
-        else if (!authed) mode = 'reading';
+        else if (!authed || (textPublicized && mode === 'writing')) mode = 'reading';
     });
     /** the mode button is locked when there is no text (editing only) or nobody is signed in (reading only) */
     const modeLocked = $derived(noText || !authed);
@@ -817,10 +843,16 @@
     /** @param {Element} _node */
     const wipeOut = (_node) => ({ duration: 280, easing: cubicOut, css: (/** @type {number} */ t) => `clip-path: inset(0 0 0 ${(1 - t) * 100}%)` });
 
+    // a rally can't run behind the commenting notice
+    $effect(() => {
+        if (mode === 'commenting') rallyPlaying = false;
+    });
+
     /** the triple toggle (editing, reading, commenting): each click moves to the next mode */
     function cycleMode() {
         if (modeLocked) return;
-        mode = MODES[(MODES.indexOf(mode) + 1) % MODES.length];
+        const order = textPublicized ? MODES.filter((m) => m !== 'writing') : MODES;
+        mode = order[(order.indexOf(mode) + 1) % order.length];
         chosenMode = mode;
     }
 
@@ -1057,10 +1089,13 @@
                 {/if}
             </div>
         {/if}
-        {#if mode === 'commenting'}
-            <!-- commenting mode is blank for now, in every view -->
-        {:else if view === 'linear'}
-            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+        {#if view === 'linear'}
+            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+        {:else if view === 'rally' && mode === 'commenting'}
+            <!-- commenting isn't available in rally view yet: the view stays inactive and says so -->
+            <div class="flex h-full items-center justify-center px-8 text-center text-grey3" role="status">
+                <p class="max-w-sm">Commenting isn't available in Rally view yet. Switch to another view to comment.</p>
+            </div>
         {:else if view === 'rally'}
             <!-- with no text there is nothing to pace, or to write into: only the Seed a text button shows -->
             {#if rallyStarted}
@@ -1076,9 +1111,9 @@
                 </div>
             {/if}
         {:else if view === 'cascading'}
-            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? writeAt : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
     </div>
@@ -1133,7 +1168,7 @@
             </div>
         {/if}
 
-        {#if view === 'rally'}
+        {#if view === 'rally' && mode !== 'commenting'}
             <!-- Rally settings: the setup and sliders for text size and speed (ticks, no labels) -->
             <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button onclick={() => ((rallyPlaying = false), (setupAsked = true), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
@@ -1198,8 +1233,9 @@
 {/if}
 <RallySetup bind:open={rallySetupOpen} writing={editing} bind:size={rallySize} bind:speed={rallySpeed} onstart={startRally} />
 <ConfirmDialog bind:request={deleteRequest} />
+<CommentDialog bind:request={commentRequest} />
 <NewTextDialog bind:request={newTextRequest} />
-<TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors }) => ((textTitle = title), (textAuthors = authors))} />
+<TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors, publicized }) => ((textTitle = title), (textAuthors = authors), (textPublicized = publicized))} />
 <MapModal bind:open={mapOpen} title={textTitle} paragraphs={shownText} onnavigate={goToSection} />
 <MapModal mode="matter" bind:open={matterOpen} onchoose={applyMatter} title={loadName} paragraphs={paragraphs} />
 <OwnTextsDialog bind:open={ownTextsOpen} onchoose={onOwnTextChosen} />

@@ -1,4 +1,5 @@
 import { json, error } from '@sveltejs/kit';
+import { LOCKED_MESSAGE } from '#lib/textStatus.js';
 import { deleteText, isProductionStatus, isRallyStyle, isVisibility, loadText, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
 
 /** A text with its paragraphs and sections arranged in order. */
@@ -22,7 +23,9 @@ export async function PUT({ params, request, locals }) {
 		...(body.productionStatus !== undefined ? { productionStatus: body.productionStatus } : {}),
 		...(body.visibility !== undefined ? { visibility: body.visibility } : {})
 	};
-	if (!(await saveText(params.id, locals, items, title, status))) error(404, 'No such text');
+	const saved = await saveText(params.id, locals, items, title, status);
+	if (saved === 'locked') error(409, LOCKED_MESSAGE);
+	if (!saved) error(404, 'No such text');
 	return json({ ok: true });
 }
 
@@ -31,13 +34,18 @@ export async function PATCH({ params, request, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
 	const body = await request.json().catch(() => null);
 	if (!isRallyStyle(body?.rallyStyle)) error(400, 'invalid rallyStyle');
-	if (!(await setRallyStyle(params.id, locals, body.rallyStyle))) error(404, 'No such text');
+	const set = await setRallyStyle(params.id, locals, body.rallyStyle);
+	if (set === 'locked') error(409, LOCKED_MESSAGE);
+	if (!set) error(404, 'No such text');
 	return json({ ok: true });
 }
 
 /** Permanently delete a text. */
 export async function DELETE({ params, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
-	if (!(await deleteText(params.id, locals))) error(404, 'No such text');
+	const result = await deleteText(params.id, locals);
+	if (result === 'locked') error(409, LOCKED_MESSAGE);
+	if (result === 'commented') error(409, "This text has commentaries, so it can't be deleted.");
+	if (!result) error(404, 'No such text');
 	return json({ ok: true });
 }

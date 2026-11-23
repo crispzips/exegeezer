@@ -1,13 +1,13 @@
 <script>
 	import MultiSelect from '#lib/components/MultiSelect.svelte';
-	import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
+	import { COMMENT_POLICIES, COMMENT_POLICY_LABELS, PRODUCTION_STATUSES, VISIBILITIES, LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 
 	/**
 	 * A modal for editing a whole text's properties (title, author, production status,
 	 * visibility; type and dates are shown). Open it by setting `request` to `{ id }`;
-	 * `onsaved({ title, authors })` is called after a successful save.
+	 * `onsaved({ title, authors, publicized })` is called after a successful save.
 	 *
-	 * @type {{ request: { id: string } | null, onsaved?: (saved: { title: string, authors: string[] }) => void }}
+	 * @type {{ request: { id: string } | null, onsaved?: (saved: { title: string, authors: string[], publicized: boolean }) => void }}
 	 */
 	let { request = $bindable(null), onsaved } = $props();
 
@@ -15,7 +15,7 @@
 	let dialogEl = $state();
 	/** @type {any} */
 	let info = $state(null);
-	let draft = $state({ title: '', personaIds: /** @type {string[]} */ ([]), productionStatus: '', visibility: '' });
+	let draft = $state({ title: '', personaIds: /** @type {string[]} */ ([]), productionStatus: '', visibility: '', commentPolicy: '' });
 	let message = $state('');
 	let busy = $state(false);
 
@@ -36,7 +36,7 @@
 			const res = await fetch(`/api/texts/${id}/properties`);
 			if (!res.ok) throw new Error(`${res.status}`);
 			info = await res.json();
-			draft = { title: info.title, personaIds: [...info.personaIds], productionStatus: info.productionStatus, visibility: info.visibility };
+			draft = { title: info.title, personaIds: [...info.personaIds], productionStatus: info.productionStatus, visibility: info.visibility, commentPolicy: info.commentPolicy };
 		} catch {
 			message = 'Could not load the text’s settings.';
 		}
@@ -55,7 +55,7 @@
 				return;
 			}
 			const names = draft.personaIds.map((/** @type {string} */ id) => info.authorChoices.find((/** @type {{ id: string }} */ c) => c.id === id)?.name).filter(Boolean);
-			onsaved?.({ title: draft.title.trim().slice(0, 200), authors: names });
+			onsaved?.({ title: draft.title.trim().slice(0, 200), authors: names, publicized: isPublicized(draft) });
 			dialogEl?.close();
 		} finally {
 			busy = false;
@@ -72,25 +72,32 @@
 	{#if request}
 		<form onsubmit={(e) => { e.preventDefault(); save(); }} class="flex flex-col gap-2 text-sm">
 			<h2 class="text-base font-semibold">Text settings</h2>
+			{#if info?.publicized}<p class="text-xs text-grey3">{LOCKED_MESSAGE} Only who may comment can still be changed.</p>{/if}
 			{#if info}
 				<label class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
 					<span class="text-grey3">Title</span>
-					<input bind:value={draft.title} maxlength="200" class="rounded-md px-2 py-1" />
+					<input bind:value={draft.title} maxlength="200" disabled={info.publicized} class="rounded-md px-2 py-1" />
 				</label>
-				<div class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2" title={info.publicized ? "The authors of a published, public text can't be changed" : ''}>
+				<div class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
 					<span class="text-grey3">Authors</span>
 					<MultiSelect label="Authors" placeholder="Choose authors" options={info.authorChoices.map((/** @type {{ id: string, name: string }} */ c) => ({ value: c.id, label: c.name }))} bind:value={draft.personaIds} disabled={info.publicized} />
 				</div>
 				<label class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
 					<span class="text-grey3">Production status</span>
-					<select bind:value={draft.productionStatus} class="rounded-md px-2 py-1">
+					<select bind:value={draft.productionStatus} disabled={info.publicized} class="rounded-md px-2 py-1">
 						{#each PRODUCTION_STATUSES as v (v)}<option value={v}>{v}</option>{/each}
 					</select>
 				</label>
 				<label class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
 					<span class="text-grey3">Visibility</span>
-					<select bind:value={draft.visibility} class="rounded-md px-2 py-1">
+					<select bind:value={draft.visibility} disabled={info.publicized} class="rounded-md px-2 py-1">
 						{#each VISIBILITIES as v (v)}<option value={v}>{v}</option>{/each}
+					</select>
+				</label>
+				<label class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
+					<span class="text-grey3">Commenting</span>
+					<select bind:value={draft.commentPolicy} class="rounded-md px-2 py-1">
+						{#each COMMENT_POLICIES as v (v)}<option value={v}>{COMMENT_POLICY_LABELS[v]}</option>{/each}
 					</select>
 				</label>
 				<dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-2 gap-y-1">

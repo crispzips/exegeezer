@@ -117,10 +117,15 @@ export const text_ = pgTable(
     title: text("title").notNull().default("Untitled"),
     // 'original' or 'commentary'
     type: text("type").notNull().default("original"),
+    // commentaries only: the text this is a commentary on. A commentary exists only in relation to its text, so a
+    // text with commentaries can't be deleted (no action: deleting a whole account, which removes them all at once, still works).
+    commentaryOn: uuid("commentary_on").references(/** @type {() => any} */ (() => text_.id), { onDelete: "no action" }),
     // 'idea' | 'draft' | 'under review' | 'published'; new texts start as drafts
     productionStatus: text("production_status").notNull().default("draft"),
     // 'private' | 'public'; chosen by the user when the text is created
     visibility: text("visibility").notNull().default("private"),
+    // who may comment on the text: 'authors' | 'invitation' | 'request' | 'anyone' (each includes the ones before it)
+    commentPolicy: text("comment_policy").notNull().default("authors"),
     // the rally type the text was given when its first rally began ('compose' | 'copy' | 'recall' | 'dictate');
     // null = none yet, so the rally's setup is offered. Only a starting point: any rally type can be used on any text.
     rallyStyle: text("rally_style"),
@@ -135,6 +140,9 @@ export const text_ = pgTable(
     index("text_personaId_idx").on(table.personaId),
     check("text_production_status_check", sql`${table.productionStatus} in ('idea', 'draft', 'under review', 'published')`),
     check("text_visibility_check", sql`${table.visibility} in ('private', 'public')`),
+    check("text_commentary_on_check", sql`(${table.type} = 'commentary') = (${table.commentaryOn} is not null)`),
+    index("text_commentaryOn_idx").on(table.commentaryOn),
+    check("text_comment_policy_check", sql`${table.commentPolicy} in ('authors', 'invitation', 'request', 'anyone')`),
     check("text_rally_style_check", sql`${table.rallyStyle} is null or ${table.rallyStyle} in ('compose', 'copy', 'recall', 'dictate')`),
   ],
 );
@@ -199,6 +207,31 @@ export const textItem = pgTable(
         or (${table.paragraphId} is null and ${table.sectionId} is not null and ${table.level} between 1 and 6)`,
     ),
   ],
+);
+
+// A comment is left on a paragraph of a text. Its words are a paragraph in a commentary on that text (so the
+// commentary, a text in its own right, holds its comments), and the row ties that paragraph to the one it is about.
+// A comment can't be left without both: removing either paragraph (or the commentary) removes the comment row.
+export const comment = pgTable(
+  "comment",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // the commentary (a text) this comment is part of
+    commentaryId: uuid("commentary_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    // the paragraph commented on, in the text the commentary is on
+    paragraphId: uuid("paragraph_id")
+      .notNull()
+      .references(() => paragraph.id, { onDelete: "cascade" }),
+    // the comment itself: a paragraph in the commentary
+    bodyParagraphId: uuid("body_paragraph_id")
+      .notNull()
+      .references(() => paragraph.id, { onDelete: "cascade" })
+      .unique(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("comment_commentaryId_idx").on(table.commentaryId), index("comment_paragraphId_idx").on(table.paragraphId)],
 );
 
 export const textRelations = relations(text_, ({ one, many }) => ({

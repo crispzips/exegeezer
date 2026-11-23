@@ -326,3 +326,79 @@ export function danglingCount(list) {
 export function insertAt(list, gap, items) {
 	return renumber([...list.slice(0, gap), ...items, ...list.slice(gap)]);
 }
+
+/**
+ * Move paragraphs to the end of a section (after everything in it, its subsections' contents included), in the order
+ * they already have in the text. Headers are left where they are.
+ * @template {Para} T
+ * @param {T[]} list
+ * @param {string[]} ids the paragraphs
+ * @param {string} sectionId a section's header
+ * @returns {T[]} the list unchanged when the section is not there
+ */
+export function appendToSection(list, ids, sectionId) {
+	if (!list.some((p) => p.id === sectionId && (p.level ?? 0) > 0)) return list;
+	const moving = new Set(ids.filter((id) => list.some((p) => p.id === id && (p.level ?? 0) === 0)));
+	if (!moving.size) return list;
+	const block = list.filter((p) => moving.has(p.id));
+	const rest = list.filter((p) => !moving.has(p.id));
+	const at = sectionEnd(rest, rest.findIndex((p) => p.id === sectionId));
+	return renumber([...rest.slice(0, at), ...block, ...rest.slice(at)]);
+}
+
+/**
+ * The sections among `ids`, as blocks (header and contents) in the order of the text; a section inside another one named is
+ * left out, as it moves with it.
+ * @template {Para} T
+ * @param {T[]} list
+ * @param {string[]} ids
+ * @returns {T[][]}
+ */
+export function sectionBlocks(list, ids) {
+	/** @type {T[][]} */
+	const blocks = [];
+	let end = -1;
+	list.forEach((p, i) => {
+		if (i < end || !ids.includes(p.id) || (p.level ?? 0) === 0) return;
+		end = sectionEnd(list, i);
+		blocks.push(list.slice(i, end));
+	});
+	return blocks;
+}
+
+/**
+ * Move paragraphs, or sections with their contents, to a gap: just before an item, or (when there is nothing after the
+ * gap) just after one. A moved section takes the level of the sections it now sits among, its own sections following.
+ * @template {Para} T
+ * @param {T[]} list
+ * @param {string[]} ids the paragraphs, or the sections' headers
+ * @param {{ before?: string, after?: string }} at the item the gap is before or after (a section counts with all its contents)
+ * @param {number} parentLevel the level of the section the gap is in (0 at the top)
+ * @returns {T[]} the same list when nothing would change
+ */
+export function moveToGap(list, ids, at, parentLevel) {
+	const anchor = at.before ?? at.after;
+	if (anchor === undefined || !list.some((p) => p.id === anchor)) return list;
+	const first = list.find((p) => p.id === ids[0]);
+	if (!first) return list;
+	const isSection = (first.level ?? 0) > 0;
+	/** @param {T[]} block */
+	const shifted = (block) => {
+		const delta = parentLevel + 1 - (block[0].level ?? 1);
+		return delta === 0 ? block : block.map((p) => {
+			const lv = p.level ?? 0;
+			if (lv === 0) return p;
+			const level = Math.max(1, Math.min(6, lv + delta));
+			return { ...p, level, text: p.text.replace(/^#{1,6}/, '#'.repeat(level)) };
+		});
+	};
+	const moving = isSection ? sectionBlocks(list, ids).flatMap(shifted) : list.filter((p) => ids.includes(p.id) && (p.level ?? 0) === 0);
+	if (!moving.length) return list;
+	const set = new Set(moving.map((p) => p.id));
+	if (set.has(anchor)) return list;
+	const gap = gapIndex(list, anchor, at.before !== undefined ? 'before' : 'after', false);
+	const rest = list.filter((p) => !set.has(p.id));
+	const to = gap - list.slice(0, gap).filter((p) => set.has(p.id)).length;
+	const next = [...rest.slice(0, to), ...moving, ...rest.slice(to)];
+	return next.every((p, i) => p.id === list[i].id && p.level === list[i].level) ? list : renumber(next);
+}

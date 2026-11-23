@@ -1,4 +1,5 @@
 <script>
+	import { MATTER_COLOR } from '#lib/utilities/sectionColor.js';
 	import { definitionsOf, isDefinition, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
@@ -24,7 +25,7 @@
 </script>
 
 {#snippet content(/** @type {NonNullable<typeof open>} */ s)}
-	<div class="max-h-[40vh] overflow-y-auto rounded-md border border-taupe2 bg-taupe1 px-4 py-3 text-sm text-dark">
+	<div class="max-h-[40vh] overflow-y-auto rounded-md border bg-taupe1 px-4 py-3 text-sm text-dark" style="border-color: {MATTER_COLOR}">
 		{#each s.paragraphs as p (p.id)}
 			{#if (p.level ?? 0) > 0}
 				<p class="mt-2 font-semibold">{p.text.replace(/^#+\s*/, '')}</p>
@@ -48,7 +49,8 @@
 					aria-expanded={openId === s.id}
 					onclick={() => (openId = openId === s.id ? null : s.id)}
 					title={s.title}
-					class="flex items-center gap-1 border border-taupe3 text-left text-taupe5 hover:bg-taupe2 {openId === s.id ? 'bg-taupe2' : 'bg-taupe1'} {tiny ? 'max-w-40 rounded-full px-2 py-0.5 text-[10px]' : 'rounded-md px-3 py-1.5 text-sm'}"
+					style="border-color: {MATTER_COLOR}"
+					class="flex items-center gap-1 border text-left text-taupe5 hover:bg-taupe2 {openId === s.id ? 'bg-taupe2' : 'bg-taupe1'} {tiny ? 'max-w-40 rounded-full px-2 py-0.5 text-[10px]' : 'rounded-md px-3 py-1.5 text-sm'}"
 				>
 					<svg class="h-3 w-3 shrink-0 transition-transform {openId === s.id ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor"><path d="M7 4l7 6-7 6z" /></svg>
 					<span class="truncate">{s.title}</span>

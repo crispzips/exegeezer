@@ -1,4 +1,5 @@
 <script>
+	import { MATTER_COLOR } from '#lib/utilities/sectionColor.js';
 	/**
 	 * A front or back matter section as a small bubble in the hierarchical view's top row.
 	 * Clicking it opens the section's text in a panel beneath the bubble (which floats over
@@ -27,10 +28,11 @@
 	bind:this={button}
 	type="button"
 	data-matter
+	style="border-color: {MATTER_COLOR}"
 	aria-expanded={open}
 	title={section.title}
 	onclick={toggle}
-	class="m-2 flex w-28 shrink-0 items-start gap-1 self-start rounded-md border-2 border-taupe3 px-2 py-1.5 text-left text-xs text-taupe5 hover:bg-taupe2 {open ? 'bg-taupe2' : 'bg-taupe1'}"
+	class="m-2 flex w-28 shrink-0 items-start gap-1 self-start rounded-md border-2 px-2 py-1.5 text-left text-xs text-taupe5 hover:bg-taupe2 {open ? 'bg-taupe2' : 'bg-taupe1'}"
 >
 	<svg class="mt-0.5 h-3 w-3 shrink-0 transition-transform {open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor"><path d="M7 4l7 6-7 6z" /></svg>
 	<span class="min-w-0 flex-1 break-words">{section.title}</span>
@@ -39,8 +41,8 @@
 {#if open}
 	<div
 		data-matter-panel
-		class="fixed z-30 max-h-[50vh] w-104 max-w-[calc(100vw-16px)] overflow-y-auto rounded-md border border-taupe3 bg-taupe1 px-4 py-3 text-sm text-dark shadow-lg"
-		style="left: {at.left}px; top: {at.top}px"
+		class="fixed z-30 max-h-[50vh] w-104 max-w-[calc(100vw-16px)] overflow-y-auto rounded-md border bg-taupe1 px-4 py-3 text-sm text-dark shadow-lg"
+		style="left: {at.left}px; top: {at.top}px; border-color: {MATTER_COLOR}"
 	>
 		{#each section.paragraphs as p (p.id)}
 			{#if (p.level ?? 0) > 0}

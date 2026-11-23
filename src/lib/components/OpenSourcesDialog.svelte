@@ -1,5 +1,6 @@
 <script>
 	import { ArrowUpRightSquare } from '@boxicons/svelte';
+	import RainLoader from './RainLoader.svelte';
 	import { combineTexts } from '#lib/utilities/combineTexts.js';
 
 	/** the most texts one batch may string together */
@@ -46,6 +47,8 @@
 	let importing = $state('');
 	let message = $state('');
 
+	/** a download is under way, so the dialog is locked */
+	const busy = $derived(!!importing || batchDone !== null);
 	const shown = $derived(sources?.filter((s) => !structuredOnly || s.structured) ?? []);
 	const pickedIndex = $derived(new Map(picked.map((p, i) => [`${p.source}\u0000${p.id}`, i])));
 	/** the sources a search goes to: ticked, shown, and switched on */
@@ -190,9 +193,12 @@
 <dialog
 	bind:this={dialogEl}
 	onclose={() => (open = false)}
-	onclick={(e) => e.target === dialogEl && dialogEl?.close()}
+	oncancel={(e) => busy && e.preventDefault()}
+	onclick={(e) => e.target === dialogEl && !busy && dialogEl?.close()}
 	class="m-auto h-[80vh] w-[min(92vw,48rem)] overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
+	<!-- while a text downloads (some take many seconds) nothing else can be done: inert blocks the mouse and the keyboard, and the dialog cannot be closed -->
+	<div inert={busy} class="flex min-h-0 flex-1 flex-col">
 	<div class="flex shrink-0 items-center justify-between gap-2">
 		<h2 class="text-base font-semibold">Import from open libraries</h2>
 		<button onclick={() => dialogEl?.close()} aria-label="Close" class="rounded-md px-2 py-1 text-lg leading-none hover:bg-taupe2">×</button>
@@ -275,8 +281,10 @@
 		</div>
 	{/if}
 
+	<!-- outside the scrolling list, so a failure is seen even when the results are scrolled down -->
+	{#if message}<p role="alert" class="mt-3 shrink-0 text-sm {results?.length ? 'text-red-700' : 'text-grey3'}">{message}</p>{/if}
+
 	<div class="mt-3 min-h-0 flex-1 overflow-y-auto">
-		{#if message}<p class="text-sm {results?.length ? 'text-red-700' : 'text-grey3'}">{message}</p>{/if}
 		{#if results?.length}
 			<ul class="divide-y divide-taupe2">
 				{#each results as r (`${r.source}\u0000${r.id}`)}
@@ -320,4 +328,15 @@
 			</details>
 		{/if}
 	</div>
+	</div>
+
+	{#if busy}
+		<div role="status" aria-live="polite" class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-taupe1/85 text-center">
+			<span class="text-violet"><RainLoader size={72} /></span>
+			<p class="text-sm font-medium">
+				{batchDone !== null ? `Importing text ${Math.min(batchDone + 1, picked.length)} of ${picked.length}…` : 'Importing…'}
+			</p>
+			<p class="max-w-xs text-xs text-grey3">Long works can take half a minute. Please wait.</p>
+		</div>
+	{/if}
 </dialog>

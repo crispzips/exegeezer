@@ -6,11 +6,14 @@ import * as poetrydb from './poetrydb.js';
 import * as wikibooks from './wikibooks.js';
 import * as federalRegister from './federalRegister.js';
 import * as ecfr from './ecfr.js';
-import * as europePmc from './europePmc.js';
+import * as pubmed from './pubmed.js';
+import * as devdocs from './devdocs.js';
+import * as markdownDocs from './markdownDocs.js';
 
 export { OPEN_SOURCES, HUMAN_SOURCES, SourceError };
 
-/** @typedef {{ id: string, title: string, author: string | null, detail: string, url: string }} SourceResult */
+/** @typedef {{ id: string, title: string, author: string | null, detail: string, url: string, tooBig?: boolean }} SourceResult */
+/* `tooBig`: the text cannot be imported (the detail says why), so the dialog shows it with its Import button and tick box switched off */
 /**
  * What an adapter gives back for one text. `details` is the rights and publication information that came with it
  * (stored with the text as imported details); all its values are plain strings and any may be empty.
@@ -20,7 +23,7 @@ export { OPEN_SOURCES, HUMAN_SOURCES, SourceError };
 /** @typedef {{ wholeOnly?: boolean }} SearchOptions */
 
 /** @type {Record<string, { search: (q: string, options?: SearchOptions) => Promise<SourceResult[]>, text: (id: string) => Promise<SourceText> }>} */
-const ADAPTERS = { 'internet-archive': internetArchive, wikisource, poetrydb, wikibooks, 'federal-register': federalRegister, ecfr, 'europe-pmc': europePmc };
+const ADAPTERS = { 'internet-archive': internetArchive, wikisource, poetrydb, wikibooks, 'federal-register': federalRegister, ecfr, pubmed, devdocs, 'markdown-docs': markdownDocs };
 
 /**
  * The sources, each with whether it can be used on this server right now.

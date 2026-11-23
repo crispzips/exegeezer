@@ -7,7 +7,7 @@
 const VOID = new Set(['br', 'hr', 'img', 'meta', 'link', 'input', 'wbr', 'col', 'source']);
 const SKIP_TAGS = new Set(['script', 'style', 'noscript', 'template', 'head', 'svg', 'math']);
 /** class names whose whole element is page furniture, not text */
-const SKIP_CLASSES = new Set(['ws-noexport', 'noprint', 'mw-editsection', 'reference', 'references', 'mw-empty-elt', 'navbox', 'toc', 'pagenum', 'ws-pagenum', 'wst-header', 'mw-cite-backlink', 'hatnote', 'metadata', 'ambox', 'sistersitebox', 'thumb']);
+const SKIP_CLASSES = new Set(['ws-noexport', 'noprint', 'mw-editsection', 'reference', 'references', 'mw-empty-elt', 'navbox', 'toc', 'pagenum', 'ws-pagenum', 'wst-header', 'mw-cite-backlink', 'hatnote', 'baseline-indicator', 'metadata', 'ambox', 'sistersitebox', 'thumb']);
 const BLOCK = new Set(['p', 'div', 'section', 'article', 'header', 'footer', 'blockquote', 'pre', 'figure', 'center', 'ul', 'ol', 'dl', 'dt', 'dd', 'table', 'tr', 'caption']);
 const NAMED = { nbsp: ' ', amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", mdash: '—', ndash: '–', hellip: '…', lsquo: '‘', rsquo: '’', ldquo: '“', rdquo: '”', emsp: '\u2003', ensp: '\u2002', thinsp: '\u2009' };
 
@@ -26,10 +26,14 @@ const TOKEN = /<!--[\s\S]*?-->|<(\/?)([a-zA-Z][a-zA-Z0-9]*)((?:"[^"]*"|'[^']*'|[
 
 /**
  * @param {string} html
- * @param {{ baseLevel?: number }} [options] the Markdown level the shallowest heading in the HTML is given (default 2)
+ * @param {{ baseLevel?: number, code?: boolean, skipTags?: string[] }} [options]
+ *   baseLevel: the Markdown level the shallowest heading in the HTML is given (default 2);
+ *   code: keep code as code (`inline` marks, fenced blocks with their indentation), as documentation needs;
+ *   skipTags: more elements to leave out whole (for example `aside` and `nav` on a documentation site)
  * @returns {string}
  */
-export function htmlToMarkdown(html, { baseLevel = 2 } = {}) {
+export function htmlToMarkdown(html, { baseLevel = 2, code = false, skipTags = [] } = {}) {
+	const extraSkip = new Set(skipTags);
 	let out = '';
 	/** @type {{ tag: string, skip: boolean }[]} */
 	const stack = [];
@@ -70,7 +74,7 @@ export function htmlToMarkdown(html, { baseLevel = 2 } = {}) {
 		const classes = /\bclass\s*=\s*(?:"([^"]*)"|'([^']*)')/i.exec(attrs);
 		const classList = (classes?.[1] ?? classes?.[2] ?? '').split(/\s+/);
 		const hidden = /\bdisplay\s*:\s*none/i.test(attrs) || /(?:^|\s)hidden(?=\s|$)/i.test(attrs);
-		const skip = SKIP_TAGS.has(tag) || hidden || classList.some((c) => SKIP_CLASSES.has(c));
+		const skip = SKIP_TAGS.has(tag) || extraSkip.has(tag) || hidden || classList.some((c) => SKIP_CLASSES.has(c));
 		if (VOID.has(tag) || /\/\s*$/.test(attrs)) {
 			if (!skipping && tag === 'br') out += heading ? ' ' : '\n';
 			continue;
@@ -81,7 +85,7 @@ export function htmlToMarkdown(html, { baseLevel = 2 } = {}) {
 			continue;
 		}
 		if (skipping) continue;
-		out += openTag(tag);
+		out += openTag(tag, attrs);
 	}
 	while (stack.length) {
 		const el = /** @type {{ tag: string, skip: boolean }} */ (stack.pop());
@@ -92,14 +96,22 @@ export function htmlToMarkdown(html, { baseLevel = 2 } = {}) {
 	}
 	return finish(out, baseLevel);
 
-	/** @param {string} tag */
-	function openTag(tag) {
+	/** @param {string} tag @param {string} attrs */
+	function openTag(tag, attrs) {
 		if (/^h[1-6]$/.test(tag)) {
 			heading = Number(tag[1]);
 			return `\n\n\u0001${heading} `;
 		}
-		if (tag === 'pre') pre++;
+		if (tag === 'pre') {
+			pre++;
+			if (code && pre === 1) {
+				const language = /\bdata-language\s*=\s*"([\w+#.-]{1,20})"/i.exec(attrs)?.[1] ?? '';
+				return `\n\n\u0003${language}\n`;
+			}
+		}
 		if (tag === 'li') return '\n\u0002';
+		if (code && !pre && tag === 'code') return markOpen('`');
+		if (code && pre) return BLOCK.has(tag) && tag !== 'pre' ? '\n' : '';
 		if (tag === 'i' || tag === 'em' || tag === 'cite') return markOpen('*');
 		if (tag === 'b' || tag === 'strong') return markOpen('**');
 		if (BLOCK.has(tag)) return '\n\n';
@@ -127,7 +139,12 @@ export function htmlToMarkdown(html, { baseLevel = 2 } = {}) {
 			heading = 0;
 			return '\n\n';
 		}
-		if (tag === 'pre') pre--;
+		if (tag === 'pre') {
+			pre--;
+			if (code && pre === 0) return '\n\u0003\n\n';
+		}
+		if (code && !pre && tag === 'code') return markClose('`');
+		if (code && pre) return '';
 		if (tag === 'i' || tag === 'em' || tag === 'cite') return markClose('*');
 		if (tag === 'b' || tag === 'strong') return markClose('**');
 		if (tag === 'li') return '\n';
@@ -146,13 +163,30 @@ function finish(raw, baseLevel) {
 	// eslint-disable-next-line no-control-regex
 	const levels = [...raw.matchAll(/\u0001(\d)/g)].map((m) => Number(m[1]));
 	const shallowest = levels.length ? Math.min(...levels) : 0;
+	let fenced = false; // inside a code block, whose lines keep their indentation and blank lines
 	const lines = raw
 		.replace(/(\*+)[ \t]+(?=\n)/g, '$1')
 		.split('\n')
-		.map((l) => l.replace(/[ \t\u00a0]+$/g, '').replace(/^[ \t\u00a0]+/, ''));
+		.map((l) => {
+			if (l.startsWith('\u0003')) {
+				fenced = !fenced;
+				return l;
+			}
+			return fenced ? l.replace(/\s+$/, '') : l.replace(/[ \t\u00a0]+$/g, '').replace(/^[ \t\u00a0]+/, '');
+		});
 	/** @type {string[]} */
 	const out = [];
+	fenced = false;
 	for (let line of lines) {
+		if (line.startsWith('\u0003')) {
+			fenced = !fenced;
+			out.push(fenced ? `\`\`\`${line.slice(1)}` : '```');
+			continue;
+		}
+		if (fenced) {
+			out.push(line);
+			continue;
+		}
 		if (line.startsWith('\u0001')) {
 			const n = Number(line[1]);
 			const title = line.slice(2).replace(/\*+/g, '').trim();

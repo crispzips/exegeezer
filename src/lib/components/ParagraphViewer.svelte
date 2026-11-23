@@ -782,8 +782,25 @@
 		</div>
 	</div>
 
-	<!-- Overview column: tiny copy of the whole text, scrolls in response -->
+	<!-- Both minimap columns side by side, with the jump buttons spanning the two of them -->
 	{#if paragraphs.length > 0}
+		{@const synW = PAD * 2 + laneCount * LANE_W + (laneCount - 1) * LANE_GAP}
+		<div class="flex shrink-0 flex-col">
+		{#if synopsis}
+			<!-- jump to the top: a small caret spanning both columns -->
+			<button
+				type="button"
+				aria-label="Jump to top"
+				use:tip={'Jump to top'}
+				onclick={() => mainEl?.scrollTo({ top: 0 })}
+				class="flex shrink-0 items-center justify-center border-l border-taupe2 bg-taupe1 text-taupe5 hover:bg-taupe2"
+				style="height: 21px"
+			>
+				<svg viewBox="0 0 20 20" fill="currentColor" style="height: 15px; width: 15px"><path d="M4 13l6-6 6 6-1.4 1.4L10 9.8l-4.6 4.6z" /></svg>
+			</button>
+		{/if}
+		<div class="flex min-h-0 flex-1">
+		<!-- Overview column: tiny copy of the whole text, scrolls in response -->
 		<div
 			bind:this={miniEl}
 			role="presentation"
@@ -820,23 +837,10 @@
 				></div>
 			</div>
 		</div>
-	{/if}
 
-	<!-- Synopsis column: the whole text at once, no scrolling, as gray blips -->
-	{#if synopsis && paragraphs.length > 0}
-		{@const synW = PAD * 2 + laneCount * LANE_W + (laneCount - 1) * LANE_GAP}
+		<!-- Synopsis column: the whole text at once, no scrolling, as gray blips -->
+		{#if synopsis}
 		<div class="flex shrink-0 flex-col border-l border-taupe2 bg-taupe1" style="width: {synW}px">
-		<!-- jump to the top: a small square caret spanning the column's width -->
-		<button
-			type="button"
-			aria-label="Jump to top"
-			use:tip={'Jump to top'}
-			onclick={() => mainEl?.scrollTo({ top: 0 })}
-			class="flex shrink-0 items-center justify-center text-taupe5 hover:bg-taupe2"
-			style="width: {synW}px; height: {synW}px"
-		>
-			<svg viewBox="0 0 20 20" fill="currentColor" class="h-3/5 w-3/5"><path d="M4 13l6-6 6 6-1.4 1.4L10 9.8l-4.6 4.6z" /></svg>
-		</button>
 		<div
 			bind:this={synEl}
 			role="presentation"
@@ -892,17 +896,22 @@
 				</div>
 			{/if}
 		</div>
-		<!-- jump to the bottom -->
-		<button
-			type="button"
-			aria-label="Jump to bottom"
-			use:tip={'Jump to bottom'}
-			onclick={() => mainEl?.scrollTo({ top: mainEl.scrollHeight })}
-			class="flex shrink-0 items-center justify-center text-taupe5 hover:bg-taupe2"
-			style="width: {synW}px; height: {synW}px"
-		>
-			<svg viewBox="0 0 20 20" fill="currentColor" class="h-3/5 w-3/5"><path d="M4 7l1.4-1.4L10 10.2l4.6-4.6L16 7l-6 6z" /></svg>
-		</button>
+		</div>
+		{/if}
+		</div>
+		{#if synopsis}
+			<!-- jump to the bottom: spans both columns -->
+			<button
+				type="button"
+				aria-label="Jump to bottom"
+				use:tip={'Jump to bottom'}
+				onclick={() => mainEl?.scrollTo({ top: mainEl.scrollHeight })}
+				class="flex shrink-0 items-center justify-center border-l border-taupe2 bg-taupe1 text-taupe5 hover:bg-taupe2"
+				style="height: 21px"
+			>
+				<svg viewBox="0 0 20 20" fill="currentColor" style="height: 15px; width: 15px"><path d="M4 7l1.4-1.4L10 10.2l4.6-4.6L16 7l-6 6z" /></svg>
+			</button>
+		{/if}
 		</div>
 	{/if}
 </div>

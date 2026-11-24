@@ -408,7 +408,7 @@ export async function authorChoices(locals) {
 		.innerJoin(persona, eq(userPersona.personaId, persona.id))
 		.where(eq(userPersona.userId, uid))
 		.orderBy(desc(userPersona.isSelf), asc(persona.createdAt));
-	return rows.map((r) => ({ id: r.id, name: r.isSelf ? (locals.user?.name ?? r.name) : r.name }));
+	return rows.map((r) => ({ id: r.id, name: r.isSelf ? (locals.user?.name || r.name) : r.name }));
 }
 
 /**

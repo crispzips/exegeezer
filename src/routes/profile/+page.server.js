@@ -3,7 +3,7 @@ import { and, asc, count, desc, eq } from 'drizzle-orm';
 import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.js';
 import { persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
-import { authorIds, deleteText, isProductionStatus, isVisibility, setAuthors } from '#lib/server/texts.js';
+import { authorIds, deleteText, isProductionStatus, isVisibility, loadText, setAuthors } from '#lib/server/texts.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 import { isReservedName, selfPersonaId } from '#lib/server/personae.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -43,9 +43,18 @@ export const load = async ({ locals }) => {
 	const publicizedIds = new Set(used.filter(isPublicized).map((t) => t.id));
 	const locked = new Set(authorRows.filter((r) => publicizedIds.has(r.textId)).map((r) => r.personaId));
 	// a persona's name as an author: a user's "self" is shown as the user's profile name
-	const authorName = (/** @type {{ isSelf: boolean, name: string }} */ pa) => (pa.isSelf ? row.name : pa.name);
+	const authorName = (/** @type {{ isSelf: boolean, name: string }} */ pa) => (pa.isSelf ? row.name || pa.name : pa.name);
 	const authors = new Map(personae.map((pa) => [pa.id, authorName(pa)]));
+	// "about me": Markdown, or one of the user's own published, public texts (shown in its place)
+	const aboutChoices = used.filter(isPublicized).map((t) => ({ id: t.id, title: t.title }));
+	const aboutText = row.aboutTextId && aboutChoices.some((t) => t.id === row.aboutTextId) ? await loadText(row.aboutTextId, locals) : null;
 	return {
+		about: {
+			markdown: row.about ?? '',
+			textId: aboutText ? row.aboutTextId : null,
+			text: aboutText ? { id: aboutText.id, title: aboutText.title, items: aboutText.items.map((i) => ({ id: i.id, text: i.text })) } : null,
+			choices: aboutChoices
+		},
 		textCount: n,
 		texts: texts.map((t) => ({ ...t, author: (authorsOf.get(t.id) ?? []).map((p) => authors.get(p)).filter(Boolean).join(', ') || null, publicized: isPublicized(t) })),
 		authorChoices: personae.map((pa) => ({ id: pa.id, name: authorName(pa) })),
@@ -79,6 +88,27 @@ export const actions = {
 			return fail(400, { message: error instanceof APIError ? error.message : 'Could not save.', name });
 		}
 		return { saved: true, name };
+	},
+
+	updateAbout: async ({ request, locals }) => {
+		if (!locals.user) redirect(302, '/login');
+		const formData = await request.formData();
+		const mode = formData.get('mode')?.toString() ?? '';
+		const markdown = (formData.get('about')?.toString() ?? '').replace(/\r\n/g, '\n').slice(0, 50000);
+		const textId = formData.get('textId')?.toString() ?? '';
+		if (mode === 'text') {
+			if (!UUID.test(textId)) return fail(400, { aboutMessage: 'Choose one of your published, public texts.', aboutMarkdown: markdown });
+			const [t] = await db
+				.select({ productionStatus: text_.productionStatus, visibility: text_.visibility })
+				.from(text_)
+				.where(and(eq(text_.id, textId), eq(text_.userId, locals.user.id)));
+			if (!t || !isPublicized(t)) return fail(400, { aboutMessage: 'Only one of your own published, public texts can be your about.', aboutMarkdown: markdown });
+			// the Markdown stays saved, so switching back to writing finds it again
+			await db.update(user).set({ aboutTextId: textId, about: markdown.trim() || null }).where(eq(user.id, locals.user.id));
+		} else if (mode === 'markdown') {
+			await db.update(user).set({ aboutTextId: null, about: markdown.trim() || null }).where(eq(user.id, locals.user.id));
+		} else return fail(400, { aboutMessage: 'Could not save.', aboutMarkdown: markdown });
+		return { aboutSaved: true };
 	},
 
 	createPersona: async ({ request, locals }) => {

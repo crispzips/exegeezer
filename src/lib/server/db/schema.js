@@ -9,6 +9,15 @@ export const user = pgTable("user", {
   email: text("email").notNull().unique(),
   emailVerified: boolean("email_verified").default(false).notNull(),
   image: text("image"),
+  // admin plugin: 'admin' may switch into any other account (impersonate); everyone else is 'user'
+  role: text("role"),
+  banned: boolean("banned").default(false),
+  banReason: text("ban_reason"),
+  banExpires: timestamp("ban_expires"),
+  // the user's "about me": Markdown written on the profile (images and code included), or ...
+  about: text("about"),
+  // ... one of the user's own published, public texts, shown in its place (null = none chosen)
+  aboutTextId: uuid("about_text_id").references(/** @type {() => any} */ (() => text_.id), { onDelete: "set null" }),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()
@@ -28,6 +37,8 @@ export const session = pgTable(
       .notNull(),
     ipAddress: text("ip_address"),
     userAgent: text("user_agent"),
+    // set while an admin is switched into this account: the admin's user id
+    impersonatedBy: text("impersonated_by"),
     userId: text("user_id")
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),

@@ -2,7 +2,7 @@
 export const THEMES = /** @type {const} */ ([
 	{ id: 'taupe', label: 'Taupe', hint: 'Warm parchment', credit: [{ text: 'Solarized Light', url: 'https://ethanschoonover.com/solarized/', by: 'Ethan Schoonover' }] },
 	{ id: 'soft', label: 'Soft', hint: 'Rosé Pine Dawn', credit: [{ text: 'Rosé Pine Dawn', url: 'https://rosepinetheme.com/palette/', by: 'the Rosé Pine project' }] },
-	{ id: 'rose', label: 'Rose', hint: 'Catppuccin Frappé, inverted', credit: [{ text: 'Catppuccin Frappé and Latte', url: 'https://catppuccin.com/palette/', by: 'the Catppuccin project' }] },
+	{ id: 'rose', label: 'Rose', hint: 'Catppuccin Frappé, inverted', credit: [{ text: 'Catppuccin Frappé', url: 'https://catppuccin.com/palette/', by: 'the Catppuccin project' }] },
 	{ id: 'dark', label: 'Dark', hint: 'Solarized Dark', credit: [{ text: 'Solarized Dark', url: 'https://ethanschoonover.com/solarized/', by: 'Ethan Schoonover' }] },
 	{ id: 'cyber', label: 'Cyber', hint: 'Neon green on near-black' },
 	{ id: 'fluorescent', label: 'Fluorescent', hint: 'Bright white, black text, rainbow accents' }

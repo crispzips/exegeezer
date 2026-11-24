@@ -167,18 +167,15 @@ const ABBREVIATION = /(?:^|[\s("'“‘])(?:mr|mrs|ms|dr|prof|sr|jr|st|vs|etc|fi
 const SENTENCE_BREAK = /([.!?]+["'”’)\]]*)\s+(?=["“‘(\[]*[A-Z0-9])/g;
 
 /**
- * Reading mode shows a paragraph's first and last sentences larger than the sentences between
- * them (each can be turned off, see `emphasis`): wraps those two in `<span class="sent-end">` (set apart on lines of their own by the stylesheet),
- * and the sentences between in `<span class="sent-body">`. Works on rendered HTML (tags are left
- * alone, and a footnote mark is not counted as text); a paragraph of fewer than three sentences
- * has no body to set them off from (it is left as it is unless `short`), and a heading is left as it is.
+ * Reading mode can set a paragraph's first sentence apart (see `emphasis`): wraps it in `<span class="sent-first">`
+ * (larger, on a line of its own, by the stylesheet) and the sentences after it in `<span class="sent-body">`.
+ * Works on rendered HTML (tags are left alone, and a footnote mark is not counted as text); a heading is left as
+ * it is, and so is a paragraph of a single sentence unless `short`.
  * @param {string} html
- * @param {boolean} [short] also set off the first and last sentences of a paragraph of fewer than three (the linear view does):
- *   two sentences are both set off with no body between them, and a lone sentence is its own first and last
+ * @param {boolean} [short] also set off the sentence of a paragraph of just one (the linear view does)
  */
-export function emphasizeEnds(html, short = false) {
-	const { first, last } = emphasis;
-	if (!html || (!first && !last) || /^\s*<h[1-6]\b/i.test(html)) return html;
+export function emphasizeFirst(html, short = false) {
+	if (!html || !emphasis.first || /^\s*<h[1-6]\b/i.test(html)) return html;
 	const tokens = html.split(/(<[^>]*>)/);
 	// the text a reader sees (footnote marks left out), with where each piece of it begins
 	let plain = '';
@@ -206,21 +203,18 @@ export function emphasizeEnds(html, short = false) {
 	}
 	if (!plain.trim()) return html;
 	const sentences = breaks.length + 1;
-	if (sentences < 3 && !short) return html; // the other views leave a short paragraph as it is
+	if (sentences < 2 && !short) return html; // a lone sentence has nothing to be set off from
 	// the first sentence takes the space after it with it, so the body does not begin with a blank
-	// (with one of them turned off, that sentence is simply part of the body)
-	// a lone sentence is both the first and the last; two sentences are the first and the last with no body between them
-	const firstEnd = first ? (sentences > 1 ? breaks[0].start : plain.length + 1) : 0;
-	const lastStart = last ? (sentences > 1 ? breaks[breaks.length - 1].start : 0) : plain.length + 1;
-	const lastEnd = last ? plain.trimEnd().length : 0;
-	const OPEN = { end: '<span class="sent-end">', last: '<span class="sent-end">', body: '<span class="sent-body">' };
+	// (a lone sentence is the first and there is no body)
+	const firstEnd = sentences > 1 ? breaks[0].start : plain.length + 1;
+	const OPEN = { first: '<span class="sent-first">', body: '<span class="sent-body">' };
 	const VOID = /^<(?:img|br|hr|input|wbr)\b/i;
 	let out = '';
 	/** the elements open at this point, and how many were open where the span began (-1: no span is open) */
 	/** @type {{ open: string, close: string }[]} */
 	const stack = [];
 	let spanDepth = -1;
-	/** which kind of span is open: the large first and last sentences, or the body between them */
+	/** which kind of span is open: the large first sentence, or the body after it */
 	let kind = '';
 	/** shut the span: first the elements opened inside it, which are opened again after it */
 	const closeSpan = () => {
@@ -243,19 +237,18 @@ export function emphasizeEnds(html, short = false) {
 			out += tok;
 			return;
 		}
-		// cut this piece of text where a large part begins or ends
+		// cut this piece of text where the first sentence ends
 		const cuts = [a, a + tok.length];
-		for (const c of [firstEnd, lastStart, lastEnd]) if (c > a && c < a + tok.length) cuts.push(c);
+		if (firstEnd > a && firstEnd < a + tok.length) cuts.push(firstEnd);
 		cuts.sort((x, y) => x - y);
 		for (let k = 0; k < cuts.length - 1; k++) {
 			const x = cuts[k];
 			const piece = tok.slice(x - a, cuts[k + 1] - a);
 			if (piece.trim() !== '') {
-				// the first and last are told apart even when they touch (two sentences), so each is a block of its own
-				const want = x < firstEnd ? 'end' : x >= lastStart && x < lastEnd ? 'last' : x >= firstEnd && x < lastStart ? 'body' : '';
+				const want = x < firstEnd ? 'first' : 'body';
 				if (spanDepth >= 0 && want !== kind) closeSpan();
 				if (want && spanDepth < 0) {
-					out += OPEN[/** @type {'end' | 'last' | 'body'} */ (want)];
+					out += OPEN[/** @type {'first' | 'body'} */ (want)];
 					spanDepth = stack.length;
 					kind = want;
 				}
@@ -268,10 +261,10 @@ export function emphasizeEnds(html, short = false) {
 }
 
 /**
- * Plain paragraph text (shown as written, line breaks kept) as HTML with its first and last sentences marked.
+ * Plain paragraph text (shown as written, line breaks kept) as HTML with its first sentence marked.
  * @param {string} text
- * @param {boolean} [short] see {@link emphasizeEnds}
+ * @param {boolean} [short] see {@link emphasizeFirst}
  */
-export function plainEnds(text, short = false) {
-	return emphasizeEnds(md.utils.escapeHtml(text), short);
+export function plainFirst(text, short = false) {
+	return emphasizeFirst(md.utils.escapeHtml(text), short);
 }

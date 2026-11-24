@@ -13,6 +13,7 @@
     import ParagraphViewer from '#lib/components/ParagraphViewer.svelte';
     import CascadingViewer from '#lib/components/CascadingViewer.svelte';
     import RallySetup from '#lib/components/RallySetup.svelte';
+    import EmphasisToggle from '#lib/components/EmphasisToggle.svelte';
     import RallyViewer from '#lib/components/RallyViewer.svelte';
     import RallyWriter from '#lib/components/RallyWriter.svelte';
     import { emphasis } from '#lib/emphasis.svelte.js';
@@ -1251,7 +1252,6 @@
             const found = SIZES.indexOf(saved.rallySizeRem);
             if (found >= 0) rallySize = found;
             if (typeof saved.emphasizeFirst === 'boolean') emphasis.first = saved.emphasizeFirst;
-            if (typeof saved.emphasizeLast === 'boolean') emphasis.last = saved.emphasizeLast;
             if (Number.isInteger(saved.rallySpeed) && saved.rallySpeed >= 0 && saved.rallySpeed < READ_WPM.length) rallySpeed = saved.rallySpeed;
         } catch {
             // no saved settings (or storage is blocked): the defaults stand
@@ -1260,7 +1260,7 @@
     });
 
     $effect(() => {
-        const settings = { view, mode: chosenMode, exploded, zoom: ZOOMS[zoomStep], appearance: { size: SIZE_STEPS[sizeStep], line: LINE_STEPS[lineStep], letter: LETTER_STEPS[letterStep], side: MARGIN_STEPS[sideStep] }, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first, emphasizeLast: emphasis.last };
+        const settings = { view, mode: chosenMode, exploded, zoom: ZOOMS[zoomStep], appearance: { size: SIZE_STEPS[sizeStep], line: LINE_STEPS[lineStep], letter: LETTER_STEPS[letterStep], side: MARGIN_STEPS[sideStep] }, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first };
         if (!restored) return;
         try {
             localStorage.setItem(REMEMBER, JSON.stringify(settings));
@@ -1636,6 +1636,8 @@
             <!-- Rally settings: the setup and sliders for text size and speed (ticks, no labels) -->
             <div class="submenu flex w-full flex-col items-center gap-1 py-1">
                 <button onclick={() => ((rallyPlaying = false), (setupAsked = true), (rallyStarted = false), (rallySetupOpen = true))} aria-label="Rally setup" use:tip={'Rally setup'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"><Cog /></button>
+                <!-- the rally's reading also sets first and last sentences apart; the same four-way toggle as in text appearance -->
+                {#if mode === 'reading'}<EmphasisToggle />{/if}
                 <!-- text size and speed: each a vertical slider (smallest / slowest at the bottom, a tick for every step, no labels), shown when its icon is pressed -->
                 <button onclick={() => (sizeOpen = !sizeOpen)} aria-label="Text size" aria-expanded={sizeOpen} use:tip={'Text size'} class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2 {sizeOpen ? 'outline-2 -outline-offset-2 outline-taupe4' : ''}"><TextHeight /></button>
                 {#if sizeOpen}
@@ -1701,6 +1703,7 @@
                                 </div>
                             {/if}
                         {/each}
+                        <EmphasisToggle />
                         <button onclick={resetAppearance} aria-label="Revert text appearance" use:tip={'Revert to how it was when you opened this text'} class="inline-flex items-center justify-center rounded-md p-1 text-xs text-dark hover:bg-taupe3">↺</button>
                     </div>
                 {/if}
@@ -1868,7 +1871,7 @@
                 </aside>
             {/if}
             <div class="min-h-0 min-w-0 flex-1">
-                <ParagraphViewer paragraphs={previewShown} matter={previewMatter} markdown={previewMarkdown} zoom={0.75} jumpToId={previewSpot} emphasizeEnds={false} empty="No text loaded yet." />
+                <ParagraphViewer paragraphs={previewShown} matter={previewMatter} markdown={previewMarkdown} zoom={0.75} jumpToId={previewSpot} emphasizeFirst={false} empty="No text loaded yet." />
             </div>
         </div>
     </section>

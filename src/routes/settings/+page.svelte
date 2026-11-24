@@ -90,7 +90,7 @@
 	.theme-card[data-theme='taupe'] { --sw5: #3e2415; --sw4: #9a7b55; --sw3: #d3c3a1; --sw-bg: #fdf6e3; }
 	.theme-card[data-theme='soft'] { --sw5: #575279; --sw4: #9893a5; --sw3: #dfdad9; --sw-bg: #faf4ed; }
 	.theme-card[data-theme='dark'] { --sw5: #eee8d5; --sw4: #586e75; --sw3: #2a4f5b; --sw-bg: #002b36; }
-	.theme-card[data-theme='rose'] { --sw5: #3b3845; --sw4: #987894; --sw3: #c094b8; --sw-bg: #f4b8e4; }
+	.theme-card[data-theme='rose'] { --sw5: #3b3845; --sw4: #dc7fc4; --sw3: #d3a3ab; --sw-bg: #f6d7db; }
 	.theme-card[data-theme='fluorescent'] { --sw5: #000000; --sw4: #00b300; --sw3: #0000ff; --sw-bg: #ffffff; }
 	.theme-card[data-theme='cyber'] { --sw5: #39ff88; --sw4: #1fb85e; --sw3: #1a4a35; --sw-bg: #090c12; }
 </style>

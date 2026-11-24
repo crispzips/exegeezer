@@ -13,7 +13,7 @@
 	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
 		import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
-	import { definitionsOf, emphasizeEnds, isDefinition, plainEnds, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeFirst, isDefinition, plainFirst, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * A scrolling list of paragraphs with a minimap-style overview column.
@@ -36,7 +36,7 @@
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void,
 	 *   zoom?: number,
 	 *   jumpToId?: string | null,
-	 *   emphasizeEnds?: boolean
+	 *   emphasizeFirst?: boolean
 	 * }}
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
@@ -67,8 +67,8 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1, jumpToId = null, emphasizeEnds: setOffEnds = true } = $props();
-	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger (unless `emphasizeEnds` is false: the import preview) */
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1, jumpToId = null, emphasizeFirst: setOffEnds = true } = $props();
+	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger (unless `emphasizeFirst` is false: the import preview) */
 	const reading = $derived(!ondelete && setOffEnds);
 
 	/** reference definitions ("[image1]: url") shared by every paragraph */
@@ -690,9 +690,9 @@
 		<!-- a reference or footnote definition: shown as plain text; its content appears where it is used -->
 		<p class="flex-1 whitespace-pre-wrap text-xs text-grey3">{para.text}</p>
 	{:else if markdown}
-		<div class="md ends-aligned min-w-0 flex-1 {pt}">{@html reading ? emphasizeEnds(renderMarkdown(para.text, defs, scope + para.id), true) : renderMarkdown(para.text, defs, scope + para.id)}</div>
+		<div class="md ends-aligned min-w-0 flex-1 {pt}">{@html reading ? emphasizeFirst(renderMarkdown(para.text, defs, scope + para.id), true) : renderMarkdown(para.text, defs, scope + para.id)}</div>
 	{:else}
-		<p class="ends-aligned flex-1 whitespace-pre-wrap {pt}">{#if reading}{@html plainEnds(para.text, true)}{:else}{para.text}{/if}</p>
+		<p class="ends-aligned flex-1 whitespace-pre-wrap {pt}">{#if reading}{@html plainFirst(para.text, true)}{:else}{para.text}{/if}</p>
 	{/if}
 {/snippet}
 

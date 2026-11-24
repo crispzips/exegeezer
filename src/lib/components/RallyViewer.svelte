@@ -2,7 +2,7 @@
 	import { untrack } from 'svelte';
 	import { Play, Pause, SkipNext, SkipPrevious } from '@boxicons/svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { definitionsOf, emphasizeEnds, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeFirst, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
 	import { buildSections } from '#lib/utilities/buildSections.js';
 	import { colorSections } from '#lib/utilities/sectionColor.js';
 	import { rallyChunks, readMs as readTime, READ_WPM, SIZES } from '#lib/utilities/rallyChunks.js';
@@ -149,7 +149,7 @@
 		<div class="relative min-h-0 flex-1 overflow-hidden text-dark [container-type:size]" style={fontStyle}>
 			{#each around as { c, offset } (c.id)}
 				<div role="presentation" onclick={() => { const k = chunks.findIndex((x) => x.id === c.id); if (k >= 0) index = k; }} bind:offsetHeight={heights[c.id]} class="rally-chunk {offset === 0 ? '' : 'cursor-pointer'} absolute top-1/2 left-1/2 flex max-h-[90%] w-1/2 -translate-y-1/2 items-center justify-center overflow-hidden text-center transition-[transform,opacity] duration-500 ease-out {BUBBLE} {offset === 0 ? 'z-20' : ''} {c.header ? 'font-semibold' : ''}" style="{slide(offset)}; {tint(c.paraId)}">
-					<div>{@html emphasizeEnds(renderMarkdown(c.text, defs, c.id))}</div>
+					<div>{@html emphasizeFirst(renderMarkdown(c.text, defs, c.id))}</div>
 				</div>
 			{/each}
 			<!-- the ghosts fade into the page at the top and bottom; the current paragraph sits above this fade -->

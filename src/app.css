@@ -212,8 +212,8 @@ body {
   --color-green: #568a6a;
   --color-accent: #907aa9;
 }
-/* Rose: Catppuccin Frappé inverted (https://catppuccin.com/palette/ ). Frappé's pink is the paper and its dark base is the ink; the section hues
-   are Latte's deeper colours, which stay visible on pink (both flavours are Catppuccin: https://catppuccin.com/palette/ ) */
+/* Rose: Catppuccin Frappé inverted (https://catppuccin.com/palette/ ). Frappé's flamingo (toned down) is the paper, its dark base is the ink and pink is the accent; the section hues
+   are Frappé's too, each darkened a step so they show on the pink page (https://catppuccin.com/palette/ ) */
 :root[data-theme="rose"] {
   color-scheme: light;
   --color-dark: #3b3845;
@@ -223,20 +223,22 @@ body {
   --color-grey2: #6f6a85;
   --color-grey1: #857f98;
   --color-taupe5: #3b3845;
-  --color-taupe4: #987894; /* strong border edge and drop shadows */
-  --color-taupe3: #c094b8; /* borders and the light edge */
-  --color-taupe2: #deaad1; /* hover and raised backgrounds */
-  --color-taupe1: #f4b8e4; /* the page: Frappé pink */
-  --color-taupe0: #f9d8f0; /* the lightest */
-  --color-accent: #8839ef; /* mauve */
-  --color-violet: #8839ef; /* mauve */
-  --color-red: #d20f39;
-  --color-magenta: #e64553; /* maroon */
-  --color-orange: #fe640b; /* peach */
-  --color-yellow: #df8e1d;
-  --color-green: #40a02d;
-  --color-cyan: #179299; /* teal */
-  --color-blue: #04a5e5; /* sky */
+  --color-taupe4: #a98389; /* strong border edge and drop shadows */
+  --color-taupe3: #d3a3ab; /* borders and the light edge */
+  --color-taupe2: #edc4cb; /* hover and raised backgrounds */
+  --color-taupe1: #f6d7db; /* the page: Frappé flamingo pushed toward pink, toned down */
+  --color-taupe0: #fbeaec; /* the lightest */
+  --color-accent: #dc7fc4; /* Frappé pink, a step darker */
+  --color-on-accent: #3b3845;
+  --color-on-hue: #3b3845; /* text on a section colour: dark, since Frappé's hues are pastels */
+  --color-violet: #a97bd0; /* mauve */
+  --color-red: #d05a5d;
+  --color-magenta: #d4777b; /* maroon */
+  --color-orange: #dc7f4f; /* peach */
+  --color-yellow: #c9a25c;
+  --color-green: #7fb35e;
+  --color-cyan: #55a99d; /* teal */
+  --color-blue: #5eb1c4; /* sky */
 }
 /* Solarized Dark by Ethan Schoonover (https://ethanschoonover.com/solarized/ ): base03 page, base02 raised, base01 edges, base0/base1 text */
 :root[data-theme="dark"] {
@@ -307,14 +309,14 @@ body {
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }
 .md p { margin: 0; white-space: pre-wrap; }
-/* reading mode: a paragraph's first and last sentences stand on their own lines, set larger and justified,
+/* reading mode: a paragraph's first sentence can stand on its own line, set larger and justified,
    on a faint highlight with rounded, blurred edges (the glow is a shadow of the same colour) */
-:has(> .sent-end) { text-align: left; } /* the body sentences stay left-aligned, even in the rally's centred bubbles */
-/* the rally's bubbles hold the body sentences further in from the bubble's edge than the first and last */
+:has(> .sent-first) { text-align: left; } /* the body sentences stay left-aligned, even in the rally's centred bubbles */
+/* the rally's bubbles hold the body sentences further in from the bubble's edge than the first sentence */
 .rally-chunk .sent-body { display: block; padding: 0 1.25em; }
-/* the linear view: the sentences between the emphasised first and last are indented past where the emphasised text starts (that is 0.6em: 0.5em of their own, larger, size) */
+/* the linear view: the sentences after the emphasised first are indented past where the emphasised text starts (that is 0.6em: 0.5em of their own, larger, size) */
 .ends-aligned .sent-body { display: block; padding-left: 1.4em; }
-.sent-end {
+.sent-first {
   display: block;
   text-align: justify;
   font-size: 1.2em;

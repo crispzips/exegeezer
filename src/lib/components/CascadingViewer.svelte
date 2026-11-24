@@ -6,7 +6,7 @@
 	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
-	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeFirst, plainFirst, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 	import DropTip from '#lib/components/DropTip.svelte';
 	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
@@ -1118,7 +1118,7 @@
 							<!-- double-clicked: the text is edited in place; Enter or leaving saves, Esc cancels -->
 							<p use:editable={{ text: p.node.paragraph.text, caret: inlineCaret, onfinish: (t) => finishInline(pid, t), onenter: onadd && onnewitem ? (r) => askNew(pid, 'paragraph', r) : undefined }} class="whitespace-pre-wrap outline-none"></p>
 						{:else}
-							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html onedit ? notes.get(pid) : emphasizeEnds(notes.get(pid) ?? '')}{:else if onedit}{p.node.paragraph.text}{:else}{@html plainEnds(p.node.paragraph.text)}{/if}</p>
+							<p class="md whitespace-pre-wrap">{#if notes.get(pid)}{@html onedit ? notes.get(pid) : emphasizeFirst(notes.get(pid) ?? '')}{:else if onedit}{p.node.paragraph.text}{:else}{@html plainFirst(p.node.paragraph.text)}{/if}</p>
 						{/if}
 						{#if !exploded && inlineEditId !== pid}
 							<!-- the bubble's menu: top right, shown on hover, a vertical stack of buttons -->
@@ -1284,7 +1284,7 @@
 			{#if current.title}<h2 class="mb-1 text-center text-xl font-semibold">{current.title}</h2>{/if}
 			{#if current.description}<p class="mb-4 text-center text-sm text-grey3 italic">{current.description}</p>{/if}
 			<div bind:this={textBox} onscroll={measureMore} class="min-h-0 flex-1 overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-				<p class="md para-text whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html emphasizeEnds(notes.get(current.id) ?? '')}{:else}{@html plainEnds(current.text)}{/if}</p>
+				<p class="md para-text whitespace-pre-wrap text-xl leading-relaxed">{#if notes.get(current.id)}{@html emphasizeFirst(notes.get(current.id) ?? '')}{:else}{@html plainFirst(current.text)}{/if}</p>
 			</div>
 			{#if more}
 				<div class="pointer-events-none -mt-8 h-8 shrink-0 bg-gradient-to-t from-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] to-transparent text-center text-xl leading-8 text-grey2" aria-hidden="true">…</div>

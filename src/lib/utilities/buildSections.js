@@ -84,3 +84,14 @@ export function ancestorsOf(tree, id) {
 	}
 	return null;
 }
+
+/**
+ * How many paragraphs a section holds all together: its own and those of every section beneath it.
+ * @param {Section} section
+ * @returns {number}
+ */
+export function countParagraphs(section) {
+	let n = 0;
+	for (const c of section.children) n += c.kind === 'paragraph' ? 1 : countParagraphs(c);
+	return n;
+}

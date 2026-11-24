@@ -44,6 +44,11 @@
 			{/each}
 		</p>
 
+		<h2 class="mb-3 font-medium text-dark">Account</h2>
+		<form method="post" action="/logout" class="mb-8">
+			<button class="rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90">Sign out</button>
+		</form>
+
 		{#if data.hasPassword}
 			<h2 class="mb-3 font-medium text-dark">Change password</h2>
 			<form
@@ -69,7 +74,7 @@
 				</label>
 				{#if form?.message}<p role="alert" class="text-sm text-red">{form.message}</p>{/if}
 				{#if form?.saved}<p class="text-sm text-grey3">Password changed.</p>{/if}
-				<button disabled={busy} class="rounded-md bg-dark px-4 py-2.5 font-medium text-taupe1 hover:bg-taupe5 disabled:opacity-50">Change password</button>
+				<button disabled={busy} class="rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50">Change password</button>
 			</form>
 		{:else}
 			<p class="text-sm text-grey3">You sign in with Google, so there is no password to change here.</p>
@@ -85,9 +90,9 @@
 		color: var(--sw5);
 		border-color: color-mix(in srgb, var(--sw5) 20%, transparent);
 	}
-	.theme-card.selected { border-color: var(--sw5); }
+	.theme-card.selected { border-color: var(--sw-edge, var(--sw5)); }
 	.theme-swatch { border-color: color-mix(in srgb, var(--sw5) 25%, transparent); }
-	.theme-card[data-theme='taupe'] { --sw5: #3e2415; --sw4: #9a7b55; --sw3: #d3c3a1; --sw-bg: #fdf6e3; }
+	.theme-card[data-theme='taupe'] { --sw5: #3e2415; --sw4: #9a7b55; --sw3: #d3c3a1; --sw-bg: #fdf6e3; --sw-edge: #6c71c4; }
 	.theme-card[data-theme='soft'] { --sw5: #575279; --sw4: #9893a5; --sw3: #dfdad9; --sw-bg: #faf4ed; }
 	.theme-card[data-theme='dark'] { --sw5: #eee8d5; --sw4: #586e75; --sw3: #2a4f5b; --sw-bg: #002b36; }
 	.theme-card[data-theme='rose'] { --sw5: #3b3845; --sw4: #dc7fc4; --sw3: #d3a3ab; --sw-bg: #f6d7db; }

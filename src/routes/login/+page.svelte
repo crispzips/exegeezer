@@ -15,7 +15,7 @@
 
 <svelte:head><title>{signup ? 'Sign up' : 'Sign in'} · Exegeezer</title></svelte:head>
 
-<main class="mx-auto flex min-h-[calc(100vh-57px)] w-full max-w-md flex-col justify-center px-6 py-10">
+<main class="mx-auto flex min-h-screen w-full max-w-md flex-col justify-center px-6 py-10">
 	<div class="rounded-2xl border border-taupe3 bg-taupe1 p-8 shadow-md">
 		<h1 class="mb-1 text-2xl font-semibold text-dark">{signup ? 'Create your account' : 'Welcome back'}</h1>
 		<p class="mb-6 text-sm text-grey3">{signup ? 'Sign up to load, edit and keep your own texts.' : 'Sign in to open your texts.'}</p>

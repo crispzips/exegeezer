@@ -348,7 +348,22 @@ body {
 .md-edit[data-h='4'] { font-size: 1.125rem; }
 .md-edit[data-quote] { border-left: 3px solid var(--color-taupe2); padding-left: 0.75rem; }
 .md-edit[data-list] { padding-left: 1.5rem; }
-.md pre { white-space: pre-wrap; }
+/* code blocks (fenced paragraphs): a sunken-free taupe2 slab, the code kept as written and scrolling sideways; the colours are the theme's */
+.md pre { white-space: pre; overflow-wrap: normal; overflow-x: auto; background: var(--color-taupe2); border-radius: 0.5rem; padding: 0.75rem 1rem; line-height: 1.5; }
+.md pre code { background: none; padding: 0; font-size: 0.85em; border-radius: 0; }
+.hljs { color: var(--color-taupe5); }
+.hljs-comment, .hljs-quote, .hljs-meta { color: var(--color-taupe4); font-style: italic; }
+.hljs-keyword, .hljs-selector-tag, .hljs-doctag, .hljs-type, .hljs-template-tag, .hljs-template-variable { color: var(--color-violet); }
+.hljs-string, .hljs-regexp, .hljs-addition, .hljs-symbol, .hljs-bullet { color: var(--color-green); }
+.hljs-number, .hljs-literal, .hljs-variable.constant_ { color: var(--color-orange); }
+.hljs-title, .hljs-title.function_, .hljs-section, .hljs-selector-id, .hljs-selector-class { color: var(--color-blue); }
+.hljs-attr, .hljs-attribute, .hljs-property, .hljs-params, .hljs-variable { color: var(--color-cyan); }
+.hljs-tag { color: var(--color-taupe4); }
+.hljs-name { color: var(--color-blue); }
+.hljs-built_in, .hljs-title.class_, .hljs-selector-attr, .hljs-selector-pseudo { color: var(--color-magenta); }
+.hljs-deletion, .hljs-link { color: var(--color-red); }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 700; }
 .md table { display: block; max-width: 100%; overflow-x: auto; }
 .md hr { border: 0; border-top: 1px solid var(--color-taupe2); }
 .md .footnote-ref { color: var(--color-accent); cursor: help; }

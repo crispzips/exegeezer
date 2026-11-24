@@ -6,7 +6,8 @@ export const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
  * `text`, focused, and given a caret at character `caret` (default: the end). Leaving it (blur, or Ctrl/Cmd+Enter)
  * commits; Escape cancels. `onfinish` gets the new text, or null when cancelled or unchanged.
  *
- * There are no line breaks in a paragraph: Enter finishes the edit (committing it) and, when the
+ * There are no line breaks in a paragraph (except in a code block, whose lines are kept: there Enter makes a new line and
+ * Ctrl/Cmd+Enter finishes): Enter finishes the edit (committing it) and, when the
  * text was changed, calls `onenter` (with where the editor was), which asks what to add next (an untouched paragraph just
  * ends); pasted line breaks become spaces.
  *
@@ -14,6 +15,9 @@ export const oneLine = (s) => s.replace(/\s*[\r\n\u2028\u2029]+\s*/g, ' ');
  * @param {{ text: string, caret?: number, onfinish: (text: string | null) => void, onenter?: (rect: DOMRect) => void, markdown?: boolean }} opts
  */
 export function editable(node, { text, caret, onfinish, onenter, markdown = false }) {
+	/** a code block is several lines: its line breaks are kept */
+	const multiline = text.includes('\n');
+	const clean = (/** @type {string} */ s) => (multiline ? s : oneLine(s));
 	node.contentEditable = 'plaintext-only';
 	if (node.contentEditable !== 'plaintext-only') node.contentEditable = 'true'; // older browsers
 	node.textContent = text;
@@ -51,7 +55,7 @@ export function editable(node, { text, caret, onfinish, onenter, markdown = fals
 	function finish(commit) {
 		if (done) return;
 		done = true;
-		const next = oneLine(node.textContent ?? '');
+		const next = clean(node.textContent ?? '');
 		onfinish(commit && next !== text ? next : null);
 	}
 
@@ -63,9 +67,9 @@ export function editable(node, { text, caret, onfinish, onenter, markdown = fals
 		} else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
 			e.preventDefault();
 			finish(true);
-		} else if (e.key === 'Enter' && !e.isComposing) {
+		} else if (e.key === 'Enter' && !e.isComposing && !multiline) {
 			e.preventDefault(); // never a line break: the paragraph ends and the next one begins
-			const changed = oneLine(node.textContent ?? '') !== text;
+			const changed = clean(node.textContent ?? '') !== text;
 			const rect = caretRect(node); // the editor goes once the edit ends: note where the caret was
 			finish(true);
 			if (changed) onenter?.(rect);
@@ -74,13 +78,13 @@ export function editable(node, { text, caret, onfinish, onenter, markdown = fals
 
 	/** @param {InputEvent} e */
 	function onbeforeinput(e) {
-		if (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak') e.preventDefault();
+		if (!multiline && (e.inputType === 'insertParagraph' || e.inputType === 'insertLineBreak')) e.preventDefault();
 	}
 
 	/** @param {ClipboardEvent} e */
 	function onpaste(e) {
 		e.preventDefault(); // paste as plain text even where plaintext-only is unsupported
-		document.execCommand('insertText', false, oneLine(e.clipboardData?.getData('text/plain') ?? ''));
+		document.execCommand('insertText', false, clean(e.clipboardData?.getData('text/plain') ?? ''));
 	}
 
 	const onblur = () => finish(true);
@@ -156,6 +160,7 @@ export function caretOffsetAt(row, x, y, text) {
  * @param {HTMLTextAreaElement} node
  */
 export function noLineBreaks(node) {
+	if (node.value.includes('\n')) return; // a code block keeps its lines
 	/** @param {KeyboardEvent} e */
 	function onkeydown(e) {
 		if (e.key === 'Enter' && !e.isComposing && !(e.metaKey || e.ctrlKey)) e.preventDefault();

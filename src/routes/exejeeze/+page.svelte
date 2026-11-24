@@ -14,6 +14,7 @@
     import CascadingViewer from '#lib/components/CascadingViewer.svelte';
     import RallySetup from '#lib/components/RallySetup.svelte';
     import EmphasisToggle from '#lib/components/EmphasisToggle.svelte';
+    import BusyOverlay from '#lib/components/BusyOverlay.svelte';
     import RallyViewer from '#lib/components/RallyViewer.svelte';
     import RallyWriter from '#lib/components/RallyWriter.svelte';
     import { emphasis } from '#lib/emphasis.svelte.js';
@@ -62,9 +63,36 @@
     let keepCopy = $state(false);
 
     // Runs after a file is loaded: split the newest file into paragraphs
+    /** what the busy overlay says while a big text is being prepared or shown ('' = no overlay) */
+    let busyLabel = $state('');
+    /** a frame is painted and the event loop has had a turn: the overlay is on screen and input has been handled before heavy work starts */
+    // (animation frames pause while the tab is hidden, so a short timer stands in for the frame and the work never waits on one)
+    const breathe = () => new Promise((done) => {
+        const wake = () => setTimeout(done, 0);
+        const fallback = setTimeout(wake, 120);
+        requestAnimationFrame(() => { clearTimeout(fallback); wake(); });
+    });
+    /**
+     * Run a heavy step behind the rain overlay. The browser gets to paint the overlay first, and to catch up again once the work
+     * (and the rendering it triggers) is done, so a big text doesn't leave the page looking frozen.
+     * @template T
+     * @param {string} label @param {() => T | Promise<T>} work @returns {Promise<T | undefined>}
+     */
+    async function behindRain(label, work) {
+        busyLabel = label;
+        try {
+            await breathe();
+            const result = await work();
+            await tick(); // the DOM for what was just set
+            await breathe();
+            return result;
+        } finally {
+            busyLabel = '';
+        }
+    }
     function onFileLoaded() {
         const latest = uploadedfiles[uploadedfiles.length - 1];
-        if (latest) {
+        if (latest) void behindRain('Preparing the text…', () => {
             loadSource = 'computer';
             loadNotes = [];
             loadDetails = [];
@@ -77,7 +105,7 @@
             // Text above the first header goes into a Frontmatter section, marked as front matter to begin with
             // (the map beside the preview is where front and back matter are chosen)
             if (paragraphs.some((p) => p.level > 0) && paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
-        }
+        });
     }
 
     let ownTextsOpen = $state(false);
@@ -86,6 +114,7 @@
     /** A text chosen in the "Open Libraries" modal becomes the text in the preview.
      * @param {{ title: string, markdown: string, details: Record<string, string>[], notes: string[] }} t */
     function onWebTextChosen(t) {
+        void behindRain('Preparing the text…', () => {
         loadSource = 'web';
         loadName = t.title;
         loadNotes = t.notes ?? [];
@@ -95,6 +124,7 @@
         showLoadModal();
         // as with a file: text above the first header goes into a Frontmatter section
         if (paragraphs.some((p) => p.level > 0) && paragraphs[0].level === 0) paragraphs = withFrontmatter(paragraphs);
+        });
     }
 
     /** One of the user's own texts, chosen in the "From Your Texts" modal, becomes the text in the preview.
@@ -955,6 +985,11 @@
     /** @param {string} title @param {string} visibility */
     async function makeSeed(title, visibility) {
         if (paragraphs.length === 0) return;
+        await behindRain('Seeding the text…', () => seedNow(title, visibility));
+    }
+
+    /** @param {string} title @param {string} visibility */
+    async function seedNow(title, visibility) {
         if (keepCopy && loadSource !== 'own') {
             try {
                 await saveOriginalCopy();
@@ -965,9 +1000,12 @@
         }
         try {
             let list = paragraphs.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, id: crypto.randomUUID(), originalIndex: i }));
+            await breathe();
             // text above the first header goes into a Frontmatter section; a text with no headers at all stays as it is
             if (list[0] && (list[0].level ?? 0) === 0 && list.some((p) => (p.level ?? 0) > 0)) list = withFrontmatter(list);
-            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title, visibility, items: toItems(list), importedDetails: $state.snapshot(loadDetails) }) });
+            const body = JSON.stringify({ title, visibility, items: toItems(list), importedDetails: $state.snapshot(loadDetails) });
+            await breathe();
+            const res = await fetch('/api/texts', { method: 'POST', headers: { 'content-type': 'application/json' }, body });
             if (!res.ok) throw new Error(`${res.status}`);
             await showSaved((await res.json()).id);
             seedStep = 'idle';
@@ -1722,6 +1760,7 @@
     </nav>
 </div>
 
+<BusyOverlay label={busyLabel} />
 <MenuTip />
 {#if chooser}
     <!-- the const keeps the props steady while the choice is closing (chooser is already null by then) -->

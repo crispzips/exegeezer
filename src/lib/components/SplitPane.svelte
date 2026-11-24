@@ -116,7 +116,7 @@
 		onpointerup={onPointerUp}
 		onpointercancel={onPointerUp}
 		onkeydown={onKeydown}
-		class="shrink-0 touch-none transition-colors hover:bg-violet {horizontal ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'} {dragging ? 'bg-violet' : 'bg-taupe2'}"
+		class="shrink-0 touch-none transition-colors hover:bg-accent {horizontal ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'} {dragging ? 'bg-accent' : 'bg-taupe2'}"
 	></div>
 
 	{#if sized === 'first'}

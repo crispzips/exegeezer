@@ -144,7 +144,7 @@
 			{#if message}<p role="alert" class="text-red">{message}</p>{/if}
 			<div class="mt-2 flex justify-end gap-2">
 				<button type="button" onclick={() => dialogEl?.close()} class="rounded-md px-3 py-1.5 hover:bg-taupe2">Cancel</button>
-				<button disabled={!info || busy} class="rounded-md bg-violet px-3 py-1.5 font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">Save</button>
+				<button disabled={!info || busy} class="rounded-md bg-accent px-3 py-1.5 font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">Save</button>
 			</div>
 		</form>
 	{/if}

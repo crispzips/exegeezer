@@ -43,7 +43,7 @@
 		return map;
 	});
 	/** the bubble's colour: its paragraph's section @param {string | undefined} id */
-	const tint = (id) => `--c: ${(id && colors.get(id)) || 'var(--color-violet)'}`;
+	const tint = (id) => `--c: ${(id && colors.get(id)) || 'var(--color-accent)'}`;
 	/** the bubble look: a thick border in the section's colour, a tint of it inside, and the forced-perspective taupe shadow */
 	const BUBBLE = 'rounded-[3rem] border-8 border-(--c) bg-[color-mix(in_srgb,var(--c)_12%,var(--color-taupe1))] px-14 py-10 [box-shadow:0_3px_3px_var(--color-taupe4)]';
 	let index = $state(0);

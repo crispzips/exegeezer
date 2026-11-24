@@ -312,14 +312,14 @@
 
 		<!-- Marker 1, the box: the whole area currently in view, across all rows -->
 		<div
-			class="pointer-events-none absolute inset-y-0 border-x border-violet bg-violet/20"
+			class="pointer-events-none absolute inset-y-0 border-x border-accent bg-accent/20"
 			style="left: {view.left}%; width: {view.w}%"
 		></div>
 
 		<!-- Marker 2, the line (a double line): the start of the deepest open section -->
 		{#if linePos !== null}
 			<div
-				class="pointer-events-none absolute inset-y-0 w-[5px] -translate-x-1/2 border-x border-violet bg-violet/20"
+				class="pointer-events-none absolute inset-y-0 w-[5px] -translate-x-1/2 border-x border-accent bg-accent/20"
 				style="left: {linePos}%"
 			></div>
 		{/if}

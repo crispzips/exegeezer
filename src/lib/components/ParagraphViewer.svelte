@@ -778,7 +778,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -897,7 +897,7 @@
 
 			<!-- Marker showing what the main area currently displays -->
 			<div
-				class="pointer-events-none absolute inset-x-0 border-y border-violet bg-violet/20"
+				class="pointer-events-none absolute inset-x-0 border-y border-accent bg-accent/20"
 				style="top: {(m.top / m.sh) * 100}%; height: {(m.ch / m.sh) * 100}%"
 			></div>
 

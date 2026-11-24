@@ -29,7 +29,7 @@
 		aria-label={name}
 		aria-expanded={below ? showBelow : undefined}
 		aria-pressed={active}
-		class="inline-flex items-center justify-center rounded-full border {small ? 'p-2' : 'p-4'} [box-shadow:0_3px_3px_var(--color-taupe4)] {active ? 'border-violet bg-violet text-white hover:bg-violet/90' : 'border-taupe3 bg-taupe1 text-dark hover:bg-taupe2'}"
+		class="inline-flex items-center justify-center rounded-full border {small ? 'p-2' : 'p-4'} [box-shadow:0_3px_3px_var(--color-taupe4)] {active ? 'border-accent bg-accent text-on-accent hover:bg-accent/90' : 'border-taupe3 bg-taupe1 text-dark hover:bg-taupe2'}"
 	>
 		{@render children()}
 	</button>

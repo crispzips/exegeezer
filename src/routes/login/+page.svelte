@@ -22,7 +22,7 @@
 
 		<form method="post" action="?/signInGoogle" class="mb-5">
 			<button
-				class="flex w-full items-center justify-center gap-3 rounded-md border border-taupe3 bg-white/70 px-4 py-2.5 font-medium text-dark hover:bg-taupe2"
+				class="flex w-full items-center justify-center gap-3 rounded-md border border-taupe3 bg-taupe0/70 px-4 py-2.5 font-medium text-dark hover:bg-taupe2"
 			>
 				<svg viewBox="0 0 48 48" width="18" height="18" aria-hidden="true">
 					<path fill="#EA4335" d="M24 9.5c3.5 0 6.6 1.2 9.1 3.6l6.8-6.8C35.8 2.4 30.3 0 24 0 14.6 0 6.5 5.4 2.6 13.2l7.9 6.1C12.4 13.6 17.7 9.5 24 9.5z" />

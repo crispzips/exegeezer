@@ -224,7 +224,7 @@
 					onclick={() => toggleSource(s.id)}
 					disabled={!s.available}
 					aria-pressed={chosen.includes(s.id)}
-					class="rounded-md border px-3 py-1 text-sm {chosen.includes(s.id) && s.available ? 'border-violet bg-taupe2 font-medium' : 'border-transparent hover:bg-taupe2'} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
+					class="rounded-md border px-3 py-1 text-sm {chosen.includes(s.id) && s.available ? 'border-accent bg-taupe2 font-medium' : 'border-transparent hover:bg-taupe2'} disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent"
 				>
 					{s.name}
 				</button>
@@ -262,7 +262,7 @@
 		{#if active.length}
 			<form onsubmit={search} class="mt-3 flex shrink-0 gap-2">
 				<input type="search" bind:value={query} placeholder={active.length === 1 ? active[0].searchHint : 'Title, author or topic'} aria-label="Search {active.map((a) => a.name).join(', ')}" class="min-w-0 flex-1 rounded-md px-2 py-1 text-sm" />
-				<button disabled={searching || !query.trim()} class="rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">
+				<button disabled={searching || !query.trim()} class="rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">
 					{searching ? 'Searching…' : 'Search'}
 				</button>
 			</form>
@@ -275,7 +275,7 @@
 				<span class="text-xs font-medium">{picked.length} selected, to be strung together in this order</span>
 				<span class="flex gap-2">
 					<button onclick={() => (picked = [])} disabled={batchDone !== null} class="rounded-md px-2 py-1 text-xs hover:bg-taupe2 disabled:opacity-50">Clear</button>
-					<button onclick={importPicked} disabled={batchDone !== null || !!importing} class="rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">
+					<button onclick={importPicked} disabled={batchDone !== null || !!importing} class="rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">
 						{batchDone === null ? `Import ${picked.length} as one text` : `Importing ${Math.min(batchDone + 1, picked.length)} of ${picked.length}…`}
 					</button>
 				</span>
@@ -310,7 +310,7 @@
 						</div>
 						<span class="shrink-0 rounded bg-taupe2 px-1.5 py-0.5 text-[10px]">{r.sourceName}</span>
 						<a href={r.url} target="_blank" rel="noopener noreferrer" aria-label="Open {r.title} on {r.sourceName}" class="rounded-md p-1 hover:bg-taupe2"><ArrowUpRightSquare width={16} height={16} /></a>
-						<button onclick={() => importText(r)} disabled={!!importing || batchDone !== null || r.tooBig} class="shrink-0 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50">
+						<button onclick={() => importText(r)} disabled={!!importing || batchDone !== null || r.tooBig} class="shrink-0 rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50">
 							{importing === `${r.source}\u0000${r.id}` ? 'Importing…' : 'Import'}
 						</button>
 					</li>
@@ -344,7 +344,7 @@
 
 	{#if busy}
 		<div role="status" aria-live="polite" class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 rounded-lg bg-taupe1/85 text-center">
-			<span class="text-violet"><RainLoader size={72} /></span>
+			<span class="text-accent"><RainLoader size={72} /></span>
 			<p class="text-sm font-medium">
 				{batchDone !== null ? `Importing text ${Math.min(batchDone + 1, picked.length)} of ${picked.length}…` : 'Importing…'}
 			</p>

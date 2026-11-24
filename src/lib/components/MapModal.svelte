@@ -954,7 +954,7 @@
 					<!-- the root: the text as a whole -->
 					<rect x={graph.root.x - graph.root.r} y={graph.root.y - graph.root.r} width={graph.root.r * 2} height={graph.root.r * 2} rx={graph.root.r * 0.7} class="fill-dark" style="filter: {shadow(graph.root.x)}" />
 					{#if fits('100', graph.root.r)}
-						<text x={graph.root.x} y={graph.root.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">100</text>
+						<text x={graph.root.x} y={graph.root.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-on-hue">100</text>
 					{/if}
 					<text x={graph.root.x} y={graph.root.y - graph.root.r - 8 / view.k} text-anchor="middle" font-size={LABEL_PX_TOP / view.k} style="filter: {labelShadow(graph.root.x)}" class="pointer-events-none fill-taupe5 font-semibold">{clip(graph.root.title)}</text>
 
@@ -976,13 +976,13 @@
 								<!-- the highlight: a violet outline set off from the bubble by a clear space as wide as the outline -->
 								{@const sw = picking && (n.frontmatter || n.backmatter) ? 4 : 2.5}
 								{@const out = sw * 1.5 + 0.75}
-								<rect x={n.x - n.r - out} y={n.y - n.r - out} width={(n.r + out) * 2} height={(n.r + out) * 2} rx={n.r * 0.7 + out} fill="none" stroke-width={sw} class="pointer-events-none stroke-violet" />
+								<rect x={n.x - n.r - out} y={n.y - n.r - out} width={(n.r + out) * 2} height={(n.r + out) * 2} rx={n.r * 0.7 + out} fill="none" stroke-width={sw} class="pointer-events-none stroke-accent" />
 							{/if}
 							{#if n.kind === 'stack'}
 								<g transform="translate({n.x - n.r * 0.7} {n.y - n.r * 0.7}) scale({(n.r * 1.4) / 24})" class="pointer-events-none"><LayersDownRight width={24} height={24} fill={leafColor(n)} /></g>
 							{/if}
 							{#if n.kind === 'section' && !n.aside && fits(percent(n.size, graph.total), n.r)}
-								<text x={n.x} y={n.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-white">{percent(n.size, graph.total)}</text>
+								<text x={n.x} y={n.y} text-anchor="middle" dominant-baseline="central" font-size={PCT_PX / view.k} class="pointer-events-none fill-on-hue">{percent(n.size, graph.total)}</text>
 							{/if}
 							{#if rows.length}
 								<text
@@ -1011,7 +1011,7 @@
 					{/each}
 					{#if gapAt}
 						<!-- where the carried item would land between two bubbles -->
-						<line x1={gapAt.x} y1={gapAt.y0} x2={gapAt.x} y2={gapAt.y1} class="stroke-violet" stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke" />
+						<line x1={gapAt.x} y1={gapAt.y0} x2={gapAt.x} y2={gapAt.y1} class="stroke-accent" stroke-width="3" stroke-linecap="round" vector-effect="non-scaling-stroke" />
 					{/if}
 				</g>
 			</svg>
@@ -1029,7 +1029,7 @@
 				<!-- what is being carried, under the pointer -->
 				<div class="pointer-events-none absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-lg border border-taupe3 bg-taupe1 opacity-80 shadow-lg" style="left: {carry.x}px; top: {carry.y}px">
 					{#if carry.kind === 'section'}<span class="h-4 w-4 rounded-md" style="background: {sectionFill(carry.sectionId)}"></span>{:else if carry.stack}<LayersDownRight width={20} height={20} fill={leafColor(carry.node)} />{:else}<span class="h-3 w-3 rounded-sm bg-taupe3"></span>{/if}
-					{#if carry.count > 1}<span class="absolute -top-2 -right-2 rounded-full bg-violet px-1.5 text-xs leading-4 text-white">{carry.count}</span>{/if}
+					{#if carry.count > 1}<span class="absolute -top-2 -right-2 rounded-full bg-accent px-1.5 text-xs leading-4 text-on-accent">{carry.count}</span>{/if}
 				</div>
 			{/if}
 		{/if}
@@ -1107,8 +1107,8 @@
 		<div class="flex shrink-0 flex-wrap items-center gap-2 text-xs">
 			<span>Click a section to mark it as</span>
 			<div role="group" aria-label="Kind of matter to mark" class="inline-flex overflow-hidden rounded-md border border-taupe3">
-				<button type="button" aria-pressed={step === 'front'} onclick={() => (step = 'front')} class="px-2 py-1 {step === 'front' ? 'bg-violet text-white' : 'hover:bg-taupe2'}">Front matter</button>
-				<button type="button" aria-pressed={step === 'back'} onclick={() => (step = 'back')} class="px-2 py-1 {step === 'back' ? 'bg-violet text-white' : 'hover:bg-taupe2'}">Back matter</button>
+				<button type="button" aria-pressed={step === 'front'} onclick={() => (step = 'front')} class="px-2 py-1 {step === 'front' ? 'bg-accent text-on-accent' : 'hover:bg-taupe2'}">Front matter</button>
+				<button type="button" aria-pressed={step === 'back'} onclick={() => (step = 'back')} class="px-2 py-1 {step === 'back' ? 'bg-accent text-on-accent' : 'hover:bg-taupe2'}">Back matter</button>
 			</div>
 		</div>
 		<p class="mt-1 shrink-0 text-xs text-grey3">Front matter is a title page, abstract or acknowledgements; back matter is a bibliography, appendices or an index. Hover a section to see it in the preview.</p>

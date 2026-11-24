@@ -265,12 +265,12 @@ export class DragDrop {
 				return this.gapBar ? '' : gapLineClass(this.drop.place, axis);
 			case 'merge-before':
 				return y
-					? 'outline-2 outline-violet bg-violet/10 shadow-[inset_0_3px_0_0] shadow-violet'
-					: 'outline-2 outline-violet bg-violet/10 shadow-[inset_3px_0_0_0] shadow-violet';
+					? 'outline-2 outline-accent bg-accent/10 shadow-[inset_0_3px_0_0] shadow-accent'
+					: 'outline-2 outline-accent bg-accent/10 shadow-[inset_3px_0_0_0] shadow-accent';
 			default:
 				return y
-					? 'outline-2 outline-violet bg-violet/10 shadow-[inset_0_-3px_0_0] shadow-violet'
-					: 'outline-2 outline-violet bg-violet/10 shadow-[inset_-3px_0_0_0] shadow-violet';
+					? 'outline-2 outline-accent bg-accent/10 shadow-[inset_0_-3px_0_0] shadow-accent'
+					: 'outline-2 outline-accent bg-accent/10 shadow-[inset_-3px_0_0_0] shadow-accent';
 		}
 	}
 }

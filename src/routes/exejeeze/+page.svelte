@@ -1553,7 +1553,7 @@
             {:else if !noText}
                 <!-- the rally has not started: an empty pane with the violet flag, which opens the setup -->
                 <div class="flex h-full items-center justify-center">
-                    <button onclick={() => (rallySetupOpen = true)} aria-label="Rally on!" use:tip={'Rally on!'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-violet px-6 py-3 text-taupe1 hover:bg-violet/90"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
+                    <button onclick={() => (rallySetupOpen = true)} aria-label="Rally on!" use:tip={'Rally on!'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md bg-accent px-6 py-3 text-taupe1 hover:bg-accent/90"><FlagChequered class="text-taupe1!" width={28} height={28} /></button>
                 </div>
             {/if}
         {:else if view === 'cascading'}
@@ -1826,7 +1826,7 @@
 
             {#if seeding}
                 <!-- seeding: a new text is made from the loaded one, so there is nothing to ask about where it goes -->
-                <button onclick={seedFromPreview} class="inline-flex items-center gap-1 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90">Seed a text</button>
+                <button onclick={seedFromPreview} class="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90">Seed a text</button>
             {:else}
             <!-- Inject Loaded Text dropdown -->
             <div class="relative" bind:this={injectmenu}>
@@ -1835,7 +1835,7 @@
                     disabled={paragraphs.length === 0}
                     aria-haspopup={mainText.length > 0 && injectGap === null ? 'menu' : undefined}
                     aria-expanded={mainText.length > 0 && injectGap === null ? injectOpen : undefined}
-                    class="inline-flex items-center gap-1 rounded-md bg-violet px-3 py-1 text-xs font-medium text-white hover:bg-violet/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-violet"
+                    class="inline-flex items-center gap-1 rounded-md bg-accent px-3 py-1 text-xs font-medium text-on-accent hover:bg-accent/90 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-accent"
                 >
                     Inject Loaded Text
                     {#if mainText.length > 0 && injectGap === null}

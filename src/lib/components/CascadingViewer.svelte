@@ -1166,7 +1166,7 @@
 					></button>
 				{/each}
 				{#if cursorLine}
-					<div class="pointer-events-none absolute z-10 animate-pulse rounded-full bg-violet" style="left:{cursorLine.left - (cursorLine.width < cursorLine.height ? 2 : 0)}px;top:{cursorLine.top - (cursorLine.width < cursorLine.height ? 0 : 2)}px;width:{cursorLine.width + (cursorLine.width < cursorLine.height ? 4 : 0)}px;height:{cursorLine.height + (cursorLine.width < cursorLine.height ? 0 : 4)}px"></div>
+					<div class="pointer-events-none absolute z-10 animate-pulse rounded-full bg-accent" style="left:{cursorLine.left - (cursorLine.width < cursorLine.height ? 2 : 0)}px;top:{cursorLine.top - (cursorLine.width < cursorLine.height ? 0 : 2)}px;width:{cursorLine.width + (cursorLine.width < cursorLine.height ? 4 : 0)}px;height:{cursorLine.height + (cursorLine.width < cursorLine.height ? 0 : 4)}px"></div>
 				{/if}
 			{/if}
 		</div>

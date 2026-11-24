@@ -1,7 +1,12 @@
 @import url("https://fonts.googleapis.com/css2?family=Momo+Signature&display=swap");
 @import "tailwindcss";
 
+/* the root paints the page too, so the whole window (overscroll, gutters, short pages) follows the theme */
+html {
+	background-color: var(--color-taupe1);
+}
 body {
+	min-height: 100vh;
 	background-color: var(--color-taupe1);
     color: var(--color-dark);
 }
@@ -161,6 +166,8 @@ body {
   --color-taupe1:  #fdf6e3;
   --color-taupe0:  #fffcf4; /* lightest: between white and taupe1, close to white */
 
+  /* Taupe is derived from Solarized Light by Ethan Schoonover: https://ethanschoonover.com/solarized/
+     (taupe1/taupe2 are base3/base2; the greys are base00-base1; the accents below are Solarized's) */
   /* Official Solarized Accent Colors */
   --color-yellow:  #b58900;
   --color-orange:  #cb4b16;
@@ -170,7 +177,131 @@ body {
   --color-blue:    #268bd2;
   --color-cyan:    #2aa198;
   --color-green:   #859900;
+
+  /* The UI accent (buttons, links, focus, markers): each theme sets its own. Taupe keeps violet. */
+  --color-accent:  #6c71c4;
+  --color-on-accent: #ffffff; /* text on an accent fill */
+  --color-on-hue: #ffffff; /* text on a section colour (open bubbles, map nodes) */
 }
+
+/* Appearance themes (chosen in Settings, kept in localStorage, set on <html data-theme> by app.html before first paint).
+   Taupe is the default and lives in @theme above. The others re-map the same neutral variables, so every utility follows:
+   taupe5 is always the strongest ink and taupe0..1 the page, so dark simply runs the ramp the other way. */
+/* Soft: the Dawn variant of Rosé Pine (https://rosepinetheme.com/palette/ ), colours copied by hand */
+:root[data-theme="soft"] {
+  color-scheme: light;
+  --color-dark: #575279;
+  --color-lessdark: #6e6a86;
+  --color-grey4: #797593;
+  --color-grey3: #8a869e;
+  --color-grey2: #9893a5;
+  --color-grey1: #b0acbb;
+  --color-taupe5: #575279;
+  --color-taupe4: #9893a5;
+  --color-taupe3: #dfdad9;
+  --color-taupe2: #f2e9e1;
+  --color-taupe1: #faf4ed;
+  --color-taupe0: #fffaf3;
+  --color-yellow: #ea9d34;
+  --color-orange: #d7827e;
+  --color-red: #b4637a;
+  --color-magenta: #c16d9a;
+  --color-violet: #907aa9;
+  --color-blue: #286983;
+  --color-cyan: #56949f;
+  --color-green: #568a6a;
+  --color-accent: #907aa9;
+}
+/* Rose: Catppuccin Frappé inverted (https://catppuccin.com/palette/ ). Frappé's pink is the paper and its dark base is the ink; the section hues
+   are Latte's deeper colours, which stay visible on pink (both flavours are Catppuccin: https://catppuccin.com/palette/ ) */
+:root[data-theme="rose"] {
+  color-scheme: light;
+  --color-dark: #3b3845;
+  --color-lessdark: #4d4960;
+  --color-grey4: #4a4660;
+  --color-grey3: #5c5873;
+  --color-grey2: #6f6a85;
+  --color-grey1: #857f98;
+  --color-taupe5: #3b3845;
+  --color-taupe4: #987894; /* strong border edge and drop shadows */
+  --color-taupe3: #c094b8; /* borders and the light edge */
+  --color-taupe2: #deaad1; /* hover and raised backgrounds */
+  --color-taupe1: #f4b8e4; /* the page: Frappé pink */
+  --color-taupe0: #f9d8f0; /* the lightest */
+  --color-accent: #8839ef; /* mauve */
+  --color-violet: #8839ef; /* mauve */
+  --color-red: #d20f39;
+  --color-magenta: #e64553; /* maroon */
+  --color-orange: #fe640b; /* peach */
+  --color-yellow: #df8e1d;
+  --color-green: #40a02d;
+  --color-cyan: #179299; /* teal */
+  --color-blue: #04a5e5; /* sky */
+}
+/* Solarized Dark by Ethan Schoonover (https://ethanschoonover.com/solarized/ ): base03 page, base02 raised, base01 edges, base0/base1 text */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --color-dark: #eee8d5; /* the taupe theme's taupe2, as text */
+  --color-lessdark: #ddd8c5;
+  --color-grey4: #93a1a1;
+  --color-grey3: #839496;
+  --color-grey2: #657b83;
+  --color-grey1: #586e75;
+  --color-taupe5: #eee8d5;
+  --color-taupe4: #586e75;
+  --color-taupe3: #2a4f5b;
+  --color-taupe2: #073642;
+  --color-taupe1: #002b36;
+  --color-taupe0: #00212b;
+  --color-accent: #268bd2;
+}
+/* Fluorescent (original to Exegeezer): bright white, black ink, grey chrome and accent; the section hues are the rainbow (ROYGBIV) */
+:root[data-theme="fluorescent"] {
+  color-scheme: light;
+  --color-dark: #000000;
+  --color-lessdark: #1a1a1a;
+  --color-grey4: #404040;
+  --color-grey3: #595959;
+  --color-grey2: #808080;
+  --color-grey1: #a6a6a6;
+  --color-taupe5: #000000;
+  --color-taupe4: #a3a3a3;
+  --color-taupe3: #e6e6e6;
+  --color-taupe2: #f8f8f8;
+  --color-taupe1: #ffffff;
+  --color-taupe0: #ffffff;
+  --color-red: #ff0000;
+  --color-orange: #ff7f00;
+  --color-yellow: #ffd400;
+  --color-green: #00b300;
+  --color-blue: #0000ff;
+  --color-cyan: #4b0082; /* indigo (the palette has no cyan slot to spare) */
+  --color-violet: #8f00ff;
+  --color-magenta: #c000ff;
+  --color-accent: #5c5c5c;
+}
+/* Cyber (original to Exegeezer): near-black with a blue-violet cast, neon green ink and edges, hotter accents */
+:root[data-theme="cyber"] {
+  color-scheme: dark;
+  --color-dark: #c8f7dc;
+  --color-lessdark: #a6e8c2;
+  --color-grey4: #8fd9ad;
+  --color-grey3: #6fbf90;
+  --color-grey2: #4e9770;
+  --color-grey1: #377052;
+  --color-taupe5: #39ff88;
+  --color-taupe4: #1fb85e;
+  --color-taupe3: #1a4a35;
+  --color-taupe2: #101a1c;
+  --color-taupe1: #090c12;
+  --color-taupe0: #05070b;
+  --color-cyan: #00e5ff;
+  --color-magenta: #ff2a9d;
+  --color-green: #39ff14;
+  --color-accent: #39ff14;
+  --color-on-accent: #05070b;
+}
+:root[data-theme="taupe"] { color-scheme: light; }
 
 /* Rendered Markdown in the linear viewer (Tailwind's reset removes these defaults) */
 .md > :first-child { margin-top: 0; }
@@ -199,7 +330,7 @@ body {
 .md h3 { font-size: calc(1.25rem * var(--z, 1)); }
 .md h4 { font-size: calc(1.125rem * var(--z, 1)); }
 .md h5, .md h6 { font-size: calc(1rem * var(--z, 1)); }
-.md a { color: var(--color-violet); text-decoration: underline; }
+.md a { color: var(--color-accent); text-decoration: underline; }
 .md img { max-width: 100%; height: auto; }
 .md ul { list-style: disc; padding-left: 1.5rem; }
 .md ol { list-style: decimal; padding-left: 1.5rem; }
@@ -218,7 +349,7 @@ body {
 .md pre { white-space: pre-wrap; }
 .md table { display: block; max-width: 100%; overflow-x: auto; }
 .md hr { border: 0; border-top: 1px solid var(--color-taupe2); }
-.md .footnote-ref { color: var(--color-violet); cursor: help; }
+.md .footnote-ref { color: var(--color-accent); cursor: help; }
 .md p + p { margin-top: 0.5rem; }
 
 /* every icon is drawn in taupe5 (the icons paint with currentColor) */
@@ -254,7 +385,7 @@ input[type='range'].rally-speed {
 input[type='range'].rally-speed::-webkit-slider-runnable-track {
   width: 0.5rem;
   border-radius: 999px;
-  background: linear-gradient(to top, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  background: linear-gradient(to top, var(--mode, var(--color-accent)) var(--fill), transparent var(--fill)), var(--color-taupe1);
   border: 1px solid;
   border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
   box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
@@ -262,7 +393,7 @@ input[type='range'].rally-speed::-webkit-slider-runnable-track {
 input[type='range'].rally-speed::-moz-range-track {
   width: 0.5rem;
   border-radius: 999px;
-  background: linear-gradient(to top, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  background: linear-gradient(to top, var(--mode, var(--color-accent)) var(--fill), transparent var(--fill)), var(--color-taupe1);
   border: 1px solid;
   border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
   box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
@@ -274,7 +405,7 @@ input[type='range'].rally-speed::-webkit-slider-thumb {
   height: var(--thumb);
   margin-left: calc((0.5rem - var(--thumb)) / 2 - 1px);
   border-radius: 999px;
-  background: var(--mode, var(--color-violet));
+  background: var(--mode, var(--color-accent));
   border: 2px solid var(--color-taupe1);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--color-taupe5) 40%, transparent);
 }
@@ -282,7 +413,7 @@ input[type='range'].rally-speed::-moz-range-thumb {
   width: var(--thumb);
   height: var(--thumb);
   border-radius: 999px;
-  background: var(--mode, var(--color-violet));
+  background: var(--mode, var(--color-accent));
   border: 2px solid var(--color-taupe1);
   box-sizing: border-box;
 }
@@ -300,7 +431,7 @@ input[type='range'].form-range {
 input[type='range'].form-range::-webkit-slider-runnable-track {
   height: 0.7rem;
   border-radius: 999px;
-  background: linear-gradient(to right, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  background: linear-gradient(to right, var(--mode, var(--color-accent)) var(--fill), transparent var(--fill)), var(--color-taupe1);
   border: 1px solid;
   border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
   box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
@@ -308,7 +439,7 @@ input[type='range'].form-range::-webkit-slider-runnable-track {
 input[type='range'].form-range::-moz-range-track {
   height: 0.7rem;
   border-radius: 999px;
-  background: linear-gradient(to right, var(--mode, var(--color-violet)) var(--fill), transparent var(--fill)), var(--color-taupe1);
+  background: linear-gradient(to right, var(--mode, var(--color-accent)) var(--fill), transparent var(--fill)), var(--color-taupe1);
   border: 1px solid;
   border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
   box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
@@ -320,7 +451,7 @@ input[type='range'].form-range::-webkit-slider-thumb {
   height: var(--thumb);
   margin-top: calc((0.7rem - var(--thumb)) / 2 - 1px);
   border-radius: 999px;
-  background: var(--mode, var(--color-violet));
+  background: var(--mode, var(--color-accent));
   border: 2px solid var(--color-taupe1);
   box-shadow: 0 1px 2px color-mix(in srgb, var(--color-taupe5) 40%, transparent);
 }
@@ -328,7 +459,7 @@ input[type='range'].form-range::-moz-range-thumb {
   width: var(--thumb);
   height: var(--thumb);
   border-radius: 999px;
-  background: var(--mode, var(--color-violet));
+  background: var(--mode, var(--color-accent));
   border: 2px solid var(--color-taupe1);
   box-sizing: border-box;
 }

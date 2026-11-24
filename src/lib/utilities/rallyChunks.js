@@ -60,4 +60,4 @@ export const COMPOSE_SECONDS = [180, 120, 90, 60, 40, 28, 20, 14, 10, 7];
 export const PARAGRAPH_FACTOR = 5;
 
 /** the writing rally's accent colour (a theme colour name) */
-export const WRITING_COLOUR = 'violet';
+export const WRITING_COLOUR = 'accent';

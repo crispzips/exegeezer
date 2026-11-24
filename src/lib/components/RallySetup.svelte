@@ -44,7 +44,7 @@
 		return () => clearTimeout(t);
 	});
 	/** the modal's own accent: violet, in writing and reading alike */
-	const mode = $derived(writing ? `var(--color-${WRITING_COLOUR})` : 'var(--color-violet)');
+	const mode = $derived(writing ? `var(--color-${WRITING_COLOUR})` : 'var(--color-accent)');
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_noninteractive_element_interactions -->

@@ -550,7 +550,7 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="{stacked ? 'mx-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-violet'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
+		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -616,7 +616,7 @@
 			{'#'.repeat(lvl)}
 		</div>
 
-		<div class="flex h-full items-stretch py-2 pr-2">
+		<div class="flex h-full items-stretch gap-4 py-2 pr-2">
 			<!-- front matter: small bubbles, first in the top row -->
 			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
@@ -667,11 +667,11 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-violet'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-white' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
+						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
-							<span class="text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">§{node.hierarchicalIndex}</span>
+							<span class="text-xs font-normal {isOpen ? 'text-on-hue/70' : 'text-grey2'}">§{node.hierarchicalIndex}</span>
 							<!-- the caret shows the open state, so only a section with something in it has one -->
 							{#if node.children.length}
 								<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
@@ -690,7 +690,7 @@
 							{:else}
 								{#if t.title}{t.title}{:else}<span class="font-normal italic opacity-60">Untitled section</span>{/if}
 								{#if t.subtitle}
-									<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-white/70' : 'text-grey2'}">{t.subtitle}</span>
+									<span class="mt-0.5 block text-xs font-normal {isOpen ? 'text-on-hue/70' : 'text-grey2'}">{t.subtitle}</span>
 								{/if}
 							{/if}
 						</span>

@@ -74,6 +74,43 @@
 	/** reference definitions ("[image1]: url") shared by every paragraph */
 	let defs = $derived(markdown ? definitionsOf(paragraphs) : undefined);
 
+	// ---- A long text is drawn in batches, so the browser stays responsive: the first rows at once, then more on each turn of the event loop ----
+	const FIRST_ROWS = 150;
+	const ROWS_PER_TURN = 300;
+	let shown = $state(FIRST_ROWS);
+	/** how many paragraphs there were the last time the text changed */
+	let seenLength = 0;
+	// a text that arrives with many more paragraphs than before starts its drawing over from what is already on the page
+	$effect.pre(() => {
+		const n = paragraphs.length;
+		untrack(() => {
+			if (n - seenLength > ROWS_PER_TURN) shown = Math.max(Math.min(seenLength, shown), FIRST_ROWS);
+			seenLength = n;
+		});
+	});
+	/** every paragraph is on the page (the overview is measured only then) */
+	const settled = $derived(shown >= paragraphs.length);
+	const visible = $derived(settled ? paragraphs : paragraphs.slice(0, shown));
+	$effect(() => {
+		if (shown >= paragraphs.length) return;
+		const turn = setTimeout(() => (shown = Math.min(paragraphs.length, shown + ROWS_PER_TURN)), 0);
+		return () => clearTimeout(turn);
+	});
+	let gone = false;
+	$effect(() => () => (gone = true));
+	/** resolves once the rows up to a paragraph are on the page (they arrive in batches, so it can take a while for one far down); false if it is not in the text any more @param {string} id */
+	async function whenDrawn(id) {
+		for (;;) {
+			const at = paragraphs.findIndex((p) => p.id === id);
+			if (at < 0 || gone) return false;
+			if (at < shown) {
+				await tick(); // the row for it
+				return true;
+			}
+			await new Promise((done) => setTimeout(done, 60));
+		}
+	}
+
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
 	let editing = $state(null);
@@ -218,7 +255,8 @@
 		void paragraphs.length; // the text may arrive after the view
 		if (revealed || !mainEl || !mainContent || !focusId) return;
 		const id = untrack(() => focusId) ?? '';
-		tick().then(() => {
+		tick().then(async () => {
+			if (!(await whenDrawn(id))) return;
 			const el = mainContent?.querySelector(`[data-para="${CSS.escape(id)}"]`);
 			if (revealed || !(el instanceof HTMLElement)) return;
 			revealed = true;
@@ -234,10 +272,11 @@
 		const id = jumpToId;
 		void paragraphs.length;
 		if (!id) return;
-		tick().then(() => {
+		tick().then(async () => {
 			if (!mainEl || !mainContent) return;
 			if (matter?.front.some((m) => m.id === id)) return void mainEl.scrollTo({ top: 0, behavior: 'instant' });
 			if (matter?.back.some((m) => m.id === id)) return void mainEl.scrollTo({ top: mainEl.scrollHeight, behavior: 'instant' });
+			if (!(await whenDrawn(id))) return;
 			const el = mainContent.querySelector(`[data-para="${CSS.escape(id)}"]`);
 			if (!(el instanceof HTMLElement)) return;
 			const pad = parseFloat(getComputedStyle(mainContent).paddingTop) || 0;
@@ -250,7 +289,8 @@
 		const id = startEditId;
 		void paragraphs.length;
 		if (!id || !onedit) return;
-		tick().then(() => {
+		tick().then(async () => {
+			if (!(await whenDrawn(id))) return;
 			const el = mainContent?.querySelector(`[data-para="${CSS.escape(id)}"]`);
 			if (!(el instanceof HTMLElement)) return;
 			editHover.clear();
@@ -457,7 +497,7 @@
 	let synEl = $state(); // synopsis column (whole text, no scrolling)
 
 	function update() {
-		if (!mainEl || !miniEl || !miniContent || !miniInner) return;
+		if (!mainEl || !miniEl || !miniContent || !miniInner || !settled) return;
 		// Read from the DOM into locals (never read `m` here: this runs inside an
 		// $effect, and reading state it also writes causes an infinite loop)
 		const top = mainEl.scrollTop;
@@ -575,7 +615,7 @@
 
 	// Re-measure whenever sizes change (new text, window or pane resize)
 	$effect(() => {
-		if (!mainEl || !mainContent || !miniContent || !miniInner) return;
+		if (!mainEl || !mainContent || !miniContent || !miniInner || !settled) return;
 		const ro = new ResizeObserver(update);
 		ro.observe(mainEl);
 		ro.observe(mainContent);
@@ -715,7 +755,10 @@
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
-<div class="flex h-full min-h-0" style="--z: {zoom}">
+<div class="relative flex h-full min-h-0" style="--z: {zoom}">
+	{#if !settled}
+		<p role="status" class="pointer-events-none absolute bottom-3 left-1/2 z-20 -translate-x-1/2 rounded-full border border-taupe3 bg-taupe1 px-3 py-1 text-xs text-taupe4 shadow-md">Drawing the text… {shown.toLocaleString()} of {paragraphs.length.toLocaleString()} paragraphs</p>
+	{/if}
 	<!-- Main paragraph area (scrolls independently) -->
 	<!-- The text frame: a buffer of space above and below the scrolling text (cqw = the frame's width) -->
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col [container-type:inline-size]">
@@ -745,7 +788,7 @@
 				class="relative"
 				style="padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em"
 			>
-			{#each paragraphs as para (para.id)}
+			{#each visible as para (para.id)}
 				{#if oninject}{@render gapEl(para.id, 'before')}{/if}
 				<!-- svelte-ignore a11y_no_static_element_interactions -->
 				<div
@@ -838,7 +881,7 @@
 					class="absolute top-0 left-0 origin-top-left"
 					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em; transform: scale({m.k})"
 				>
-					{#each paragraphs as para (para.id)}
+					{#each visible as para (para.id)}
 						{#if oninject}<div data-gap class="h-5"></div>{/if}
 						<div style={(para.level ?? 0) === 0 ? 'margin-inline: var(--ta-mxp, 0%)' : undefined} class="para-row flex gap-2 py-1.5 pl-1 pr-1">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>

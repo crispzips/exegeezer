@@ -1,5 +1,18 @@
 import MarkdownIt from 'markdown-it';
 import footnote from 'markdown-it-footnote';
+import hljs from 'highlight.js/lib/core';
+import javascript from 'highlight.js/lib/languages/javascript';
+import typescript from 'highlight.js/lib/languages/typescript';
+import xml from 'highlight.js/lib/languages/xml';
+import css from 'highlight.js/lib/languages/css';
+import bash from 'highlight.js/lib/languages/bash';
+import json from 'highlight.js/lib/languages/json';
+import python from 'highlight.js/lib/languages/python';
+import yaml from 'highlight.js/lib/languages/yaml';
+import diff from 'highlight.js/lib/languages/diff';
+import markdown from 'highlight.js/lib/languages/markdown';
+import sql from 'highlight.js/lib/languages/sql';
+import ini from 'highlight.js/lib/languages/ini';
 import { emphasis } from '#lib/emphasis.svelte.js';
 
 /** A reference definition line: "[image1]: <https://example.com/a.png>" or a footnote "[^1]: Note text" */
@@ -11,13 +24,52 @@ const LABEL = /\[([^\]]*)\]/g;
 /** A footnote mark: "[^note]" */
 const FOOTNOTE_MARK = /\[\^([^\]\s]+)\]/g;
 
+// Code blocks are coloured by highlight.js (the colours are the theme's: see `.hljs-*` in app.css). Svelte, Vue and HTML
+// are read as XML-with-scripts, which colours their tags, script and style parts.
+for (const [name, lang, aliases] of /** @type {[string, any, string[]][]} */ ([
+	['javascript', javascript, ['js', 'jsx', 'mjs', 'cjs']],
+	['typescript', typescript, ['ts', 'tsx']],
+	['xml', xml, ['html', 'svelte', 'vue', 'svg', 'xhtml']],
+	['css', css, ['scss', 'less']],
+	['bash', bash, ['sh', 'shell', 'zsh', 'console']],
+	['json', json, ['jsonc', 'json5']],
+	['python', python, ['py']],
+	['yaml', yaml, ['yml']],
+	['diff', diff, ['patch']],
+	['markdown', markdown, ['md']],
+	['sql', sql, []],
+	['ini', ini, ['toml']]
+])) {
+	hljs.registerLanguage(name, lang);
+	if (aliases.length) hljs.registerAliases(aliases, { languageName: name });
+}
+/** a block this long is shown as plain code: colouring it would hold the page up */
+const HIGHLIGHT_LIMIT = 20000;
+
+/** @param {string} code @param {string} lang */
+function highlight(code, lang) {
+	const name = lang.trim().split(/\s+/)[0].toLowerCase();
+	let body = md.utils.escapeHtml(code);
+	let cls = '';
+	if (code.length <= HIGHLIGHT_LIMIT) {
+		try {
+			if (name && hljs.getLanguage(name)) body = hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
+			else if (!name && code.length > 40) body = hljs.highlightAuto(code, ['javascript', 'typescript', 'xml', 'css', 'bash', 'json', 'python']).value;
+		} catch {
+			// the block stays plain
+		}
+	}
+	if (name) cls = ` language-${md.utils.escapeHtml(name)}`;
+	return `<pre class="hljs"><code class="hljs${cls}">${body}</code></pre>`;
+}
+
 /**
  * Markdown-it with footnotes. Raw HTML in the text is shown as text, never run, and
  * markdown-it itself refuses `javascript:`-style link targets.
  * Footnote numbers follow the whole document, not the single paragraph being rendered
  * (see definitionsOf),
  */
-const md = new MarkdownIt({ html: false, linkify: false }).use(footnote);
+const md = new MarkdownIt({ html: false, linkify: false, highlight }).use(footnote);
 
 // Footnote caption and list number: the document-wide number for the note's label
 // (inline notes, which have no label, fall back to the paragraph's own numbering)
@@ -175,7 +227,7 @@ const SENTENCE_BREAK = /([.!?]+["'”’)\]]*)\s+(?=["“‘(\[]*[A-Z0-9])/g;
  * @param {boolean} [short] also set off the sentence of a paragraph of just one (the linear view does)
  */
 export function emphasizeFirst(html, short = false) {
-	if (!html || !emphasis.first || /^\s*<h[1-6]\b/i.test(html)) return html;
+	if (!html || !emphasis.first || /^\s*<(?:h[1-6]|pre)\b/i.test(html)) return html; // headings and code blocks stay as they are
 	const tokens = html.split(/(<[^>]*>)/);
 	// the text a reader sees (footnote marks left out), with where each piece of it begins
 	let plain = '';

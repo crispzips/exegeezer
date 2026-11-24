@@ -2,7 +2,6 @@
 	import { fade } from 'svelte/transition';
 	import { TextHeight, Tachometer, FlagChequered } from '@boxicons/svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { emphasis } from '#lib/emphasis.svelte.js';
 	import { READ_WPM, SIZES, readMs, composeMs, WRITING_COLOUR } from '#lib/utilities/rallyChunks.js';
 
 	/**
@@ -78,12 +77,6 @@
 				<div aria-hidden="true" class="flex justify-between px-4">{#each READ_WPM as _, i (i)}<span class="h-1.5 w-px bg-taupe4"></span>{/each}</div>
 			</div>
 			<span class="w-10 shrink-0"></span>
-		</div>
-
-		<!-- reading mode sets each paragraph's first and last sentences apart; either can be turned off -->
-		<div class="flex items-center justify-center gap-6 text-sm text-dark">
-			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={emphasis.first} /> Emphasize first sentence</label>
-			<label class="flex items-center gap-2"><input type="checkbox" bind:checked={emphasis.last} /> Emphasize last sentence</label>
 		</div>
 
 		<div class="flex items-center justify-center gap-3">

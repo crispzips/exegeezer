@@ -16,7 +16,7 @@
 	import { dropAllowed } from '#lib/utilities/editText.js';
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
-	import { definitionsOf, emphasizeEnds, plainEnds, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import { definitionsOf, emphasizeFirst, plainFirst, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -560,7 +560,7 @@
 			></p>
 		{:else}
 			{@const withNotes = node.paragraph.text ? renderFootnoteMarks(node.paragraph.text, defs, node.paragraph.id) : null}
-			<p class="md para-text flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeEnds(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainEnds(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
+			<p class="md para-text flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeFirst(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainFirst(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
 		{/if}
 	</div>
 {/snippet}

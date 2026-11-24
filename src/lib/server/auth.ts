@@ -7,6 +7,7 @@ import {
 
 import { betterAuth } from 'better-auth/minimal';
 import { drizzleAdapter } from 'better-auth/adapters/drizzle';
+import { admin } from 'better-auth/plugins';
 import { sveltekitCookies } from 'better-auth/svelte-kit';
 import { getRequestEvent } from '$app/server';
 import { count, isNull } from 'drizzle-orm';
@@ -55,6 +56,8 @@ export const auth = betterAuth({
 		}
 	},
 	plugins: [
+		// admins (role 'admin') can switch into any other account, to test as them
+		admin({ impersonationSessionDuration: 60 * 60 * 8 }),
 		sveltekitCookies(getRequestEvent) // make sure this is the last plugin in the array
 	]
 });

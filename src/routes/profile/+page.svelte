@@ -3,6 +3,7 @@
 	import { goto, invalidateAll } from '$app/navigation';
 	import TextsBrowser from '#lib/components/TextsBrowser.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
+	import AboutMe from '#lib/components/AboutMe.svelte';
 	import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash } from '@boxicons/svelte';
 
@@ -173,7 +174,7 @@
 						title="Click to edit"
 						class="w-full cursor-text rounded-md px-2 py-1 text-left hover:bg-taupe2"
 					>
-						{p.name}
+						{#if p.name}{p.name}{:else}<span class="font-normal text-grey3">No name</span>{/if}
 					</button>
 				</h1>
 			{/if}
@@ -201,6 +202,8 @@
 
 		{#if tab === 'Profile'}
 			<div role="tabpanel" id="panel-Profile" aria-labelledby="tab-Profile">
+				<AboutMe about={data.about} message={form?.aboutMessage} draftMarkdown={form?.aboutMarkdown} />
+				<hr class="my-6 border-taupe3" />
 				<div class="flex flex-col gap-1 text-sm">
 					<span class="font-medium text-dark">Email</span>
 					<span class="text-grey3">{p.email}</span>

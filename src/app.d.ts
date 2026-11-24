@@ -4,7 +4,7 @@ declare global {
 	namespace App {
 		interface Locals {
 			user?: User;
-			session?: Session;
+			session?: Session & { impersonatedBy?: string | null };
 		}
 	}
 }

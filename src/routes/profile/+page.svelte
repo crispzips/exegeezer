@@ -134,6 +134,7 @@
 
 <main class="mx-auto w-full max-w-2xl px-6 py-10">
 	<div class="rounded-2xl border border-taupe3 bg-taupe1 p-8 shadow-md">
+		<div class="mb-6 flex items-start gap-3">
 		<form
 			bind:this={formEl}
 			method="post"
@@ -147,7 +148,7 @@
 					busy = false;
 				};
 			}}
-			class="mb-6"
+			class="min-w-0 flex-1"
 		>
 			{#if editing}
 				<!-- svelte-ignore a11y_autofocus -->
@@ -178,6 +179,10 @@
 			{/if}
 			{#if form?.message}<p role="alert" class="mt-2 text-sm text-red">{form.message}</p>{/if}
 		</form>
+		<form method="post" action="/logout" class="shrink-0">
+			<button class="rounded-md bg-accent px-3 py-2 text-sm font-medium text-on-accent hover:bg-accent/90">Sign out</button>
+		</form>
+		</div>
 
 		<div role="tablist" aria-label="Profile sections" class="mb-5 flex gap-1 border-b border-taupe3">
 			{#each tabs as t (t)}

@@ -3,6 +3,9 @@
 	import RainLoader from './RainLoader.svelte';
 	import { combineTexts } from '#lib/utilities/combineTexts.js';
 
+	/** a press that started on the backdrop: only then does a click on it close the dialog (a text selection dragged out past the edge must not) */
+	let pressedOnBackdrop = false;
+
 	/** the most texts one batch may string together */
 	const BATCH_LIMIT = 40;
 
@@ -205,7 +208,8 @@
 	bind:this={dialogEl}
 	onclose={() => (open = false)}
 	oncancel={(e) => busy && e.preventDefault()}
-	onclick={(e) => e.target === dialogEl && !busy && dialogEl?.close()}
+	onpointerdown={(e) => (pressedOnBackdrop = e.target === dialogEl)}
+	onclick={(e) => e.target === dialogEl && pressedOnBackdrop && !busy && dialogEl?.close()}
 	class="m-auto h-[80vh] w-[min(92vw,48rem)] overflow-hidden rounded-lg border border-taupe2 bg-taupe1 p-4 text-dark backdrop:bg-black/40 open:flex open:flex-col"
 >
 	<!-- while a text downloads (some take many seconds) nothing else can be done: inert blocks the mouse and the keyboard, and the dialog cannot be closed -->
@@ -216,7 +220,7 @@
 	</div>
 
 	{#if sources === null}
-		<p class="mt-3 text-sm text-grey3">Loading…</p>
+		<p class="mt-3 text-sm text-taupe4">Loading…</p>
 	{:else}
 		<div class="mt-3 flex shrink-0 flex-wrap items-center gap-1" role="group" aria-label="Sources to search">
 			{#each shown as s (s.id)}
@@ -250,14 +254,14 @@
 		{/each}
 
 		{#if active.length === 1}
-			<p class="mt-2 shrink-0 text-xs text-grey3">
+			<p class="mt-2 shrink-0 text-xs text-taupe4">
 				{active[0].kind}. {active[0].description}
 				<a href={active[0].homepage} target="_blank" rel="noopener noreferrer" class="underline">Visit</a>
 				·
 				<a href={active[0].docs} target="_blank" rel="noopener noreferrer" class="underline">How its access works</a>
 			</p>
 		{:else if active.length > 1}
-			<p class="mt-2 shrink-0 text-xs text-grey3">Searching {active.length} sources at once: {active.map((a) => a.name).join(', ')}. Each result shows which one it is from.</p>
+			<p class="mt-2 shrink-0 text-xs text-taupe4">Searching {active.length} sources at once: {active.map((a) => a.name).join(', ')}. Each result shows which one it is from.</p>
 		{/if}
 		{#if active.length}
 			<form onsubmit={search} class="mt-3 flex shrink-0 gap-2">
@@ -280,7 +284,7 @@
 					</button>
 				</span>
 			</div>
-			<ol class="mt-1 max-h-24 list-inside list-decimal overflow-y-auto text-xs text-grey3">
+			<ol class="mt-1 max-h-24 list-inside list-decimal overflow-y-auto text-xs text-taupe4">
 				{#each picked as p (`${p.source}\u0000${p.id}`)}
 					<li>
 						{p.title}
@@ -294,7 +298,7 @@
 
 	<!-- outside the scrolling list, so a failure is seen even when the results are scrolled down -->
 	{#if notice}<p class="mt-3 shrink-0 rounded-md bg-taupe2 px-3 py-2 text-sm">{notice}</p>{/if}
-	{#if message}<p role="alert" class="mt-3 shrink-0 text-sm {results?.length ? 'text-red-700' : 'text-grey3'}">{message}</p>{/if}
+	{#if message}<p role="alert" class="mt-3 shrink-0 text-sm text-taupe4">{message}</p>{/if}
 
 	<div class="mt-3 min-h-0 flex-1 overflow-y-auto">
 		{#if results?.length}
@@ -303,10 +307,10 @@
 					{@const at = pickedIndex.get(`${r.source}\u0000${r.id}`)}
 					<li class="flex items-center gap-2 py-2">
 						<input type="checkbox" checked={at !== undefined} disabled={r.tooBig} onchange={() => togglePick(r)} aria-label="Select {r.title} for a batch" />
-						<span class="w-5 shrink-0 text-center text-xs font-medium text-grey3">{at !== undefined ? at + 1 : ''}</span>
+						<span class="w-5 shrink-0 text-center text-xs font-medium text-taupe4">{at !== undefined ? at + 1 : ''}</span>
 						<div class="min-w-0 flex-1">
 							<div class="truncate text-sm font-medium">{r.title}</div>
-							<div class="truncate text-xs text-grey3">{[r.author, r.detail].filter(Boolean).join(' · ')}</div>
+							<div class="truncate text-xs text-taupe4">{[r.author, r.detail].filter(Boolean).join(' · ')}</div>
 						</div>
 						<span class="shrink-0 rounded bg-taupe2 px-1.5 py-0.5 text-[10px]">{r.sourceName}</span>
 						<a href={r.url} target="_blank" rel="noopener noreferrer" aria-label="Open {r.title} on {r.sourceName}" class="rounded-md p-1 hover:bg-taupe2"><ArrowUpRightSquare width={16} height={16} /></a>
@@ -321,16 +325,16 @@
 		{#if human.length}
 			<details class="mt-4 rounded-md border border-taupe2 p-3">
 				<summary class="cursor-pointer text-sm font-medium">Other places to find texts</summary>
-				<p class="mt-2 text-xs text-grey3">
+				<p class="mt-2 text-xs text-taupe4">
 					These libraries ask for human visitors, need a key or login, or have no public API, so exegeezer does not fetch from them. Download a text there by hand, following their own instructions, then load the file with Browse Computer.
 				</p>
 				<ul class="mt-3 space-y-3">
 					{#each human as h (h.id)}
 						<li class="text-sm">
 							<a href={h.homepage} target="_blank" rel="noopener noreferrer" class="font-medium underline">{h.name}</a>
-							<span class="text-xs text-grey3"> · {h.kind}</span>
+							<span class="text-xs text-taupe4"> · {h.kind}</span>
 							<p class="text-xs">{h.description}</p>
-							<p class="text-xs text-grey3">{h.why}</p>
+							<p class="text-xs text-taupe4">{h.why}</p>
 							<p class="mt-0.5 text-xs">
 								{#each h.instructions as ins, i (ins.url)}{i ? ' · ' : ''}<a href={ins.url} target="_blank" rel="noopener noreferrer" class="underline">{ins.label}</a>{/each}
 							</p>
@@ -348,7 +352,7 @@
 			<p class="text-sm font-medium">
 				{batchDone !== null ? `Importing text ${Math.min(batchDone + 1, picked.length)} of ${picked.length}…` : 'Importing…'}
 			</p>
-			<p class="max-w-xs text-xs text-grey3">Long works can take half a minute. Please wait.</p>
+			<p class="max-w-xs text-xs text-taupe4">Long works can take half a minute. Please wait.</p>
 		</div>
 	{/if}
 </dialog>

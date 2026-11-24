@@ -778,7 +778,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="para-row flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -840,7 +840,7 @@
 				>
 					{#each paragraphs as para (para.id)}
 						{#if oninject}<div data-gap class="h-5"></div>{/if}
-						<div style={(para.level ?? 0) === 0 ? 'margin-inline: var(--ta-mxp, 0%)' : undefined} class="flex gap-2 py-1.5 pl-1 pr-1">
+						<div style={(para.level ?? 0) === 0 ? 'margin-inline: var(--ta-mxp, 0%)' : undefined} class="para-row flex gap-2 py-1.5 pl-1 pr-1">
 							<span class="text-xs text-gray-500">{para.originalIndex}</span>
 							{@render body(para, 'mini-')}
 						</div>

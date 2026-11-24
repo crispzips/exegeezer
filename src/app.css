@@ -364,12 +364,18 @@ svg[fill="currentColor"] { color: var(--color-taupe5); }
 }
 .pop-in { animation: pop-in 0.28s cubic-bezier(0.34, 1.56, 0.64, 1) both; }
 
-/* A submenu in the vertical menu (rally settings, editing tools) sits a step down from the menu: shaded, with a soft inner shadow top and bottom */
-.submenu {
-  background: color-mix(in srgb, var(--color-taupe3) 45%, var(--color-taupe1));
-  box-shadow: inset 0 3px 3px -2px color-mix(in srgb, var(--color-taupe5) 30%, transparent), inset 0 -3px 3px -2px color-mix(in srgb, var(--color-taupe5) 30%, transparent);
+/* The sunken gutter of the vertical menu (the page toggle and every submenu in it): a taupe2 trough, dark top-left edge, light bottom-right, inner shadow, like the text fields.
+   It reads only theme variables, so every theme paints its own. Hovered buttons in it lift to taupe1. */
+.sunk-gutter, .submenu {
+  background: var(--color-taupe2);
+  border: 1px solid;
+  border-color: var(--color-taupe4) var(--color-taupe3) var(--color-taupe3) var(--color-taupe4);
+  border-radius: var(--radius-lg);
+  box-shadow: inset 1px 2px 3px color-mix(in srgb, var(--color-taupe5) 20%, transparent);
 }
-.submenu button:hover:not(:disabled) { background: var(--color-taupe3); }
+/* a submenu in the vertical menu (rally settings, editing tools) is a gutter a little narrower than the menu */
+.submenu { width: calc(100% - 0.5rem); margin-inline: auto; }
+.sunk-gutter button:hover:not(:disabled, [aria-expanded='true'], [aria-pressed='true']), .sunk-gutter a:hover:not([aria-current]), .submenu button:hover:not(:disabled, [aria-expanded='true'], [aria-pressed='true']) { background: var(--color-taupe1); }
 
 /* Rally view's speed slider: vertical, slowest at the bottom, with unlabelled ticks */
 input[type='range'].rally-speed {
@@ -471,3 +477,6 @@ input[type='range'].form-range::-moz-range-thumb {
 .appearance .para-text { font-size: calc(1em * var(--ta-size, 1)); letter-spacing: var(--ta-ls, 0); }
 /* line spacing only once it has been moved off its default, so every view keeps its own until then */
 .appearance.ta-line .para-text, .appearance.ta-line .para-text * { line-height: var(--ta-lh); }
+
+/* paragraph spacing (linear view): the space above and below each paragraph row, only once moved off its default */
+.appearance.ta-para .para-row { padding-block: var(--ta-ps); }

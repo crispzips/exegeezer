@@ -3,7 +3,7 @@
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { tick, untrack } from 'svelte';
 	import { ChevronsUp, Cog, Fullscreen, Minus, PencilEditCircle, Plus, TrashX } from '@boxicons/svelte';
-	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
+	import { buildSections, ancestorsOf, countParagraphs } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, emphasizeFirst, plainFirst, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
@@ -231,8 +231,9 @@
 	// The grid is laid out in unscaled units and drawn with CSS `zoom`, so bubbles, gaps, borders
 	// and text all scale together. A cell is PITCH wide; its bubble is SIZE, centred in it.
 	const SIZE = 224;
-	const PITCH = SIZE + 80; // the gap is wide enough for the hover plus, with room around it
-	const GAP = PITCH - SIZE;
+	// the gap between bubbles: wide enough for the hover plus (with room around it) when editing, tight when only reading
+	let GAP = $derived(onadd || exploded ? 80 : 24);
+	let PITCH = $derived(SIZE + GAP);
 	/** exploded: the tubes' thickness (half of what the exploded circles were) */
 	const TUBE = SIZE * 0.75 * 0.5;
 	/** exploded: opacity of a section's whole stroke */
@@ -1058,7 +1059,7 @@
 							? 'bg-[color-mix(in_srgb,var(--c)_28%,var(--color-taupe1))] font-semibold'
 							: 'bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] hover:bg-[color-mix(in_srgb,var(--c)_20%,var(--color-taupe1))]'}"
 					>
-						<span class="mb-3 text-xs font-normal text-grey2">§{node.hierarchicalIndex}</span>
+						<span class="mb-3 text-xs font-normal text-taupe4">§{node.hierarchicalIndex}</span>
 						<span class="flex min-h-0 min-w-0 flex-1 flex-col items-center justify-center break-words text-xl leading-snug">
 							{#if titleEditId === node.id}
 								<!-- double-clicked (or just added): the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
@@ -1071,9 +1072,12 @@
 						</span>
 						<!-- the caret shows the open state, so only a section with something in it has one -->
 						{#if node.children.length}
-							<svg class="h-5 w-5 shrink-0 transition-transform {p.open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
-								<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
-							</svg>
+							<span class="flex shrink-0 items-center gap-0.5">
+								<svg class="h-5 w-5 shrink-0 transition-transform {p.open ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+									<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
+								</svg>
+								<span class="text-xs font-normal text-taupe4" aria-label="{countParagraphs(node)} paragraphs">{countParagraphs(node)}¶</span>
+							</span>
 						{:else}
 							<span class="h-5 w-5 shrink-0"></span>
 						{/if}

@@ -11,6 +11,8 @@
 
 <Navbar user={data.user} />
 
-{@render children()}
+<div class="pr-12">
+	{@render children()}
+</div>
 
 

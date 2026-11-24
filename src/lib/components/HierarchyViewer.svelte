@@ -1,6 +1,6 @@
 <script>
 	import { tick, untrack } from 'svelte';
-	import { buildSections, ancestorsOf } from '#lib/utilities/buildSections.js';
+	import { buildSections, ancestorsOf, countParagraphs } from '#lib/utilities/buildSections.js';
 	import SplitPane from '#lib/components/SplitPane.svelte';
 	import HierarchyMinimap from '#lib/components/HierarchyMinimap.svelte';
 	import { colorSections } from '#lib/utilities/sectionColor.js';
@@ -671,12 +671,15 @@
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
-							<span class="text-xs font-normal {isOpen ? 'text-on-hue/70' : 'text-grey2'}">§{node.hierarchicalIndex}</span>
+							<span class="text-xs font-normal text-taupe4">§{node.hierarchicalIndex}</span>
 							<!-- the caret shows the open state, so only a section with something in it has one -->
 							{#if node.children.length}
-								<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
-									<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
-								</svg>
+								<span class="flex items-center gap-0.5">
+									<svg class="h-5 w-5 transition-transform {isOpen ? 'rotate-90' : ''}" viewBox="0 0 20 20" fill="currentColor">
+										<path d="M7.2 4.8a.75.75 0 011.06 0l4.5 4.5a.75.75 0 010 1.06l-4.5 4.5a.75.75 0 01-1.06-1.06L11.17 9.8 7.2 5.86a.75.75 0 010-1.06z" />
+									</svg>
+									<span class="text-xs font-normal text-taupe4" aria-label="{countParagraphs(node)} paragraphs">{countParagraphs(node)}¶</span>
+								</span>
 							{:else}
 								<span class="h-5 w-5"></span>
 							{/if}

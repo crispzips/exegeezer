@@ -2,8 +2,8 @@
 //   node scripts/seed-texticians.mjs
 // Needs the dev server running at ORIGIN. Refuses to touch any database that isn't on localhost.
 // Each account signs up through the app's own sign-up route, gets its email marked verified in SQL,
-// and gets a bio (the description of its "self" persona) written by Paul, no profile picture, and no name
-// (the account's name is left empty; `label` below is only for this script's log).
+// and gets a bio (the description of its "self" persona) written by Paul, no profile picture, and the name
+// "Geezer<n>" (n = the number in its email address; `label` below is only for this script's log).
 // Passwords are random and live in .env.texticians (gitignored); this script never prints them.
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
@@ -40,11 +40,11 @@ try {
 			const res = await fetch(`${ORIGIN}/api/auth/sign-up/email`, {
 				method: 'POST',
 				headers: { 'content-type': 'application/json', origin: ORIGIN },
-				body: JSON.stringify({ email, password: creds[`USER${t.n}_PASSWORD`], name: t.label })
+				body: JSON.stringify({ email, password: creds[`USER${t.n}_PASSWORD`], name: `Geezer${t.n}` })
 			});
 			if (!res.ok) throw new Error(`Sign-up failed for ${email}: ${res.status} ${await res.text()}`);
 		}
-		const [u] = await sql`update "user" set email_verified = true, image = null, name = '' where email = ${email} returning id`;
+		const [u] = await sql`update "user" set email_verified = true, image = null, name = ${`Geezer${t.n}`} where email = ${email} returning id`;
 		// the bio is the description of the user's "self" persona (made by the sign-up hook)
 		await sql`
 			update persona set description = ${t.bio}, image = null

@@ -307,3 +307,33 @@ export const userPersonaRelations = relations(userPersona, ({ one }) => ({
   user: one(user, { fields: [userPersona.userId], references: [user.id] }),
   persona: one(persona, { fields: [userPersona.personaId], references: [persona.id] }),
 }));
+
+// ---------------------------------------------------------------------------
+// Following. A user follows another user, or an anthology or a collection (those two don't exist yet, so for now
+// only users can be followed; their ids will simply be stored in `target_id`). `owner_id` is always the user
+// the followed thing belongs to (for a user, themself), so following someone's anthology or collection makes
+// you "amiable" with its owner without a second lookup.
+// ---------------------------------------------------------------------------
+
+export const follow = pgTable(
+  "follow",
+  {
+    followerId: text("follower_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    // 'user' | 'anthology' | 'collection'
+    kind: text("kind").notNull().default("user"),
+    // the followed user's id, or the anthology's or collection's id
+    targetId: text("target_id").notNull(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.followerId, table.kind, table.targetId] }),
+    index("follow_ownerId_idx").on(table.ownerId),
+    check("follow_kind_check", sql`${table.kind} in ('user', 'anthology', 'collection')`),
+    check("follow_not_self_check", sql`${table.followerId} <> ${table.ownerId}`),
+  ],
+);

@@ -17,6 +17,10 @@
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, emphasizeFirst, plainFirst, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
+	import CommentFlow from '#lib/components/CommentFlow.svelte';
+	import { useCommentEditor } from '#lib/utilities/commentEditor.svelte.js';
+	import { isCommentClick } from '#lib/utilities/comments.js';
+	import { QuoteRightAlt } from '@boxicons/svelte';
 
 	/**
 	 * Hierarchical view: every header becomes a container (a large button labelled
@@ -36,8 +40,15 @@
 	 *   onnewitem?: (id: string, rect: DOMRect) => void,
 	 *   onleave?: (id: string, changed: boolean) => void,
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
-	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
+	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void,
+	 *   comments?: import('#lib/utilities/comments.js').AnchoredComment[],
+	 *   oncomment?: (id: string) => void,
+	 *   picked?: Set<string>
 	 * }}
+	 *
+	 * With `comments` (commenting mode), each row has a lane beneath its bubbles in which the comments on them flow
+	 * across, each level with its bubble. A click on a paragraph bubble (or Enter on it) goes to `oncomment`; a click on a
+	 * section bubble still opens it, and the button on its corner, shown on hover, goes to `oncomment`.
 	 *
 	 * With `ondelete`, every bubble is editable: hovering a paragraph or section bubble
 	 * outlines it and floats an editor menu above it.
@@ -46,7 +57,30 @@
 	 * bubbles (a violet line) to move them there, or onto the first or second half of a
 	 * bubble of the same kind to prepend or append (merge) it. A section drags with its contents.
 	 */
-	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onrename = undefined, onleave = undefined } = $props();
+	let { paragraphs, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, empty = 'No text yet.', ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onrename = undefined, onleave = undefined, comments = undefined, oncomment = undefined, picked = undefined } = $props();
+
+	/** the comment being pointed at: the bubbles it is about are marked */
+	/** @type {import('#lib/utilities/comments.js').AnchoredComment | null} */
+	let pointed = $state.raw(null);
+	let marked = $derived(new Set(pointed ? [pointed.anchorId, ...pointed.targetIds] : []));
+	/** each row's run of bubbles, which its comments line up with */
+	/** @type {HTMLDivElement[]} */
+	let rowItems = $state([]);
+
+	/** @param {SectionChild} node */
+	const nodeId = (node) => (node.kind === 'section' ? node.id : node.paragraph.id);
+	/** the comments on the bubbles of row `d`, in the order of the bubbles @param {number} d */
+	const rowComments = (d) => {
+		const ids = new Set(rows[d]?.nodes.map(nodeId));
+		return comments?.filter((c) => ids.has(c.anchorId)) ?? [];
+	};
+	const editor = useCommentEditor();
+	/** whether a comment on row `d` is being written, which needs a taller lane @param {number} d */
+	const rowEditing = (d) => rowComments(d).some((c) => editor?.is(c.id));
+	// a row's height to begin with: plain, with a comment lane under its bubbles, and with the editor in that lane
+	const ROW_H = 150;
+	const ROW_WITH_COMMENTS_H = 270;
+	const ROW_EDITING_H = 390;
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -352,6 +386,9 @@
 				// on an interstice, Enter opens its menu rather than the bubble it sits before
 				e.preventDefault();
 				if (oninject) gap.open = true;
+			} else if (e.key === 'Enter' && oncomment && type === 'paragraph' && e.target === el) {
+				e.preventDefault();
+				oncomment(id);
 			} else if (e.key === 'Enter' && onedit && type === 'paragraph' && e.target === el) {
 				e.preventDefault();
 				editCaret = paragraphs.find((p) => p.id === id)?.text.length ?? 0;
@@ -532,7 +569,10 @@
 			if (cursor?.id !== node.paragraph.id) setCursor(node.paragraph.id, 'paragraph');
 			centreSoon(e.currentTarget);
 		}}
-		onclick={() => setCursor(node.paragraph.id, 'paragraph')}
+		onclick={(e) => {
+			setCursor(node.paragraph.id, 'paragraph');
+			if (oncomment && isCommentClick(e)) oncomment(node.paragraph.id);
+		}}
 		{...(editing === node.paragraph.id ? {} : dragAttrs(node.paragraph.id, 'paragraph', stacked ? 'y' : 'x'))}
 		ondblclick={onedit || onwrite
 			? (e) => {
@@ -550,7 +590,7 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')}"
+		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')} {picked?.has(node.paragraph.id) ? 'outline-4! outline-accent! bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(node.paragraph.id) ? 'outline-4 outline-accent/60' : ''} {oncomment ? 'cursor-pointer' : ''}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -601,6 +641,7 @@
 	     and scrolls. -->
 	{@const firstSection = r.nodes.findIndex((n) => n.kind === 'section')}
 	{@const front = firstSection === -1 ? [] : r.nodes.slice(0, firstSection)}
+	{@const notes = rowComments(d)}
 	<div
 		data-row={d}
 		style={tint ? `--c: ${tint}` : ''}
@@ -616,7 +657,9 @@
 			{'#'.repeat(lvl)}
 		</div>
 
-		<div class="flex h-full items-stretch gap-4 py-2 pr-2">
+		<!-- the row's bubbles and, beneath them, the lane for the comments on them -->
+		<div class="flex h-full min-h-0 flex-col">
+		<div bind:this={rowItems[d]} class="flex items-stretch gap-4 py-2 pr-2 {notes.length ? 'min-h-24 shrink' : 'h-full'}">
 			<!-- front matter: small bubbles, first in the top row -->
 			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
@@ -635,6 +678,8 @@
 				{#if node.kind === 'section'}
 					{@const isOpen = selected[d] === node.id}
 					{@const t = splitTitle(node.title)}
+					<!-- commenting: the bubble and its comment button, side by side in the page (a button can't hold another) -->
+					<div class={oncomment ? 'group relative flex shrink-0 items-start' : 'contents'}>
 					<svelte:element
 						this={titleEditId === node.id ? 'div' : 'button'}
 						role={titleEditId === node.id ? 'button' : undefined}
@@ -667,7 +712,7 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
+						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -698,6 +743,10 @@
 							{/if}
 						</span>
 					</svelte:element>
+					{#if oncomment}
+						<button type="button" aria-label="Comment on this section" use:tip={'Comment on this section'} onclick={() => oncomment(node.id)} class="raised absolute top-0 -right-2 z-10 inline-flex items-center justify-center rounded-full p-1 text-dark opacity-0 shadow-md group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-taupe2!"><QuoteRightAlt width={16} height={16} /></button>
+					{/if}
+					</div>
 				{:else}
 					{@render paragraphBubble(node, false)}
 				{/if}
@@ -707,6 +756,12 @@
 			{#if oninject && r.nodes.length > front.length}{@const last = r.nodes[r.nodes.length - 1]}{@render gapEl(last.kind === 'section' ? last.id : last.paragraph.id, 'after', 'x')}{/if}
 			<!-- back matter: small bubbles, last in the top row -->
 			{#if d === 0 && matter}{#each matter.back as s (s.id)}<MatterBubble section={s} />{/each}{/if}
+		</div>
+		{#if notes.length}
+			<div role="complementary" aria-label="Comments on this row" class="{rowEditing(d) ? 'h-60' : 'h-28'} shrink-0 py-1 pr-2">
+				<CommentFlow comments={notes} axis="x" root={rowItems[d]} attribute="data-node" onlit={(c) => (pointed = c)} />
+			</div>
+		{/if}
 		</div>
 	</div>
 {/snippet}
@@ -720,7 +775,7 @@
 			{@render row(d)}
 		</div>
 	{:else}
-		<SplitPane direction="vertical" sized="first" initial={150} min={80} max={600}>
+		<SplitPane direction="vertical" sized="first" initial={rowEditing(d) ? ROW_EDITING_H : rowComments(d).length ? ROW_WITH_COMMENTS_H : ROW_H} min={80} max={600}>
 			{#snippet first()}{@render row(d)}{/snippet}
 			{#snippet second()}{@render stack(d + 1)}{/snippet}
 		</SplitPane>

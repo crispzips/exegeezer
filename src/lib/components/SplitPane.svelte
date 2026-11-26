@@ -1,4 +1,6 @@
 <script>
+	import { untrack } from 'svelte';
+
 	/**
 	 * Two panes divided by a draggable handle.
 	 *
@@ -33,6 +35,11 @@
 
 	const horizontal = $derived(direction === 'horizontal');
 	let size = $state(initial);
+	// a new `initial` (the pane's content now needs a different height) resizes the pane; otherwise a dragged size stays
+	$effect.pre(() => {
+		const next = initial;
+		untrack(() => (size = next));
+	});
 	let dragging = $state(false);
 	/** @type {HTMLDivElement | undefined} */
 	let container;

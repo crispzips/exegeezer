@@ -14,6 +14,9 @@
 	import { dropAllowed } from '#lib/utilities/editText.js';
 		import { linearStops, moveLinear, topmostInView } from '#lib/utilities/readerNav.js';
 	import { definitionsOf, emphasizeFirst, isDefinition, plainFirst, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
+	import CommentFlow from '#lib/components/CommentFlow.svelte';
+	import { isCommentClick } from '#lib/utilities/comments.js';
+	import { SwapHorizontal } from '@boxicons/svelte';
 
 	/**
 	 * A scrolling list of paragraphs with a minimap-style overview column.
@@ -36,8 +39,17 @@
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void,
 	 *   zoom?: number,
 	 *   jumpToId?: string | null,
-	 *   emphasizeFirst?: boolean
+	 *   emphasizeFirst?: boolean,
+	 *   comments?: import('#lib/utilities/comments.js').AnchoredComment[],
+	 *   oncomment?: (id: string) => void,
+	 *   commentsLeft?: boolean,
+	 *   onflipcomments?: () => void,
+	 *   picked?: Set<string>
 	 * }}
+	 *
+	 * With `comments` (commenting mode), they flow down a column beside the text, each level with what it is about;
+	 * the column is to the right of the text, or to its left with `commentsLeft`, and a button at the foot, between
+	 * the two, flips them. A click on a paragraph or header (or Enter on it) goes to `oncomment`.
 	 *
 	 * With `synopsis`, a far-right column also shows the whole text at once, with
 	 * no scrolling, as gray blips whose heights follow each paragraph's real height,
@@ -67,7 +79,12 @@
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
 	 * append (merge) it. A header row drags its whole section.
 	 */
-	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1, jumpToId = null, emphasizeFirst: setOffEnds = true } = $props();
+	let { paragraphs, empty = 'No text yet.', synopsis = false, matter = undefined, focusId = null, onfocusitem = undefined, startEditId = null, onstartedit = undefined, ondelete = undefined, onexpand = undefined, onmove = undefined, oninject = undefined, onedit = undefined, onnewitem = undefined, onwrite = undefined, onleave = undefined, markdown = false, zoom = 1, jumpToId = null, emphasizeFirst: setOffEnds = true, comments = undefined, oncomment = undefined, commentsLeft = false, onflipcomments = undefined, picked = undefined } = $props();
+
+	/** the comment being pointed at: the rows it is about are marked */
+	/** @type {import('#lib/utilities/comments.js').AnchoredComment | null} */
+	let pointed = $state.raw(null);
+	let marked = $derived(new Set(pointed ? [pointed.anchorId, ...pointed.targetIds] : []));
 	/** reading mode (editing passes `ondelete`): the first and last sentences of a paragraph are set larger (unless `emphasizeFirst` is false: the import preview) */
 	const reading = $derived(!ondelete && setOffEnds);
 
@@ -344,6 +361,9 @@
 				// on an interstice, Enter opens its menu
 				e.preventDefault();
 				if (oninject) gap.open = true;
+			} else if (oncomment && e.target === el) {
+				e.preventDefault();
+				oncomment(id);
 			} else if (onedit && cur.type !== 'gap' && e.target === el) {
 				e.preventDefault();
 				editCaret = para.text.length;
@@ -482,6 +502,8 @@
 	// Space around the text (of the pane's width): above/below the scrolling area, and left/right inside it
 	const PAGE_PAD_Y = '5cqw'; // above and below the scrolling text, always visible
 	const PAGE_PAD_X = '12%'; // left and right, inside the text (the page's side margins)
+	// beside a comment column the text keeps three fifths of the page, with narrower side margins
+	let padX = $derived(comments ? '3%' : PAGE_PAD_X);
 	const PAGE_MARGIN_TOP = '7.33cqw'; // the page's top margin, relative to the pane's width
 	const PAGE_MARGIN_BOTTOM = '11cqw'; // its bottom margin: about the same as its sides
 	const PAGE_PAD_TOP = '4px'; // above and below the first and last rows, so their focus outline is not clipped
@@ -763,10 +785,13 @@
 	<!-- The text frame: a buffer of space above and below the scrolling text (cqw = the frame's width) -->
 	<div class="flex min-h-0 min-w-0 flex-1 flex-col [container-type:inline-size]">
 	<div class="min-h-0 flex-1" style="padding: {PAGE_PAD_Y} 3cqw">
+	<div class="relative h-full">
 	<!-- the page: a sheet of paper (same taupe1) lifted off the background by a border and a small shadow -->
 	<div bind:this={mainEl} onscroll={update} class="h-full overflow-x-hidden overflow-y-auto rounded-sm border border-taupe3 bg-taupe1 shadow-md" style="padding-top: {PAGE_MARGIN_TOP}; padding-bottom: {PAGE_MARGIN_BOTTOM}">
 		<!-- front matter scrolls away with the text (it is not one of its rows) -->
 		{#if matter}<MatterBar sections={matter.front} label="Front matter" edge="top" {markdown} />{/if}
+		<!-- the text, and in commenting mode the comment column beside it, scroll together -->
+		<div class={comments ? `flex items-start ${commentsLeft ? 'flex-row-reverse' : ''}` : ''}>
 		<!-- svelte-ignore a11y_no_static_element_interactions -->
 			<div
 				bind:this={mainContent}
@@ -785,8 +810,8 @@
 				ondragleave={(e) => {
 					if (!e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) dd.drop = null;
 				}}
-				class="relative"
-				style="padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em"
+				class="relative {comments ? 'w-3/5 min-w-0' : ''}"
+				style="padding: {PAGE_PAD_TOP} {padX}; font-size: {zoom}em"
 			>
 			{#each visible as para (para.id)}
 				{#if oninject}{@render gapEl(para.id, 'before')}{/if}
@@ -800,6 +825,8 @@
 					}}
 					onclick={(e) => {
 						cursor = { type: (para.level ?? 0) > 0 ? 'section' : 'paragraph', id: para.id };
+						// commenting mode: a single click comments
+						if (oncomment) return void (isCommentClick(e) && oncomment(para.id));
 						// writing mode: a single click puts the editing cursor at that point (links and buttons keep their own clicks)
 						if (!onedit || editing === para.id || window.getSelection()?.type === 'Range') return;
 						if (e.target instanceof Element && e.target.closest('a, button')) return;
@@ -821,7 +848,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="para-row flex gap-2 rounded py-1.5 pl-1 pr-1  {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')}"
+					class="para-row flex gap-2 rounded py-1.5 pl-1 pr-1 {oncomment ? 'cursor-pointer hover:bg-accent/10' : ''} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')} {picked?.has(para.id) ? 'bg-accent/25 outline-2 outline-accent' : marked.has(para.id) ? 'bg-accent/15' : ''}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}
@@ -838,7 +865,29 @@
 			{/each}
 			{#if oninject && paragraphs.length > 0}{@render gapEl(paragraphs[paragraphs.length - 1].id, 'after')}{/if}
 		</div>
+		{#if comments}
+			<aside aria-label="Comments" class="w-2/5 min-w-0 self-stretch border-taupe2 {commentsLeft ? 'border-r' : 'border-l'}" style="padding-block: {PAGE_PAD_TOP}">
+				{#if comments.length}
+					<CommentFlow {comments} axis="y" root={mainContent} attribute="data-para" onlit={(c) => (pointed = c)} />
+				{:else}
+					<p class="px-3 py-2 text-sm text-grey3">No comments yet. Click a paragraph or a section header to leave one, or shift- or ⌘/Ctrl-click several first.</p>
+				{/if}
+			</aside>
+		{/if}
+		</div>
 		{#if matter}<MatterBar sections={matter.back} label="Back matter" edge="bottom" {markdown} />{/if}
+		</div>
+		{#if comments && onflipcomments}
+			<!-- flip: at the foot of the page, on the line between the text and the comments -->
+			<button
+				type="button"
+				aria-label="Flip the comments to the other side"
+				use:tip={commentsLeft ? 'Comments to the right' : 'Comments to the left'}
+				onclick={onflipcomments}
+				class="raised absolute bottom-2 z-20 inline-flex -translate-x-1/2 items-center justify-center rounded-full p-1.5 text-dark shadow-md hover:bg-taupe2!"
+				style="left: {commentsLeft ? 40 : 60}%"
+			><SwapHorizontal width={20} height={20} /></button>
+		{/if}
 		</div>
 		</div>
 	</div>
@@ -879,7 +928,7 @@
 				<div
 					bind:this={miniInner}
 					class="absolute top-0 left-0 origin-top-left"
-					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {PAGE_PAD_X}; font-size: {zoom}em; transform: scale({m.k})"
+					style="width: {m.w}px; padding: {PAGE_PAD_TOP} {padX}; font-size: {zoom}em; transform: scale({m.k})"
 				>
 					{#each visible as para (para.id)}
 						{#if oninject}<div data-gap class="h-5"></div>{/if}

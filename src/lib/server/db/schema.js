@@ -223,9 +223,10 @@ export const textItem = pgTable(
   ],
 );
 
-// A comment is left on a paragraph of a text. Its words are a paragraph in a commentary on that text (so the
-// commentary, a text in its own right, holds its comments), and the row ties that paragraph to the one it is about.
-// A comment can't be left without both: removing either paragraph (or the commentary) removes the comment row.
+// A comment is left on one or more paragraphs of a text (a comment on a section is a comment on all its paragraphs).
+// Its words are a paragraph in a commentary on that text (so the commentary, a text in its own right, holds its
+// comments); the `comment` row ties those words to the commentary, and `comment_paragraph` lists what they are about.
+// Removing the words (or the commentary) removes the comment; removing a paragraph it is about drops only that tie.
 export const comment = pgTable(
   "comment",
   {
@@ -234,10 +235,6 @@ export const comment = pgTable(
     commentaryId: uuid("commentary_id")
       .notNull()
       .references(() => text_.id, { onDelete: "cascade" }),
-    // the paragraph commented on, in the text the commentary is on
-    paragraphId: uuid("paragraph_id")
-      .notNull()
-      .references(() => paragraph.id, { onDelete: "cascade" }),
     // the comment itself: a paragraph in the commentary
     bodyParagraphId: uuid("body_paragraph_id")
       .notNull()
@@ -245,7 +242,24 @@ export const comment = pgTable(
       .unique(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
-  (table) => [index("comment_commentaryId_idx").on(table.commentaryId), index("comment_paragraphId_idx").on(table.paragraphId)],
+  (table) => [index("comment_commentaryId_idx").on(table.commentaryId)],
+);
+
+// the paragraphs a comment is about, in the text its commentary is on
+export const commentParagraph = pgTable(
+  "comment_paragraph",
+  {
+    commentId: uuid("comment_id")
+      .notNull()
+      .references(() => comment.id, { onDelete: "cascade" }),
+    paragraphId: uuid("paragraph_id")
+      .notNull()
+      .references(() => paragraph.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.commentId, table.paragraphId] }),
+    index("comment_paragraph_paragraphId_idx").on(table.paragraphId),
+  ],
 );
 
 export const textRelations = relations(text_, ({ one, many }) => ({

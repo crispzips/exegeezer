@@ -23,7 +23,9 @@
     import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
     import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
-    import CommentDialog from '#lib/components/CommentDialog.svelte';
+    import { anchorComments, sectionParagraphs } from '#lib/utilities/comments.js';
+    import { CommentEditor, DRAFT_ID, provideCommentEditor } from '#lib/utilities/commentEditor.svelte.js';
+    import { ancestorsOf, buildSections } from '#lib/utilities/buildSections.js';
     import NewTextDialog from '#lib/components/NewTextDialog.svelte';
     import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
     import NewItemChooser from '#lib/components/NewItemChooser.svelte';
@@ -1065,26 +1067,154 @@
         if (view !== 'cascading') startEditId = id;
     }
 
-    /** @type {{ excerpt: string, run: (body: string) => Promise<string | void> } | null} */
-    let commentRequest = $state(null);
+    /** the paragraphs a paragraph or a section header stands for: itself, or all those in the section @param {string} id */
+    function paragraphsAt(id) {
+        const item = shownText.find((p) => p.id === id);
+        if (!item) return [];
+        return (item.level ?? 0) > 0 ? (sectionParagraphs(shownText).find((x) => x.id === id)?.paragraphIds ?? []) : [id];
+    }
+    /** @param {number} n */
+    const countLabel = (n) => (n === 1 ? '1 paragraph' : `${n} paragraphs`);
 
-    /** A double-click on a paragraph in commenting mode: ask for a comment on it. The first one creates the commentary. @param {string} id */
-    function commentAt(id) {
-        const id0 = textId;
-        const para = mainText.find((p) => p.id === id);
-        if (!authed || !id0 || !para) return;
-        commentRequest = {
-            excerpt: para.text.replace(/^#+\s*/, '').slice(0, 300),
-            run: async (body) => {
-                await queue; // let any save in flight finish first, so the paragraph exists on the server
-                const res = await fetch(`/api/texts/${id0}/comments`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ paragraphId: id, body }) });
-                if (!res.ok) return (await res.json().catch(() => null))?.message ?? 'Could not post the comment.';
-            }
-        };
+    // ---- Picking several paragraphs to comment on at once, as files are picked in a file manager: a cmd-click (ctrl-click away from the
+    // Mac) adds one, or a whole section, or takes it back out; a shift-click picks the range from the last of those to where it lands ----
+    const MAC = typeof navigator !== 'undefined' && /Mac|iP(hone|ad|od)/.test(navigator.userAgent);
+    let picked = $state.raw(/** @type {Set<string>} */ (new Set()));
+    /** the paragraph or section header last cmd/ctrl-clicked (or first shift-clicked): where a shift-click's range starts */
+    let pickAnchor = /** @type {string | null} */ (null);
+    function clearPicked() {
+        picked = new Set();
+        pickAnchor = null;
+    }
+    // what was picked doesn't carry over to another text or mode
+    $effect(() => {
+        void textId;
+        void mode;
+        clearPicked();
+    });
+    /** what the views mark as picked: the paragraphs, and every section all of whose paragraphs are picked */
+    const pickedMarks = $derived.by(() => {
+        if (!picked.size) return picked;
+        const whole = sectionParagraphs(shownText).filter((s) => s.paragraphIds.length && s.paragraphIds.every((p) => picked.has(p)));
+        return new Set([...picked, ...whole.map((s) => s.id)]);
+    });
+
+    /** @param {string} id a paragraph or a section header */
+    function togglePick(id) {
+        const ids = paragraphsAt(id);
+        if (!ids.length) return notify('That section has no paragraphs to comment on.');
+        const out = ids.every((p) => picked.has(p));
+        const next = new Set(picked);
+        for (const p of ids) out ? next.delete(p) : next.add(p);
+        picked = next;
+        pickAnchor = id;
     }
 
-    /** a double-click on a paragraph, outside writing: it comments in commenting mode, and starts writing otherwise @param {string} id */
-    const onparagraph = (id) => (mode === 'commenting' ? commentAt(id) : writeAt(id));
+    /** Pick every paragraph from the anchor to `id`, in the order of the text. With no anchor yet, `id` becomes it.
+     * @param {string} id a paragraph or a section header @param {boolean} keep add the range to what is picked, instead of replacing it */
+    function pickRange(id, keep) {
+        const to = paragraphsAt(id);
+        if (!to.length) return notify('That section has no paragraphs to comment on.');
+        let from = pickAnchor ? paragraphsAt(pickAnchor) : [];
+        if (!from.length) {
+            pickAnchor = id;
+            from = to;
+        }
+        const order = shownText.filter((p) => (p.level ?? 0) === 0).map((p) => p.id);
+        // a section at either end is in the range whole
+        const ends = [from[0], from[from.length - 1], to[0], to[to.length - 1]].map((p) => order.indexOf(p));
+        const range = order.slice(Math.min(...ends), Math.max(...ends) + 1);
+        picked = new Set(keep ? [...picked, ...range] : range);
+    }
+
+    /** Takes a view's mouse events before the view does: in commenting mode, those made with shift, or with cmd (Mac) or ctrl (elsewhere),
+     * pick, and do nothing else. A ctrl-click on a Mac does nothing at all (the system's own menu still comes up). @param {MouseEvent} e */
+    function pickCapture(e) {
+        if (!commenting || !authed || !(e.target instanceof Element)) return;
+        const add = MAC ? e.metaKey : e.ctrlKey;
+        const nothing = MAC && e.ctrlKey;
+        if (!(e.shiftKey || add || nothing) || (nothing && e.type === 'mousedown')) return;
+        const el = e.target.closest('[data-para], [data-node]');
+        if (!(el instanceof HTMLElement)) return;
+        e.preventDefault(); // no text selection or link
+        e.stopPropagation();
+        if (e.type !== 'click' || nothing) return;
+        const id = el.dataset.para ?? el.dataset.node ?? '';
+        if (e.shiftKey) pickRange(id, add);
+        else togglePick(id);
+    }
+
+    // ---- Writing a comment: its bubble, where the view puts it, is the editor ----
+    const editor = new CommentEditor({ send: sendComment, textId: () => textId, blocked: () => notify('Post or cancel the comment you are writing first.') });
+    provideCommentEditor(editor);
+    // an unfinished comment belongs to its text (it waits through changes of view and mode, not of text)
+    $effect(() => {
+        const id = textId;
+        untrack(() => {
+            if (editor.open && editor.open.textId !== id) editor.open = null;
+        });
+    });
+
+    /** Begin a new comment on some paragraphs. The first one creates the commentary. @param {string[]} paragraphIds */
+    function compose(paragraphIds) {
+        const id = textId;
+        if (!authed || !id) return;
+        if (editor.start({ id: DRAFT_ID, textId: id, paragraphIds, body: '' })) showAnchor(paragraphIds);
+    }
+
+    /** Open the sections around the place a new comment goes, in the views that keep sections closed. @param {string[]} paragraphIds */
+    function showAnchor(paragraphIds) {
+        const [at] = anchorComments([{ id: DRAFT_ID, commentaryId: '', authors: [], body: '', createdAt: '', paragraphIds }], shownText);
+        if (!at || (view !== 'hierarchical' && view !== 'cascading') || document.querySelector(`[data-node="${CSS.escape(at.anchorId)}"]`)) return;
+        const around = ancestorsOf(buildSections(shownText), at.anchorId);
+        if (around?.length) hierarchy?.openPath(around);
+    }
+
+    // coming to a view (or back to commenting) with a comment unfinished: its bubble is shown there too
+    $effect(() => {
+        void view;
+        if (mode !== 'commenting') return;
+        // once the view has drawn itself and opened wherever it was going to
+        const turn = setTimeout(() => {
+            const writing = editor.open;
+            if (!writing || writing.textId !== textId) return;
+            showAnchor(writing.paragraphIds);
+            editor.called++;
+        }, 300);
+        return () => clearTimeout(turn);
+    });
+
+    /** @param {import('#lib/utilities/commentEditor.svelte.js').Writing} writing @returns {Promise<string | void>} what went wrong, if it did */
+    async function sendComment({ id, textId: on, paragraphIds, body }) {
+        const isNew = id === DRAFT_ID;
+        await queue; // let any save in flight finish first, so the paragraphs exist on the server
+        const res = await fetch(`/api/texts/${on}/comments`, {
+            method: isNew ? 'POST' : 'PATCH',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(isNew ? { paragraphIds, body } : { commentId: id, body })
+        });
+        const answer = await res.json().catch(() => null);
+        if (!res.ok) return answer?.message ?? 'Could not save the comment.';
+        if (isNew && paragraphIds.some((p) => picked.has(p))) clearPicked();
+        // the commentary is a text too: a tab holding it is out of date now (and saving from it would undo this), so it reloads
+        tabs = tabs.map((t) => (t.key !== activeKey && t.textId === answer?.commentaryId && !isDirty(t) ? { ...t, items: null, history: null } : t));
+        await loadComments(on);
+    }
+
+    function commentPicked() {
+        const ids = shownText.filter((p) => picked.has(p.id)).map((p) => p.id);
+        if (ids.length) compose(ids);
+    }
+
+    /** A click in commenting mode, on a paragraph or on a section's header or comment button (which comments on all its paragraphs).
+     * On something picked, the comment is on everything picked. @param {string} id */
+    function commentAt(id) {
+        if (pickedMarks.has(id)) return commentPicked();
+        const ids = paragraphsAt(id);
+        if (!ids.length) return notify('That section has no paragraphs to comment on.');
+        compose(ids);
+    }
+
 
     /** @param {'delete' | 'wipe'} kind */
     function requestWhole(kind) {
@@ -1130,7 +1260,7 @@
 
     function openModal() {
         seeding = false;
-        if (!authed) return;
+        if (!authed || commenting) return;
         injectGap = null;
         dialogEl?.showModal();
     }
@@ -1249,6 +1379,45 @@
     /** @param {Element} _node */
     const wipeOut = (_node) => ({ duration: 280, easing: cubicOut, css: (/** @type {number} */ t) => `clip-path: inset(0 0 0 ${(1 - t) * 100}%)` });
 
+    // ---- Comments: fetched when a text is shown in commenting mode, and again after one is posted ----
+    const commenting = $derived(mode === 'commenting');
+    /** the comments last fetched, and the text they are on */
+    let fetched = $state.raw({ textId: /** @type {string | null} */ (null), comments: /** @type {import('#lib/utilities/comments.js').Comment[]} */ ([]) });
+    /** @param {string} id */
+    async function loadComments(id) {
+        try {
+            const res = await fetch(`/api/texts/${id}/comments`);
+            if (!res.ok) throw new Error(`${res.status}`);
+            const { comments } = await res.json();
+            if (id === textId) fetched = { textId: id, comments };
+        } catch (err) {
+            console.warn('Could not load the comments', err);
+            notify('Could not load the comments.');
+        }
+    }
+    $effect(() => {
+        const id = textId;
+        if (authed && commenting && id) untrack(() => loadComments(id));
+    });
+    /** the paragraphs of the new comment being written on this text, or null (not its words: they change with every key) */
+    const draftOn = $derived(editor.open?.id === DRAFT_ID && editor.open.textId === textId ? editor.open.paragraphIds : null);
+    /** what the views show in commenting mode, each comment placed by its section or first paragraph, the one being written
+     * among them (undefined outside that mode) */
+    const comments = $derived.by(() => {
+        if (!commenting) return undefined;
+        const saved = fetched.textId === textId ? fetched.comments : [];
+        // the new one counts as the latest, so it follows the others in its place
+        const draft = draftOn ? [{ id: DRAFT_ID, commentaryId: '', authors: [data.user?.name ?? ''], body: '', createdAt: '9999', paragraphIds: draftOn }] : [];
+        return anchorComments([...saved, ...draft], shownText);
+    });
+    /** what the views mark: what is picked, and what the comment in the editor is about */
+    const shownMarks = $derived.by(() => {
+        const written = comments?.find((c) => editor.is(c.id));
+        return written ? new Set([...pickedMarks, written.anchorId, ...written.targetIds]) : pickedMarks;
+    });
+    /** linear view only: whether the comments are to the left of the text */
+    let commentsLeft = $state(false);
+
     // a rally can't run behind the commenting notice
     $effect(() => {
         if (mode === 'commenting') rallyPlaying = false;
@@ -1278,6 +1447,7 @@
                 if (authed) mode = saved.mode;
             }
             if (typeof saved.exploded === 'boolean') exploded = saved.exploded;
+            if (typeof saved.commentsLeft === 'boolean') commentsLeft = saved.commentsLeft;
             const z = ZOOMS.indexOf(saved.zoom);
             const look = saved.appearance ?? {};
             const at = (/** @type {number[]} */ list, /** @type {unknown} */ v, /** @type {number} */ d) => (list.indexOf(/** @type {number} */ (v)) >= 0 ? list.indexOf(/** @type {number} */ (v)) : d);
@@ -1299,7 +1469,7 @@
     });
 
     $effect(() => {
-        const settings = { view, mode: chosenMode, exploded, zoom: ZOOMS[zoomStep], appearance: { size: SIZE_STEPS[sizeStep], line: LINE_STEPS[lineStep], letter: LETTER_STEPS[letterStep], side: MARGIN_STEPS[sideStep], para: PARA_STEPS[paraStep] }, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first };
+        const settings = { view, mode: chosenMode, exploded, commentsLeft, zoom: ZOOMS[zoomStep], appearance: { size: SIZE_STEPS[sizeStep], line: LINE_STEPS[lineStep], letter: LETTER_STEPS[letterStep], side: MARGIN_STEPS[sideStep], para: PARA_STEPS[paraStep] }, rallySizeRem: SIZES[rallySize], rallySpeed, emphasizeFirst: emphasis.first };
         if (!restored) return;
         try {
             localStorage.setItem(REMEMBER, JSON.stringify(settings));
@@ -1554,7 +1724,15 @@
                     <button role="menuitem" onclick={() => (settingsRequest = { id: /** @type {string} */ (textId) })} aria-label="Text settings" use:tip={'Text settings'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><FileCog /></button>
                     <button role="menuitem" onclick={duplicate} aria-label="Duplicate text" use:tip={'Duplicate text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><CopyPlus /></button>
                     <button role="menuitem" onclick={() => requestWhole('delete')} aria-label="Delete text" use:tip={'Delete text'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><Trash /></button>
-                    <button role="menuitem" onclick={() => requestWhole('wipe')} aria-label="Wipe clean" use:tip={'Wipe clean'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 hover:bg-taupe2"><ToiletRoll /></button>
+                    <button role="menuitem" onclick={() => !commenting && requestWhole('wipe')} aria-label="Wipe clean" aria-disabled={commenting} use:tip={commenting ? "Wipe clean (the text can't be changed while commenting)" : 'Wipe clean'} data-tip-place="below" class="inline-flex items-center justify-center rounded-md p-1 {commenting ? 'cursor-not-allowed opacity-60' : 'hover:bg-taupe2'}"><ToiletRoll /></button>
+                </div>
+            {/if}
+            {#if commenting && view !== 'rally' && picked.size && !editor.open}
+                <!-- what has been picked to comment on: in the title bar, so it covers none of the text -->
+                <div role="toolbar" aria-label="Picked paragraphs" class="raised ml-auto flex shrink-0 items-center gap-2 rounded-full py-0.5 pr-1 pl-4 text-sm whitespace-nowrap shadow-md">
+                    <span role="status">{countLabel(picked.size)} picked</span>
+                    <button onclick={commentPicked} class="rounded-full bg-accent px-3 py-0.5 font-medium text-on-accent hover:bg-accent/90">Comment</button>
+                    <button onclick={clearPicked} aria-label="Clear the picked paragraphs" use:tip={'Clear (Esc)'} data-tip-place="below" class="inline-flex items-center justify-center rounded-full p-1 hover:bg-taupe2"><X width={16} height={16} /></button>
                 </div>
             {/if}
             {#if !authed}
@@ -1582,9 +1760,10 @@
         {/if}
         <!-- Text appearance (every view): the settings reach the views as CSS variables, which app.css turns into sizes and spacing -->
         {#key activeKey}
-        <div class="h-full {appearanceOn ? 'appearance' : ''} {appearanceOn && lineStep !== DEFAULT_LINE ? 'ta-line' : ''} {appearanceOn && paraStep !== DEFAULT_PARA ? 'ta-para' : ''}" style={appearanceOn ? appearanceStyle : undefined}>
+        <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+        <div onclickcapture={pickCapture} ondblclickcapture={pickCapture} onmousedowncapture={pickCapture} class="h-full {appearanceOn ? 'appearance' : ''} {appearanceOn && lineStep !== DEFAULT_LINE ? 'ta-line' : ''} {appearanceOn && paraStep !== DEFAULT_PARA ? 'ta-para' : ''}" style={appearanceOn ? appearanceStyle : undefined}>
         {#if view === 'linear'}
-            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} zoom={ZOOMS[zoomStep]} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <ParagraphViewer onleave={leftBubble} onwrite={authed && !editing && !commenting ? writeAt : undefined} {comments} oncomment={authed && commenting ? commentAt : undefined} picked={shownMarks} onnewitem={editing ? askNew : undefined} paragraphs={shownText} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} {matter} {markdown} {commentsLeft} onflipcomments={() => (commentsLeft = !commentsLeft)} zoom={ZOOMS[zoomStep]} empty="" synopsis ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {:else if view === 'rally' && mode === 'commenting'}
             <!-- commenting isn't available in rally view yet: the view stays inactive and says so -->
             <div class="flex h-full items-center justify-center px-8 text-center text-grey3" role="status">
@@ -1605,9 +1784,9 @@
                 </div>
             {/if}
         {:else if view === 'cascading'}
-            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
+            <CascadingViewer ondelete={editing ? requestDelete : undefined} onleave={leftBubble} onwrite={authed && !editing && !commenting ? writeAt : undefined} {comments} oncomment={authed && commenting ? commentAt : undefined} picked={shownMarks} bind:this={hierarchy} onrename={editing ? renameSectionTitle : undefined} {focusId} onfocusitem={(id) => (focusId = id)} {exploded} paragraphs={shownText} empty="" onmove={editing ? moveByDrag : undefined} onadd={editing ? addAtGap : undefined} onnewitem={editing ? askNew : undefined} onedit={editing ? editParagraph : undefined} />
         {:else}
-            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing ? onparagraph : undefined} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
+            <HierarchyViewer onleave={leftBubble} onwrite={authed && !editing && !commenting ? writeAt : undefined} {comments} oncomment={authed && commenting ? commentAt : undefined} picked={shownMarks} onrename={editing ? renameSectionTitle : undefined} onnewitem={editing ? askNew : undefined} bind:this={hierarchy} {startEditId} onstartedit={() => (startEditId = null)} {focusId} onfocusitem={(id) => (focusId = id)} paragraphs={shownText} {matter} empty="" ondelete={editing ? requestDelete : undefined} onexpand={editing ? (r) => (editRequest = r) : undefined} onmove={editing ? moveByDrag : undefined} oninject={editing ? injectRequest : undefined} onedit={editing ? editParagraph : undefined} />
         {/if}
         </div>
         {/key}
@@ -1617,13 +1796,14 @@
     <!-- Vertical menu column -->
     <nav aria-label="Menu" class="fixed top-0 right-0 z-50 flex w-12 flex-col items-center gap-1 overflow-y-auto pt-2 {authed ? 'bottom-[10rem]' : 'bottom-[12.5rem]'}">
         <!-- with no text open there is nothing to load into: the Seed a text button starts one -->
+        <!-- loading puts text into the open one, so not while commenting -->
         {#if !noText}
         <button
             onclick={openModal}
             aria-label="Load text"
-            aria-disabled={!authed}
-            use:tip={!authed ? 'Load text (sign in first)' : 'Load text'}
-            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
+            aria-disabled={!authed || commenting}
+            use:tip={!authed ? 'Load text (sign in first)' : commenting ? "Load text (the text can't be changed while commenting)" : 'Load text'}
+            class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed && !commenting ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
         >
             <ArrowOutDownCircleHalf />
         </button>
@@ -1780,7 +1960,6 @@
 {/if}
 <RallySetup bind:open={rallySetupOpen} writing={editing} bind:size={rallySize} bind:speed={rallySpeed} onstart={startRally} />
 <ConfirmDialog bind:request={deleteRequest} />
-<CommentDialog bind:request={commentRequest} />
 <NewTextDialog bind:request={newTextRequest} />
 <TextSettingsModal bind:request={settingsRequest} onsaved={({ title, authors, publicized }) => ((textTitle = title), (textAuthors = authors), (textPublicized = publicized))} />
 <MapModal bind:open={mapOpen} writing={editing} onmove={editing ? moveFromMap : undefined} onmatter={editing ? setMatter : undefined} onundo={editing ? undo : undefined} onredo={editing ? redo : undefined} canundo={history.canUndo} canredo={history.canRedo} title={textTitle} paragraphs={editing ? mainText : shownText} onnavigate={goToSection} />
@@ -1929,4 +2108,6 @@
 
 <svelte:window onclick={onWindowClick} onkeydown={(e) => {
         onKeydown(e);
+        // Escape unpicks (a comment being written takes its own Escape)
+        if (e.key === 'Escape' && picked.size && !editor.open) clearPicked();
     }} />

@@ -2,7 +2,7 @@
 	import { caretOffsetAt, editable, noLineBreaks } from '#lib/utilities/editable.js';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { tick, untrack } from 'svelte';
-	import { ChevronsUp, Cog, Fullscreen, Minus, PencilEditCircle, Plus, TrashX } from '@boxicons/svelte';
+	import { ChevronsUp, Cog, Fullscreen, Minus, PencilEditCircle, Plus, QuoteRightAlt, TrashX } from '@boxicons/svelte';
 	import { buildSections, ancestorsOf, countParagraphs } from '#lib/utilities/buildSections.js';
 	import { sectionColor } from '#lib/utilities/sectionColor.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
@@ -11,6 +11,9 @@
 	import { DragDrop } from '#lib/utilities/dragDrop.svelte.js';
 	import { GapHover } from '#lib/utilities/gapHover.svelte.js';
 	import { dropAllowed } from '#lib/utilities/editText.js';
+	import CommentBubble from '#lib/components/CommentBubble.svelte';
+	import { useCommentEditor } from '#lib/utilities/commentEditor.svelte.js';
+	import { isCommentClick } from '#lib/utilities/comments.js';
 
 	/**
 	 * Cascading view: every bubble is the same size and sits in one grid, inside one container.
@@ -33,8 +36,16 @@
 	 *   ondelete?: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onedit?: (edit: { id: string, text: string, title: string, description: string }) => void,
 	 *   placing?: boolean,
-	 *   cursor?: { id: string, place: 'before' | 'after' | 'inside' } | null
+	 *   cursor?: { id: string, place: 'before' | 'after' | 'inside' } | null,
+	 *   comments?: import('#lib/utilities/comments.js').AnchoredComment[],
+	 *   oncomment?: (id: string) => void,
+	 *   picked?: Set<string>
 	 * }}
+	 *
+	 * With `comments` (commenting mode), every cell keeps room above and to the left of its bubble: the comments on a
+	 * bubble in a row go above it, and on a bubble in a column to its left, which leaves the cascade free to grow down and
+	 * to the right. A click on a paragraph bubble (or Enter on it) goes to `oncomment`; a click on a section bubble still
+	 * opens it, and the button in its menu goes to `oncomment`.
 	 *
 	 * With `onmove` (editing mode), bubbles can be dragged within their row or column: onto the
 	 * edge of a sibling, or the space between, to interject; onto the middle of a bubble of the
@@ -57,7 +68,16 @@
 	 * zoomed all the way out, and the bubbles drop their contents and show only their section's
 	 * colour.
 	 */
-	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onnewitem = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined, placing = false, cursor = $bindable(null) } = $props();
+	let { paragraphs, onrename = undefined, focusId = null, onfocusitem = undefined, empty = 'No text yet.', exploded = false, onmove = undefined, onadd = undefined, onnewitem = undefined, onedit = undefined, onwrite = undefined, onleave = undefined, ondelete = undefined, placing = false, cursor = $bindable(null), comments = undefined, oncomment = undefined, picked = undefined } = $props();
+
+	/** the comment being pointed at: the bubbles it is about are marked */
+	/** @type {import('#lib/utilities/comments.js').AnchoredComment | null} */
+	let pointed = $state.raw(null);
+	let marked = $derived(new Set(pointed ? [pointed.anchorId, ...pointed.targetIds] : []));
+	const editor = useCommentEditor();
+	/** bubble id -> the comments on it */
+	let notesOn = $derived(Map.groupBy(comments ?? [], (c) => c.anchorId));
+
 
 	const dd = new DragDrop();
 	const gap = new GapHover();
@@ -233,7 +253,16 @@
 	const SIZE = 224;
 	// the gap between bubbles: wide enough for the hover plus (with room around it) when editing, tight when only reading
 	let GAP = $derived(onadd || exploded ? 80 : 24);
-	let PITCH = $derived(SIZE + GAP);
+	/** commenting: the room kept above and to the left of every bubble for the comments on it (0 otherwise). While a
+	 * comment is being written every cell has more of it, so the editor fits its place without covering any bubble. */
+	const NOTE_ROOM = 176;
+	const EDITOR_ROOM = 288;
+	let INSET = $derived(!comments || exploded ? 0 : comments.some((c) => editor?.is(c.id)) ? EDITOR_ROOM : NOTE_ROOM);
+	let PITCH = $derived(SIZE + GAP + INSET);
+	/** how much the comment room enlarges a cell: cell sizes are scaled by it, so bubbles stay the size they were */
+	let stretch = $derived(PITCH / (SIZE + GAP));
+	/** the middle of a bubble in column (or row) `n` of the grid */
+	const middle = (/** @type {number} */ n) => n * PITCH + (PITCH + INSET) / 2;
 	/** exploded: the tubes' thickness (half of what the exploded circles were) */
 	const TUBE = SIZE * 0.75 * 0.5;
 	/** exploded: opacity of a section's whole stroke */
@@ -418,7 +447,7 @@
 		if (cursor && anc?.length) cursor = { id: anc[0], place: 'after' };
 		// then zoom out to the level that fits the whole (now one-level) layout, so every top-level section is in view
 		await tick();
-		wantedCell = levels[levels.length - 1];
+		wantedCell = levels[levels.length - 1] / stretch;
 		await tick();
 		if (stage) {
 			stage.scrollLeft = 0;
@@ -545,11 +574,11 @@
 	/** available cell sizes, largest (most zoomed in) first */
 	let levels = $derived.by(() => {
 		if (roomW < 50 || roomH < 50) return [IDEAL_CELL];
-		const smallest = Math.min(roomW / colCount, roomH / rowCount, MAX_CELL);
+		const smallest = Math.min(roomW / colCount, roomH / rowCount, MAX_CELL * stretch);
 		/** @type {number[]} */
 		const out = [];
 		for (let n = 1; ; n++) {
-			const c = Math.min(roomW / n, roomH, MAX_CELL);
+			const c = Math.min(roomW / n, roomH, MAX_CELL * stretch);
 			if (c < smallest - 0.5) break;
 			if (!out.length || out[out.length - 1] - c > 1) out.push(c);
 		}
@@ -561,7 +590,7 @@
 	let levelIndex = $derived.by(() => {
 		let best = 0;
 		levels.forEach((c, i) => {
-			if (Math.abs(c - wantedCell) < Math.abs(levels[best] - wantedCell)) best = i;
+			if (Math.abs(c - wantedCell * stretch) < Math.abs(levels[best] - wantedCell * stretch)) best = i;
 		});
 		return best;
 	});
@@ -612,7 +641,7 @@
 		if (next === levelIndex || !stage) return;
 		const x = stage.scrollLeft / cell;
 		const y = stage.scrollTop / cell;
-		wantedCell = levels[next];
+		wantedCell = levels[next] / stretch;
 		await tick();
 		if (!stage) return;
 		stage.scrollLeft = Math.round(x) * cell;
@@ -1021,10 +1050,10 @@
 					{#each layout as p (p.node.kind === 'section' ? p.node.id : p.node.paragraph.id)}
 						{#if p.parent}
 							<line
-								x1={p.parent.col * PITCH + PITCH / 2}
-								y1={p.parent.row * PITCH + PITCH / 2}
-								x2={p.col * PITCH + PITCH / 2}
-								y2={p.row * PITCH + PITCH / 2}
+								x1={middle(p.parent.col)}
+								y1={middle(p.parent.row)}
+								x2={middle(p.col)}
+								y2={middle(p.row)}
 								stroke="var(--color-taupe3)"
 								stroke-width="2"
 							/>
@@ -1035,7 +1064,7 @@
 
 			{#each exploded ? [] : layout as p (p.node.kind === 'section' ? p.node.id : p.node.paragraph.id)}
 				{@const tint = p.color ?? 'var(--color-taupe3)'}
-				{@const style = `left:${p.col * PITCH + GAP / 2}px;top:${p.row * PITCH + GAP / 2}px;width:${SIZE}px;height:${SIZE}px;--c:${tint};scroll-snap-align:start;scroll-margin:${GAP / 2}px`}
+				{@const style = `left:${p.col * PITCH + GAP / 2 + INSET}px;top:${p.row * PITCH + GAP / 2 + INSET}px;width:${SIZE}px;height:${SIZE}px;--c:${tint};scroll-snap-align:start;scroll-margin:${GAP / 2 + INSET}px`}
 				{#if p.node.kind === 'section'}
 					{@const t = splitTitle(p.node.title)}
 					{@const node = p.node}
@@ -1055,7 +1084,7 @@
 								toggle(p.depth, node.id, e.currentTarget);
 							}
 						}}
-						class="group absolute flex cursor-pointer flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-10 border-(--c) px-8 py-6 text-center text-dark transition-[left,top] focus:outline-none {dd.dragId === node.id ? 'opacity-40' : ''} {mergeClasses(node.id, p.horizontal)} {p.open
+						class="group absolute flex cursor-pointer flex-col items-center gap-1 overflow-hidden rounded-[5rem] border-10 border-(--c) px-8 py-6 text-center text-dark transition-[left,top] focus:outline-none {dd.dragId === node.id ? 'opacity-40' : ''} {mergeClasses(node.id, p.horizontal)} {picked?.has(node.id) ? 'outline-8 outline-accent' : marked.has(node.id) ? 'outline-8 outline-accent/60' : ''} {p.open
 							? 'bg-[color-mix(in_srgb,var(--c)_28%,var(--color-taupe1))] font-semibold'
 							: 'bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] hover:bg-[color-mix(in_srgb,var(--c)_20%,var(--color-taupe1))]'}"
 					>
@@ -1082,9 +1111,12 @@
 							<span class="h-5 w-5 shrink-0"></span>
 						{/if}
 
-						{#if (onrename || ondelete) && !exploded && titleEditId !== node.id}
-							<!-- the bubble's menu: top right, shown on hover, a vertical stack: the settings cog, then the trash -->
+						{#if (onrename || ondelete || oncomment) && !exploded && titleEditId !== node.id}
+							<!-- the bubble's menu: top right, shown on hover, a vertical stack: the settings cog, then the trash (commenting: the comment button) -->
 							<div class="absolute top-[12%] right-[12%] z-10 flex flex-col gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+								{#if oncomment}
+									<button type="button" aria-label="Comment on this section" use:tip={'Comment on this section'} onclick={(e) => { e.stopPropagation(); oncomment(node.id); }} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><QuoteRightAlt width={18} height={18} /></button>
+								{/if}
 								{#if onrename}
 									<button type="button" aria-label="Section settings" use:tip={'Settings'} draggable="false" onclick={(e) => { e.stopPropagation(); openSectionSettings(node.id); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><Cog width={18} height={18} /></button>
 								{/if}
@@ -1101,20 +1133,24 @@
 						tabindex="0"
 						role="button"
 						aria-label="Paragraph"
-						onclick={() => onfocusitem?.(pid)}
+						onclick={(e) => {
+							onfocusitem?.(pid);
+							if (oncomment && isCommentClick(e)) oncomment(pid);
+						}}
 						ondblclick={onedit || onwrite
 							? (e) => editInPlace(pid, caretOffsetAt(e.currentTarget, e.clientX, e.clientY, p.node.kind === 'paragraph' ? p.node.paragraph.text : ''))
 							: undefined}
 						onkeydown={(e) => {
 							if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 								e.preventDefault();
-								if (onedit) editInPlace(pid, p.node.kind === 'paragraph' ? p.node.paragraph.text.length : 0);
+								if (oncomment) oncomment(pid);
+								else if (onedit) editInPlace(pid, p.node.kind === 'paragraph' ? p.node.paragraph.text.length : 0);
 								else openModal(pid);
 							}
 						}}
 						{style}
 						{...inlineEditId === pid ? {} : dragAttrs(pid, 'paragraph', p.horizontal)}
-						class="group absolute flex {inlineEditId === pid ? 'cursor-text' : 'cursor-default'} flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-10 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)}"
+						class="group absolute flex {inlineEditId === pid ? 'cursor-text' : oncomment ? 'cursor-pointer' : 'cursor-default'} flex-col gap-0.5 overflow-y-auto rounded-[5rem] border-10 border-(--c) bg-[color-mix(in_srgb,var(--c)_10%,var(--color-taupe1))] px-6 py-4 text-center text-sm focus:outline-none {dd.dragId === pid ? 'opacity-40' : ''} {mergeClasses(pid, p.horizontal)} {picked?.has(pid) ? 'outline-8 outline-accent bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(pid) ? 'outline-8 outline-accent/60' : ''}"
 					>
 						<span class="mb-3 text-xs text-gray-500">{p.node.paragraphIndex}</span>
 						{#if /** @type {any} */ (p.node.paragraph).title}<span class="mb-1 text-sm font-semibold">{/** @type {any} */ (p.node.paragraph).title}</span>{/if}
@@ -1136,6 +1172,29 @@
 								{/if}
 							</div>
 						{/if}
+					</div>
+				{/if}
+			{/each}
+
+			<!-- the comments: above a bubble in a row, to the left of a bubble in a column, stacked nearest the bubble -->
+			{#each INSET ? layout : [] as p (p.node.kind === 'section' ? p.node.id : p.node.paragraph.id)}
+				{@const id = idOf(p)}
+				{@const notes = notesOn.get(id)}
+				{#if notes}
+					{@const editing = notes.some((c) => editor?.is(c.id))}
+					<div
+						role="complementary"
+						aria-label="Comments"
+						data-comments-for={id}
+						data-side={p.horizontal ? 'above' : 'left'}
+						class="absolute flex flex-col overflow-y-auto p-1"
+						style={p.horizontal
+							? `left:${p.col * PITCH + GAP / 2 + INSET}px;top:${p.row * PITCH + GAP / 2}px;width:${SIZE}px;height:${INSET - 6}px`
+							: `left:${p.col * PITCH + GAP / 2}px;top:${p.row * PITCH + GAP / 2 + INSET}px;width:${INSET - 6}px;height:${SIZE}px`}
+					>
+						<div class="flex flex-col gap-1.5 {editing ? 'h-full' : p.horizontal ? 'mt-auto' : 'my-auto'}">
+							{#each notes as c (c.id)}<CommentBubble comment={c} onlit={(x) => (pointed = x)} class={editor?.is(c.id) ? 'h-full shrink-0 overflow-y-auto' : 'shrink-0'} />{/each}
+						</div>
 					</div>
 				{/if}
 			{/each}

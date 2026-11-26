@@ -1,9 +1,9 @@
-import { and, asc, desc, eq, inArray, isNull, notExists, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.js';
 import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
-import { comment, paragraph, persona, section, text_, textAuthor, textItem, user, userPersona } from '#lib/server/db/schema.js';
+import { comment, commentParagraph, paragraph, persona, section, text_, textAuthor, textItem, user, userPersona } from '#lib/server/db/schema.js';
 
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
@@ -488,25 +488,27 @@ async function publicAuthorNames(textId) {
 }
 
 /**
- * Leave a comment on a paragraph of a text. A commentary is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
+ * Leave a comment on one or more paragraphs of a text (a section is commented on by naming all its paragraphs). A commentary
+ * is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
  * the commentary is created (named "Comment on <authors>'s <title>") by the first comment, so a comment never
  * exists without a text to belong to.
  * For now only the text's owner may comment: the comment policy is not enforced yet because other people can't open
  * a text they don't own.
  * @param {string} textId the text commented on
  * @param {App.Locals} locals
- * @param {string} paragraphId the paragraph commented on (a paragraph of that text)
+ * @param {string[]} paragraphIds the paragraphs commented on (paragraphs of that text)
  * @param {string} body the comment
  * @returns {Promise<{ ok: true, commentaryId: string, commentId: string, created: boolean } | { ok: false, status: number, message: string }>}
  */
-export async function addComment(textId, locals, paragraphId, body) {
+export async function addComment(textId, locals, paragraphIds, body) {
 	const original = await accessible(textId, locals);
 	const uid = owner(locals);
 	if (!original || !uid) return { ok: false, status: 404, message: 'No such text' };
 	if (!body.trim()) return { ok: false, status: 400, message: 'Write a comment.' };
-	if (!UUID.test(paragraphId)) return { ok: false, status: 400, message: 'Choose a paragraph.' };
-	const [onText] = await db.select({ p: textItem.paragraphId }).from(textItem).where(and(eq(textItem.textId, textId), eq(textItem.paragraphId, paragraphId)));
-	if (!onText) return { ok: false, status: 400, message: "That paragraph isn't in this text." };
+	const targets = [...new Set(paragraphIds)];
+	if (!targets.length || targets.length > CHUNK || !targets.every((id) => UUID.test(id))) return { ok: false, status: 400, message: 'Choose a paragraph.' };
+	const onText = await db.select({ p: textItem.paragraphId }).from(textItem).where(and(eq(textItem.textId, textId), inArray(textItem.paragraphId, targets)));
+	if (new Set(onText.map((r) => r.p)).size !== targets.length) return { ok: false, status: 400, message: "That paragraph isn't in this text." };
 	const personaId = await selfPersonaId(uid);
 	const title = commentaryTitle(await publicAuthorNames(textId), original.title);
 
@@ -522,7 +524,64 @@ export async function addComment(textId, locals, paragraphId, body) {
 		const [{ n }] = await tx.select({ n: sql`count(*)::int` }).from(textItem).where(eq(textItem.textId, commentary.id));
 		const [para] = await tx.insert(paragraph).values({ body: body.trim() }).returning({ id: paragraph.id });
 		await tx.insert(textItem).values({ textId: commentary.id, position: Number(n), paragraphId: para.id });
-		const [row] = await tx.insert(comment).values({ commentaryId: commentary.id, paragraphId, bodyParagraphId: para.id }).returning({ id: comment.id });
+		const [row] = await tx.insert(comment).values({ commentaryId: commentary.id, bodyParagraphId: para.id }).returning({ id: comment.id });
+		await tx.insert(commentParagraph).values(targets.map((paragraphId) => ({ commentId: row.id, paragraphId })));
 		return { ok: true, commentaryId: commentary.id, commentId: row.id, created };
 	});
+}
+
+/**
+ * Change the words of a comment of the requester's, on this text. Comments in a published, public commentary are frozen.
+ * @param {string} textId the text commented on
+ * @param {App.Locals} locals
+ * @param {string} commentId
+ * @param {string} body the comment's new words
+ * @returns {Promise<{ ok: true, commentaryId: string } | { ok: false, status: number, message: string }>}
+ */
+export async function editComment(textId, locals, commentId, body) {
+	const uid = owner(locals);
+	if (!uid || !(await accessible(textId, locals)) || !UUID.test(commentId)) return { ok: false, status: 404, message: 'No such comment' };
+	if (!body.trim()) return { ok: false, status: 400, message: 'Write a comment.' };
+	const [row] = await db
+		.select({ commentaryId: comment.commentaryId, paragraphId: comment.bodyParagraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(comment)
+		.innerJoin(text_, eq(text_.id, comment.commentaryId))
+		.where(and(eq(comment.id, commentId), eq(text_.commentaryOn, textId), eq(text_.userId, uid)));
+	if (!row) return { ok: false, status: 404, message: 'No such comment' };
+	if (isPublicized(row)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
+	await db.transaction(async (tx) => {
+		await tx.update(paragraph).set({ body: body.trim() }).where(eq(paragraph.id, row.paragraphId));
+		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, row.commentaryId));
+	});
+	return { ok: true, commentaryId: row.commentaryId };
+}
+
+/**
+ * The comments on a text, oldest first: those in the requester's own commentary and in public ones.
+ * @param {string} textId
+ * @param {App.Locals} locals
+ * @returns {Promise<{ id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean }[] | null>} null when the requester can't open the text
+ */
+export async function listComments(textId, locals) {
+	if (!(await accessible(textId, locals))) return null;
+	const uid = /** @type {string} */ (owner(locals));
+	const rows = await db
+		.select({ id: comment.id, commentaryId: comment.commentaryId, body: paragraph.body, createdAt: comment.createdAt, paragraphId: commentParagraph.paragraphId, userId: text_.userId, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(comment)
+		.innerJoin(text_, eq(text_.id, comment.commentaryId))
+		.innerJoin(paragraph, eq(paragraph.id, comment.bodyParagraphId))
+		.innerJoin(commentParagraph, eq(commentParagraph.commentId, comment.id))
+		.where(and(eq(text_.commentaryOn, textId), or(eq(text_.userId, uid), eq(text_.visibility, 'public'))))
+		.orderBy(asc(comment.createdAt), asc(comment.id));
+	/** @type {Map<string, string[]>} commentary -> its authors */
+	const names = new Map();
+	for (const id of new Set(rows.map((r) => r.commentaryId))) names.set(id, await publicAuthorNames(id));
+	/** @type {Map<string, { id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean }>} */
+	const out = new Map();
+	for (const r of rows) {
+		const c = out.get(r.id);
+		if (c) c.paragraphIds.push(r.paragraphId);
+		else out.set(r.id, { id: r.id, commentaryId: r.commentaryId, authors: names.get(r.commentaryId) ?? [], body: r.body, createdAt: r.createdAt.toISOString(), paragraphIds: [r.paragraphId], editable: r.userId === uid && !isPublicized(r) });
+	}
+	return [...out.values()];
 }

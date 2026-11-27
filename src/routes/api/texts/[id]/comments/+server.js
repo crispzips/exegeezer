@@ -1,5 +1,5 @@
 import { json, error } from '@sveltejs/kit';
-import { addComment, editComment, listComments } from '#lib/server/texts.js';
+import { addComment, deleteComment, editComment, listComments } from '#lib/server/texts.js';
 
 /** The comments on this text. */
 export async function GET({ params, locals }) {
@@ -15,6 +15,15 @@ export async function PATCH({ params, request, locals }) {
 	const body = await request.json().catch(() => null);
 	const str = (/** @type {unknown} */ v) => (typeof v === 'string' ? v : '');
 	const result = await editComment(params.id, locals, str(body?.commentId), str(body?.body));
+	if (!result.ok) return json({ message: result.message }, { status: result.status });
+	return json({ commentaryId: result.commentaryId });
+}
+
+/** Delete one of the requester's comments on this text: `{ commentId }`. */
+export async function DELETE({ params, request, locals }) {
+	if (!locals.user) error(401, 'Sign in to comment');
+	const body = await request.json().catch(() => null);
+	const result = await deleteComment(params.id, locals, typeof body?.commentId === 'string' ? body.commentId : '');
 	if (!result.ok) return json({ message: result.message }, { status: result.status });
 	return json({ commentaryId: result.commentaryId });
 }

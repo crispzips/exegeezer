@@ -868,7 +868,7 @@
 		{#if comments}
 			<aside aria-label="Comments" class="w-2/5 min-w-0 self-stretch border-taupe2 {commentsLeft ? 'border-r' : 'border-l'}" style="padding-block: {PAGE_PAD_TOP}">
 				{#if comments.length}
-					<CommentFlow {comments} axis="y" root={mainContent} attribute="data-para" onlit={(c) => (pointed = c)} />
+					<CommentFlow {comments} root={mainContent} attribute="data-para" onlit={(c) => (pointed = c)} />
 				{:else}
 					<p class="px-3 py-2 text-sm text-grey3">No comments yet. Click a paragraph or a section header to leave one, or shift- or ⌘/Ctrl-click several first.</p>
 				{/if}

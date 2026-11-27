@@ -3,13 +3,12 @@
 	import { useCommentEditor } from '#lib/utilities/commentEditor.svelte.js';
 
 	/**
-	 * Comments flowing along one axis beside the things they are about: down a column beside the text (`axis` 'y'),
-	 * or across a lane beneath a row (`axis` 'x'). Each bubble lines up with its anchor, or follows on from the bubble
-	 * before it when that one is in the way. Place it next to `root`, never inside it, so that the two scroll together.
+	 * Comments flowing down a column beside the things they are about. Each bubble lines up with its anchor, or follows on
+	 * from the bubble before it when that one is in the way. Place it next to `root`, never inside it, so that the two
+	 * scroll together.
 	 *
 	 * @type {{
 	 *   comments: import('#lib/utilities/comments.js').AnchoredComment[],
-	 *   axis: 'x' | 'y',
 	 *   root: HTMLElement | null | undefined,
 	 *   attribute: string,
 	 *   onlit?: (comment: import('#lib/utilities/comments.js').AnchoredComment | null) => void
@@ -17,7 +16,7 @@
 	 *
 	 * `comments` are in the order of their anchors; an anchor is the element in `root` whose `attribute` is the comment's `anchorId`.
 	 */
-	let { comments, axis, root, attribute, onlit = undefined } = $props();
+	let { comments, root, attribute, onlit = undefined } = $props();
 
 	const SPACE = 8; // between neighbouring bubbles (px)
 	/** the bubble being written in is larger than the rest */
@@ -28,7 +27,6 @@
 
 	function place() {
 		if (!host || !root) return;
-		const down = axis === 'y';
 		const base = host.getBoundingClientRect();
 		let end = 0;
 		comments.forEach((c, i) => {
@@ -39,12 +37,12 @@
 			bubble.style.visibility = anchor ? '' : 'hidden';
 			if (!anchor) return;
 			const box = anchor.getBoundingClientRect();
-			const at = Math.max(end, down ? box.top - base.top : box.left - base.left, 0);
-			bubble.style[down ? 'top' : 'left'] = `${at}px`;
-			end = at + (down ? bubble.offsetHeight : bubble.offsetWidth) + SPACE;
+			const at = Math.max(end, box.top - base.top, 0);
+			bubble.style.top = `${at}px`;
+			end = at + bubble.offsetHeight + SPACE;
 		});
 		// the host is as long as its bubbles reach, so the view can scroll to the last of them
-		host.style[down ? 'minHeight' : 'minWidth'] = `${end}px`;
+		host.style.minHeight = `${end}px`;
 	}
 
 	// place again whenever the anchors or the bubbles move, resize, arrive or leave
@@ -72,9 +70,8 @@
 	});
 </script>
 
-<div bind:this={host} data-comment-flow={axis} class="relative {axis === 'y' ? 'w-full' : 'h-full'}">
+<div bind:this={host} data-comment-flow class="relative w-full">
 	{#each comments as c (c.id)}
-		{@const grown = editor?.is(c.id)}
-		<CommentBubble comment={c} {onlit} class="absolute {axis === 'y' ? (grown ? 'inset-x-1 z-10' : 'inset-x-2') : grown ? 'top-0 h-full w-96' : 'top-0 max-h-full w-56 overflow-y-auto'}" />
+		<CommentBubble comment={c} {onlit} class="absolute {editor?.is(c.id) ? 'inset-x-1 z-10' : 'inset-x-2'}" />
 	{/each}
 </div>

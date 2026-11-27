@@ -4,8 +4,9 @@
 	import TextsBrowser from '#lib/components/TextsBrowser.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import AboutMe from '#lib/components/AboutMe.svelte';
+	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
-	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash } from '@boxicons/svelte';
+	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash, Key } from '@boxicons/svelte';
 
 	let { data, form } = $props();
 	let busy = $state(false);
@@ -71,7 +72,7 @@
 	}
 	function askDelete(t) {
 		deleteRequest = {
-			title: 'Delete this text?',
+			title: t.type === 'commentary' ? 'Delete this commentary?' : 'Delete this text?',
 			message: `This permanently deletes "${t.title}" and all of its content.`,
 			confirm: 'Delete',
 			run: () => {
@@ -112,7 +113,7 @@
 		pfield = '';
 		resetPersonaDraft();
 	}
-	const tabs = ['Profile', 'Texts', 'Personae'];
+	const tabs = ['Profile', 'Texts', 'Commentaries', 'Personae'];
 	let tab = $state('Profile');
 	/** 'list' | 'icons' */
 	let view = $state(/** @type {'list' | 'icons'} */ ('list'));
@@ -120,6 +121,9 @@
 	const typeLabel = { original: 'Original text', commentary: 'Commentary' };
 	const fmt = (iso) => new Date(iso).toLocaleString(undefined, { dateStyle: 'long', timeStyle: 'short' });
 	const p = $derived(data.profile);
+	// commentaries are texts too, but are listed in their own tab only
+	const originals = $derived(data.texts.filter((t) => t.type !== 'commentary'));
+	const commentaries = $derived(data.texts.filter((t) => t.type === 'commentary'));
 
 	function startEdit() {
 		draft = p.name;
@@ -133,7 +137,7 @@
 
 <svelte:head><title>Profile · Exegeezer</title></svelte:head>
 
-<main class="mx-auto w-full max-w-2xl px-6 py-10">
+<main class="mx-auto w-full max-w-3xl px-6 py-10">
 	<div class="rounded-2xl border border-taupe3 bg-taupe1 p-8 shadow-md">
 		<div class="mb-6 flex items-start gap-3">
 		<form
@@ -181,7 +185,7 @@
 			{#if form?.message}<p role="alert" class="mt-2 text-sm text-red">{form.message}</p>{/if}
 		</form>
 		<form method="post" action="/logout" class="shrink-0">
-			<button class="rounded-md bg-accent px-3 py-2 text-sm font-medium text-on-accent hover:bg-accent/90">Sign out</button>
+			<button class="inline-flex items-center gap-1.5 rounded-md bg-accent px-3 py-2 text-sm font-medium text-on-accent hover:bg-accent/90"><Key width={18} height={18} class="shrink-0 text-inherit!" aria-hidden="true" />Sign out</button>
 		</form>
 		</div>
 
@@ -225,26 +229,29 @@
 						<Plus width={18} height={18} />
 						<span role="tooltip" class="pointer-events-none absolute top-1/2 left-full z-10 ml-2 -translate-y-1/2 rounded-md border border-taupe3 bg-taupe1 px-2 py-1 text-xs whitespace-nowrap text-grey3 opacity-0 shadow-md group-hover:opacity-100 group-focus-visible:opacity-100">Create new text</span>
 					</a>
-					{#if data.texts.length}
-						<div class="flex gap-1" role="group" aria-label="View">
-							<button onclick={() => (view = 'list')} aria-label="List view" aria-pressed={view === 'list'} title="List view" class="rounded-md p-1 {view === 'list' ? 'bg-taupe2' : 'hover:bg-taupe2'}">
-								<ListUl width={18} height={18} />
-							</button>
-							<button onclick={() => (view = 'icons')} aria-label="Icon view" aria-pressed={view === 'icons'} title="Icon view" class="rounded-md p-1 {view === 'icons' ? 'bg-taupe2' : 'hover:bg-taupe2'}">
-								<Grid width={18} height={18} />
-							</button>
-						</div>
+					{#if originals.length}
+						{@render viewToggle()}
 					{/if}
 				</div>
-				{#if data.texts.length}
-					<TextsBrowser texts={data.texts} {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
-						{#snippet actions(t)}
-							<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Delete {t.title}" title="Delete" class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
-							<a href="/exejeeze?text={t.id}" onclick={(e) => e.stopPropagation()} aria-label="Open {t.title} in the text editor" title="Open in the text editor" class="rounded-md p-1 hover:bg-taupe3"><Edit width={18} height={18} /></a>
-						{/snippet}
+				{#if originals.length}
+					<TextsBrowser texts={originals} {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
+						{#snippet actions(t)}{@render textActions(t)}{/snippet}
 					</TextsBrowser>
 				{:else}
 					<p class="text-sm text-grey3">You have no texts yet.</p>
+				{/if}
+			</div>
+		{:else if tab === 'Commentaries'}
+			<div role="tabpanel" id="panel-Commentaries" aria-labelledby="tab-Commentaries">
+				{#if commentaries.length}
+					<div class="mb-3 flex justify-end">
+						{@render viewToggle()}
+					</div>
+					<TextsBrowser texts={commentaries} glosses {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
+						{#snippet actions(t)}{@render textActions(t)}{/snippet}
+					</TextsBrowser>
+				{:else}
+					<p class="text-sm text-grey3">You have no commentaries yet. One begins when you first comment on a text.</p>
 				{/if}
 			</div>
 		{:else}
@@ -560,6 +567,23 @@
 		</form>
 	{/if}
 </dialog>
+
+{#snippet viewToggle()}
+	<div class="flex gap-1" role="group" aria-label="View">
+		<button onclick={() => (view = 'list')} aria-label="List view" aria-pressed={view === 'list'} use:tip={'List view'} class="rounded-md p-1 {view === 'list' ? 'bg-taupe2' : 'hover:bg-taupe2'}">
+			<ListUl width={18} height={18} />
+		</button>
+		<button onclick={() => (view = 'icons')} aria-label="Icon view" aria-pressed={view === 'icons'} use:tip={'Icon view'} class="rounded-md p-1 {view === 'icons' ? 'bg-taupe2' : 'hover:bg-taupe2'}">
+			<Grid width={18} height={18} />
+		</button>
+	</div>
+{/snippet}
+
+<!-- the buttons at the end of a row of texts or commentaries -->
+{#snippet textActions(t)}
+	<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Delete {t.title}" use:tip={'Delete'} class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
+	<a href="/exejeeze?text={t.id}" onclick={(e) => e.stopPropagation()} aria-label="Open {t.title} in the text editor" use:tip={'Open in the text editor'} class="rounded-md p-1 hover:bg-taupe3"><Edit width={18} height={18} /></a>
+{/snippet}
 
 {#snippet addButton()}
 	<button

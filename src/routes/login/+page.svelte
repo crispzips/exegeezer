@@ -1,4 +1,5 @@
 <script>
+	import { Key } from '@boxicons/svelte';
 	import { enhance } from '$app/forms';
 
 	let { data, form } = $props();
@@ -69,8 +70,8 @@
 			{#if form?.step === 'verify'}<p class="text-sm text-dark">We sent a confirmation link to {form.email}. Click it, then sign in.</p>{/if}
 			{#if form?.message}<p role="alert" class="text-sm text-red">{form.message}</p>{/if}
 
-			<button disabled={busy} class="rounded-md bg-dark px-4 py-2.5 font-medium text-taupe1 hover:bg-taupe5 disabled:opacity-50">
-				{signup ? 'Sign up' : 'Sign in'}
+			<button disabled={busy} class="flex items-center justify-center gap-2 rounded-md bg-dark px-4 py-2.5 font-medium text-taupe1 hover:bg-taupe5 disabled:opacity-50">
+				{#if signup}Sign up{:else}<Key width={18} height={18} class="shrink-0 text-inherit!" aria-hidden="true" />Sign in{/if}
 			</button>
 		</form>
 

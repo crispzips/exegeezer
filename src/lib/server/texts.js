@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gt, inArray, isNull, lt, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, notExists, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import { db } from '#lib/server/db/index.js';
 import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
@@ -297,6 +298,49 @@ export const isCommentPolicy = (v) => typeof v === 'string' && COMMENT_POLICIES.
 export const isProductionStatus = (v) => typeof v === 'string' && PRODUCTION_STATUSES.includes(v);
 
 /**
+ * What the profile's lists say about commentaries: which of the user's texts have one (their own, or a public one by
+ * anybody), and for each of the user's commentaries the text it glosses and how many comments it holds.
+ * @param {string} uid
+ */
+export async function commentaryOverview(uid) {
+	const referent = alias(text_, 'referent');
+	const glossing = await db
+		.select({ on: text_.commentaryOn })
+		.from(text_)
+		.innerJoin(referent, eq(referent.id, text_.commentaryOn))
+		.where(and(eq(referent.userId, uid), or(eq(text_.userId, uid), eq(text_.visibility, 'public'))));
+	const mine = await db
+		.select({ id: text_.id, refTitle: referent.title, refType: referent.type, refUserId: referent.userId, refVisibility: referent.visibility })
+		.from(text_)
+		.innerJoin(referent, eq(referent.id, text_.commentaryOn))
+		.where(eq(text_.userId, uid));
+	const counts = await db
+		.select({ id: comment.commentaryId, n: count() })
+		.from(comment)
+		.innerJoin(text_, eq(text_.id, comment.commentaryId))
+		.where(eq(text_.userId, uid))
+		.groupBy(comment.commentaryId);
+	const comments = new Map(counts.map((c) => [c.id, c.n]));
+	return {
+		/** ids of the user's texts that have a commentary */
+		commented: new Set(glossing.map((g) => g.on)),
+		/** commentary id -> its referent (named only if the user may know its title) and its number of comments */
+		commentaries: new Map(
+			mine.map((c) => [
+				c.id,
+				{
+					referent: {
+						kind: /** @type {'text' | 'commentary'} */ (c.refType === 'commentary' ? 'commentary' : 'text'),
+						title: c.refUserId === uid || c.refVisibility === 'public' ? c.refTitle : null
+					},
+					comments: comments.get(c.id) ?? 0
+				}
+			])
+		)
+	};
+}
+
+/**
  * Delete a text and the paragraphs and sections that only it used.
  * @param {string} id
  * @param {App.Locals} locals
@@ -490,7 +534,7 @@ async function publicAuthorNames(textId) {
 /**
  * Leave a comment on one or more paragraphs of a text (a section is commented on by naming all its paragraphs). A commentary
  * is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
- * the commentary is created (named "Comment on <authors>'s <title>") by the first comment, so a comment never
+ * the commentary is created (named "Commentary on <authors>'s <title>") by the first comment, so a comment never
  * exists without a text to belong to.
  * For now only the text's owner may comment: the comment policy is not enforced yet because other people can't open
  * a text they don't own.

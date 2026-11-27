@@ -1,4 +1,5 @@
 <script>
+	import { Key } from '@boxicons/svelte';
 	import { enhance } from '$app/forms';
 	import { THEMES, currentTheme, setTheme } from '#lib/theme.js';
 	import { onMount } from 'svelte';
@@ -46,7 +47,7 @@
 
 		<h2 class="mb-3 font-medium text-dark">Account</h2>
 		<form method="post" action="/logout" class="mb-8">
-			<button class="rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90">Sign out</button>
+			<button class="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90"><Key width={18} height={18} class="shrink-0 text-inherit!" aria-hidden="true" />Sign out</button>
 		</form>
 
 		{#if data.hasPassword}

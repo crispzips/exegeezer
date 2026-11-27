@@ -16,8 +16,9 @@
 	 * children, and brings the opened containers into view.
 	 *
 	 * Two violet markers show where you are:
-	 *  - a box around the whole area currently in view: the span of text visible
-	 *    across all the rows of containers
+	 *  - a box around the text currently on screen in the bottommost open row of
+	 *    containers (the most granular one); where what is on screen skips over some
+	 *    text, there is a box for each stretch
 	 *  - a line, drawn as a double line like the marker of the vertical Global Linear
 	 *    Minimap, at the start of the deepest section that is open
 	 *
@@ -136,8 +137,8 @@
 
 	let barH = $derived(PAD * 2 + layout.lanes * LANE_H + (layout.lanes - 1) * LANE_GAP);
 
-	// The box: the area in view across all rows, in % of the bar
-	let view = $state({ left: 0, w: 100 });
+	// The boxes: the stretches of text in view in the bottommost row, in % of the bar
+	let views = $state([{ left: 0, w: 100 }]);
 
 	/** The line: the start of the deepest open section, in % of the bar (null when none is open) */
 	let linePos = $derived.by(() => {
@@ -146,21 +147,17 @@
 	});
 
 	/**
-	 * Piecewise-linear map of `x` from boundary list `from` to boundary list `to`
-	 * (the same idea as the linear minimap: positions are mapped node by node,
-	 * because containers are a fixed width however much text they hold).
-	 * @param {number} x
-	 * @param {number[]} from
-	 * @param {number[]} to
+	 * The part of the stretch `from`..`to` that lies between `min` and `max`, as two
+	 * fractions of the stretch (null when none of it does).
+	 * @param {number} from
+	 * @param {number} to
+	 * @param {number} min
+	 * @param {number} max
 	 */
-	function mapPos(x, from, to) {
-		const last = from.length - 1;
-		if (x <= from[0]) return to[0];
-		if (x >= from[last]) return to[last];
-		let i = 0;
-		while (i + 1 < last && from[i + 1] <= x) i++;
-		const span = from[i + 1] - from[i];
-		return to[i] + (span > 0 ? (x - from[i]) / span : 0) * (to[i + 1] - to[i]);
+	function part(from, to, min, max) {
+		const a = Math.max(from, min);
+		const b = Math.min(to, max);
+		return b > a ? [(a - from) / (to - from), (b - from) / (to - from)] : null;
 	}
 
 	/** @type {HTMLDivElement | undefined} */
@@ -176,21 +173,57 @@
 		});
 	}
 
+	/**
+	 * Fit the boxes to the text the bottommost row has on screen. Bubbles side by side
+	 * are cut off by the row's left and right edges; paragraphs stacked in a column, by
+	 * the column's top and bottom (so a column can leave text out between its last
+	 * paragraph in view and the section beside it).
+	 */
 	function update() {
-		let lo = Infinity;
-		let hi = -Infinity;
-		for (const { row, scroller: s } of rowsOnScreen()) {
-			const els = Array.from(row.querySelectorAll('[data-node]')).filter((el) => el.closest('[data-row]') === row);
-			if (els.length === 0) continue;
-			const ids = els.map((el) => /** @type {HTMLElement} */ (el).dataset.node ?? '');
-			const fr = [...ids.map((id) => layout.starts.get(id)), layout.ends.get(ids[ids.length - 1])];
-			if (fr.some((v) => v === undefined)) continue;
-			const sRect = s.getBoundingClientRect();
-			const px = [...els.map((el) => el.getBoundingClientRect().left - sRect.left + s.scrollLeft), els[els.length - 1].getBoundingClientRect().right - sRect.left + s.scrollLeft];
-			lo = Math.min(lo, mapPos(s.scrollLeft, px, /** @type {number[]} */ (fr)));
-			hi = Math.max(hi, mapPos(s.scrollLeft + s.clientWidth, px, /** @type {number[]} */ (fr)));
+		const bottom = rowsOnScreen().at(-1);
+		if (!bottom) return;
+		const { row, scroller } = bottom;
+		const box = scroller.getBoundingClientRect();
+		// the level marker is pinned over the left of the row, hiding what is behind it
+		const gutter = row.querySelector('[data-gutter]')?.getBoundingClientRect().width ?? 0;
+		const left = box.left + gutter;
+		const right = box.left + scroller.clientWidth;
+
+		const nodes = Array.from(row.querySelectorAll('[data-node]')).flatMap((el) => {
+			const id = /** @type {HTMLElement} */ (el).dataset.node ?? '';
+			const start = layout.starts.get(id);
+			const end = layout.ends.get(id);
+			return start === undefined || end === undefined ? [] : [{ el, start, end }];
+		});
+
+		/** stretches of the text on screen, in order; neighbouring ones are joined
+		 * @type {{ lo: number, hi: number }[]} */
+		const spans = [];
+		for (const { el, start, end } of nodes) {
+			const r = el.getBoundingClientRect();
+			let shown = part(r.left, r.right, left, right);
+			const column = el.closest('[data-front]')?.getBoundingClientRect();
+			if (shown && column) shown = part(r.top, r.bottom, Math.max(column.top, box.top), Math.min(column.bottom, box.top + scroller.clientHeight));
+			if (!shown) continue;
+			const lo = start + shown[0] * (end - start);
+			const hi = start + shown[1] * (end - start);
+			const last = spans[spans.length - 1];
+			if (last && lo - last.hi < 1e-9) last.hi = hi;
+			else spans.push({ lo, hi });
 		}
-		view = lo === Infinity ? { left: 0, w: 100 } : { left: lo * 100, w: (hi - lo) * 100 };
+
+		if (spans.length === 0) {
+			if (nodes.length) {
+				// scrolled clear of the text (onto front or back matter): an empty box at that end
+				const at = nodes[0].el.getBoundingClientRect().left >= left ? nodes[0].start : nodes[nodes.length - 1].end;
+				spans.push({ lo: at, hi: at });
+			} else {
+				// an empty section is open (or there is no text): the section itself
+				const id = [...selected].reverse().find((x) => layout.starts.has(x)) ?? '';
+				spans.push({ lo: layout.starts.get(id) ?? 0, hi: layout.ends.get(id) ?? 1 });
+			}
+		}
+		views = spans.map(({ lo, hi }) => ({ left: lo * 100, w: (hi - lo) * 100 }));
 	}
 
 	// Re-measure whenever the rows are rebuilt, resized or scrolled
@@ -206,12 +239,13 @@
 		for (const { row } of rows) ro.observe(row);
 		for (const s of scrollers) {
 			ro.observe(s);
-			s.addEventListener('scroll', update);
+			// captured, to hear the columns inside the row scroll too
+			s.addEventListener('scroll', update, true);
 		}
 		untrack(update);
 		return () => {
 			ro.disconnect();
-			for (const s of scrollers) s.removeEventListener('scroll', update);
+			for (const s of scrollers) s.removeEventListener('scroll', update, true);
 		};
 	});
 
@@ -310,11 +344,14 @@
 			></div>
 		{/each}
 
-		<!-- Marker 1, the box: the whole area currently in view, across all rows -->
-		<div
-			class="pointer-events-none absolute inset-y-0 border-x border-accent bg-accent/20"
-			style="left: {view.left}%; width: {view.w}%"
-		></div>
+		<!-- Marker 1, the boxes: the text currently in view in the bottommost row -->
+		{#each views as view, i (i)}
+			<div
+				data-view
+				class="pointer-events-none absolute inset-y-0 border-x border-accent bg-accent/20"
+				style="left: {view.left}%; width: {view.w}%"
+			></div>
+		{/each}
 
 		<!-- Marker 2, the line (a double line): the start of the deepest open section -->
 		{#if linePos !== null}

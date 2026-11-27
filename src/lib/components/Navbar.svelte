@@ -1,6 +1,6 @@
 <script>
 	import { page } from '$app/state';
-	import { Superset, UserIdCard, Earth, Gear } from '@boxicons/svelte';
+	import { Superset, UserIdCard, Earth, Gear, Key } from '@boxicons/svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import SignInDialog from './SignInDialog.svelte';
 
@@ -31,8 +31,9 @@
 				><Icon /></a>
 			{/each}
 		</div>
+		<!-- the column is narrow, so the key goes above the words -->
 		{#if !user}
-			<button onclick={() => signIn.show()} class="rounded-md bg-dark px-2 py-1 text-xs font-medium text-taupe1 hover:bg-taupe5">Sign In</button>
+			<button onclick={() => signIn.show()} class="flex flex-col items-center gap-0.5 rounded-md bg-dark px-1 py-1 text-[10px] font-medium whitespace-nowrap text-taupe1 hover:bg-taupe5"><Key width={16} height={16} class="shrink-0 text-inherit!" aria-hidden="true" />Sign In</button>
 		{/if}
 	</div>
 </div>

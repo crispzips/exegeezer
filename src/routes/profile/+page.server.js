@@ -3,7 +3,7 @@ import { and, asc, count, desc, eq } from 'drizzle-orm';
 import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.js';
 import { persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
-import { authorIds, deleteText, isProductionStatus, isVisibility, loadText, setAuthors } from '#lib/server/texts.js';
+import { authorIds, commentaryOverview, deleteText, isProductionStatus, isVisibility, loadText, setAuthors } from '#lib/server/texts.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 import { isReservedName, selfPersonaId } from '#lib/server/personae.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -40,6 +40,7 @@ export const load = async ({ locals }) => {
 	/** @type {Map<string, string[]>} */
 	const authorsOf = new Map();
 	for (const r of authorRows) authorsOf.set(r.textId, [...(authorsOf.get(r.textId) ?? []), r.personaId]);
+	const overview = await commentaryOverview(locals.user.id);
 	const publicizedIds = new Set(used.filter(isPublicized).map((t) => t.id));
 	const locked = new Set(authorRows.filter((r) => publicizedIds.has(r.textId)).map((r) => r.personaId));
 	// a persona's name as an author: a user's "self" is shown as the user's profile name
@@ -56,7 +57,7 @@ export const load = async ({ locals }) => {
 			choices: aboutChoices
 		},
 		textCount: n,
-		texts: texts.map((t) => ({ ...t, author: (authorsOf.get(t.id) ?? []).map((p) => authors.get(p)).filter(Boolean).join(', ') || null, publicized: isPublicized(t) })),
+		texts: texts.map((t) => ({ ...t, author: (authorsOf.get(t.id) ?? []).map((p) => authors.get(p)).filter(Boolean).join(', ') || null, publicized: isPublicized(t), commented: overview.commented.has(t.id), ...overview.commentaries.get(t.id) })),
 		authorChoices: personae.map((pa) => ({ id: pa.id, name: authorName(pa) })),
 		personae: personae.map((p) => ({
 			...p,

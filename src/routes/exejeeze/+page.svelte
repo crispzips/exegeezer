@@ -2,7 +2,6 @@
     import { onMount, tick, untrack } from 'svelte';
     import { slide } from 'svelte/transition';
     import { EXAMPLE_ITEMS, EXAMPLE_TITLE } from '#lib/exampleText.js';
-    import MenuTip from '#lib/components/MenuTip.svelte';
     import { tip } from '#lib/utilities/menuTip.svelte.js';
     import { cubicOut } from 'svelte/easing';
     import { replaceState } from '$app/navigation';
@@ -1995,7 +1994,6 @@
 </div>
 
 <BusyOverlay label={busyLabel} />
-<MenuTip />
 {#if chooser}
     <!-- the const keeps the props steady while the choice is closing (chooser is already null by then) -->
     {@const c = chooser}

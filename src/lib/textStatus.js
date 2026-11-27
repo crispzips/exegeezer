@@ -31,5 +31,5 @@ export const joinNames = (names) => (names.length < 3 ? names.join(' and ') : `$
 /** "Paul Vieth's", "A and B's", "A, B, and C's": the authors, possessive (no authors: "Anonymous's") @param {string[]} names */
 export const possessiveNames = (names) => `${joinNames(names.length ? names : ['Anonymous'])}'s`;
 
-/** The name a new commentary is given: "Comment on <authors>'s <title>" @param {string[]} authors @param {string} title */
-export const commentaryTitle = (authors, title) => `Comment on ${possessiveNames(authors)} ${title}`.slice(0, 200);
+/** The name a new commentary is given: "Commentary on <authors>'s <title>" @param {string[]} authors @param {string} title */
+export const commentaryTitle = (authors, title) => `Commentary on ${possessiveNames(authors)} ${title}`.slice(0, 200);

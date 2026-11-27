@@ -53,7 +53,8 @@
 	 * bubble still opens it. Both kinds have a button on their corner, shown on hover, that goes to `oncomment`.
 	 *
 	 * The row holding the active bubble (the one last given the cursor, or whose comment is being written) grows to show
-	 * everything in it, as far as the pane allows.
+	 * everything in it, as far as the pane allows. No row is shrunk to make room (for it, or for a newly opened row) below
+	 * the height of its largest section bubble.
 	 *
 	 * With `ondelete`, every bubble is editable: hovering a paragraph or section bubble
 	 * outlines it and floats an editor menu above it.
@@ -86,7 +87,7 @@
 	const ROW_WITH_COMMENTS_H = 270;
 	/** what the last row is left with, if there is room, when another is active */
 	const LAST_ROW_H = 150;
-	/** the least a row is shrunk to for the active one: a section bubble still shows */
+	/** the least any row is shrunk to; a row with taller section bubbles stops at the tallest of them */
 	const MIN_ROW_H = 96;
 	/** the divider between two rows */
 	const HANDLE_H = 4;
@@ -116,12 +117,38 @@
 		return full + (row.offsetHeight - row.clientHeight) + (scroller.offsetHeight - scroller.clientHeight);
 	}
 
+	/** The height at which row `d` shows its largest section bubble whole (0 when it has none). Measured like `neededHeight`, but without the comments and paragraphs. @param {number} d */
+	function sectionHeight(d) {
+		const items = rowItems[d];
+		const row = items?.parentElement;
+		const scroller = items?.closest('.overflow-auto');
+		if (!(row && scroller instanceof HTMLElement)) return 0;
+		const bubbles = Array.from(items.querySelectorAll('[data-section]'), (el) => /** @type {HTMLElement} */ (el));
+		if (!bubbles.length) return 0;
+		const px = (/** @type {string} */ v) => parseFloat(v) || 0;
+		items.classList.add('hv-measure');
+		const tallest = Math.max(
+			...bubbles.map((el) => {
+				const s = getComputedStyle(el);
+				return el.offsetHeight + px(s.marginTop) + px(s.marginBottom);
+			})
+		);
+		items.classList.remove('hv-measure');
+		const s = getComputedStyle(items);
+		return Math.ceil(tallest + px(s.paddingTop) + px(s.paddingBottom)) + (row.offsetHeight - row.clientHeight) + (scroller.offsetHeight - scroller.clientHeight);
+	}
+
 	function fitRows() {
 		const n = rows.length;
 		const usual = rows.map((_, d) => (d === n - 1 ? LAST_ROW_H : usualHeight(d)));
 		const active = rows.findIndex((r) => r.nodes.some((node) => nodeId(node) === activeId));
 		const room = rowsHeight - (n - 1) * HANDLE_H;
-		heights = n < 2 || active === -1 || room <= 0 ? usual : rowHeights(usual, active, neededHeight(active), room, MIN_ROW_H);
+		if (n < 2 || room <= 0) {
+			heights = usual;
+			return;
+		}
+		const floors = rows.map((_, d) => Math.max(MIN_ROW_H, sectionHeight(d)));
+		heights = rowHeights(usual, active, active === -1 ? 0 : neededHeight(active), room, floors);
 	}
 
 	/** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -659,7 +686,7 @@
 {#snippet paragraphBubble(/** @type {import('#lib/utilities/buildSections.js').ParagraphNode} */ node, /** @type {boolean} */ stacked)}
 	<!-- commenting: the bubble with its comments under it. In a row that is a column of its own, which scrolls; in the
 	     front-matter column they take their places in that one -->
-	<div data-column={comments && !stacked ? '' : undefined} class={comments && !stacked ? '-mx-2 flex h-full min-h-0 shrink-0 flex-col items-start overflow-y-auto px-2' : 'contents'}>
+	<div data-column={comments && !stacked ? '' : undefined} class={comments && !stacked ? '-mx-1 flex h-full min-h-0 shrink-0 flex-col items-start overflow-y-auto px-2' : 'contents'}>
 	<!-- commenting: the bubble and its comment button, side by side in the page (the bubble scrolls, the button must not) -->
 	<div class={oncomment ? `group relative flex shrink-0 ${stacked ? 'flex-col' : ''}` : 'contents'}>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -691,7 +718,7 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3'} {ondelete || comments ? '' : 'focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')} {picked?.has(node.paragraph.id) ? 'outline-4! outline-accent! bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(node.paragraph.id) ? 'outline-4 outline-accent/60' : ''} {oncomment ? 'cursor-pointer' : ''}"
+		class="{stacked ? 'mx-2 my-3' : comments ? 'my-2' : 'mx-1 my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.25rem_+_var(--ta-mx,0rem))] py-0.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3'} {ondelete || comments ? '' : 'focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')} {picked?.has(node.paragraph.id) ? 'outline-4! outline-accent! bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(node.paragraph.id) ? 'outline-4 outline-accent/60' : ''} {oncomment ? 'cursor-pointer' : ''}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -706,7 +733,7 @@
 	</div>
 	{#if oncomment}{@render commentButton(node.paragraph.id, 'Comment on this paragraph', stacked ? 'right-0' : '-right-2')}{/if}
 	</div>
-	{@render hanging(node.paragraph.id, stacked ? 'mx-2 w-80' : 'w-0 min-w-full')}
+	{@render hanging(node.paragraph.id, stacked ? 'mx-2 -mt-1 w-80' : 'w-0 min-w-full')}
 	</div>
 {/snippet}
 
@@ -766,7 +793,7 @@
 			<!-- front matter: small bubbles, first in the top row -->
 			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
-				<div data-front class="mx-2 flex h-full min-h-0 w-86 shrink-0 {ondelete || comments ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
+				<div data-front class="mx-2 flex h-full min-h-0 w-86 shrink-0 {ondelete || comments ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto px-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
 						{#if node.kind === 'paragraph'}
 							{#if oninject}{@render gapEl(node.paragraph.id, 'before', 'y')}{/if}
@@ -817,10 +844,11 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'} {notesOn.has(node.id) ? 'min-w-56' : ''}"
+						class="my-2 {isOpen ? 'flex' : 'flow-root'} max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'} {notesOn.has(node.id) ? 'min-w-56' : ''}"
 					>
-						<!-- section label stacked above the caret, so the title starts at the very top -->
-						<span class="flex shrink-0 flex-col items-center gap-0.5">
+						<!-- section label stacked above the caret, so the title starts at the very top; in a closed bubble the pair floats,
+						     and a long title wraps on into the space beneath it -->
+						<span class="flex shrink-0 flex-col items-center gap-0.5 {isOpen ? '' : 'float-left mr-3'}">
 							<span class="text-xs font-normal text-taupe4">§{node.hierarchicalIndex}</span>
 							<!-- the caret shows the open state, so only a section with something in it has one -->
 							{#if node.children.length}
@@ -830,16 +858,14 @@
 									</svg>
 									<span class="text-xs font-normal text-taupe4" aria-label="{countParagraphs(node)} paragraphs">{countParagraphs(node)}¶</span>
 								</span>
-							{:else}
-								<span class="h-5 w-5"></span>
 							{/if}
 						</span>
 						<!-- wraps inside the container and clips at the bottom; an open container
 						     grows wide enough to show the whole title and subtitle -->
-						<span class="min-w-0 flex-1 {isOpen ? 'whitespace-nowrap' : 'break-words'}">
+						<span class={isOpen ? 'min-w-0 flex-1 whitespace-nowrap' : 'break-words'}>
 							{#if titleEditId === node.id}
 								<!-- double-clicked: the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
-								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewitem ? (r) => onnewitem(node.id, r) : undefined }} class="block min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
+								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewitem ? (r) => onnewitem(node.id, r) : undefined }} class="flow-root min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
 							{:else}
 								{#if t.title}{t.title}{:else}<span class="font-normal italic opacity-60">Untitled section</span>{/if}
 								{#if t.subtitle}

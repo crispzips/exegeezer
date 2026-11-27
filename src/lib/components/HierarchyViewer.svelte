@@ -17,7 +17,8 @@
 	import { allRows, moveAlong, moveOut, moveAcross, topmostInView } from '#lib/utilities/readerNav.js';
 	import FootnoteTip from '#lib/components/FootnoteTip.svelte';
 	import { definitionsOf, emphasizeFirst, plainFirst, renderFootnoteMarks } from '#lib/utilities/renderMarkdown.js';
-	import CommentFlow from '#lib/components/CommentFlow.svelte';
+	import CommentBubble from '#lib/components/CommentBubble.svelte';
+	import { rowHeights } from '#lib/utilities/rowHeights.js';
 	import { useCommentEditor } from '#lib/utilities/commentEditor.svelte.js';
 	import { isCommentClick } from '#lib/utilities/comments.js';
 	import { QuoteRightAlt } from '@boxicons/svelte';
@@ -46,9 +47,13 @@
 	 *   picked?: Set<string>
 	 * }}
 	 *
-	 * With `comments` (commenting mode), each row has a lane beneath its bubbles in which the comments on them flow
-	 * across, each level with its bubble. A click on a paragraph bubble (or Enter on it) goes to `oncomment`; a click on a
-	 * section bubble still opens it, and the button on its corner, shown on hover, goes to `oncomment`.
+	 * With `comments` (commenting mode), the comments on a bubble hang beneath it, one under another and as wide as it
+	 * is (so paragraph bubbles don't widen on focus, and an open section with comments keeps a closed one's width at
+	 * least), and a column too tall for its row scrolls. A click on a paragraph bubble (or Enter on it) goes to `oncomment`; a click on a section
+	 * bubble still opens it. Both kinds have a button on their corner, shown on hover, that goes to `oncomment`.
+	 *
+	 * The row holding the active bubble (the one last given the cursor, or whose comment is being written) grows to show
+	 * everything in it, as far as the pane allows.
 	 *
 	 * With `ondelete`, every bubble is editable: hovering a paragraph or section bubble
 	 * outlines it and floats an editor menu above it.
@@ -63,24 +68,88 @@
 	/** @type {import('#lib/utilities/comments.js').AnchoredComment | null} */
 	let pointed = $state.raw(null);
 	let marked = $derived(new Set(pointed ? [pointed.anchorId, ...pointed.targetIds] : []));
-	/** each row's run of bubbles, which its comments line up with */
+	/** each row's run of bubbles */
 	/** @type {HTMLDivElement[]} */
 	let rowItems = $state([]);
 
 	/** @param {SectionChild} node */
 	const nodeId = (node) => (node.kind === 'section' ? node.id : node.paragraph.id);
-	/** the comments on the bubbles of row `d`, in the order of the bubbles @param {number} d */
-	const rowComments = (d) => {
-		const ids = new Set(rows[d]?.nodes.map(nodeId));
-		return comments?.filter((c) => ids.has(c.anchorId)) ?? [];
-	};
+	/** the comments on each bubble, by its id */
+	let notesOn = $derived(Map.groupBy(comments ?? [], (c) => c.anchorId));
 	const editor = useCommentEditor();
-	/** whether a comment on row `d` is being written, which needs a taller lane @param {number} d */
-	const rowEditing = (d) => rowComments(d).some((c) => editor?.is(c.id));
-	// a row's height to begin with: plain, with a comment lane under its bubbles, and with the editor in that lane
+	/** whether a bubble of row `d` has comments @param {number} d */
+	const rowCommented = (d) => !!rows[d]?.nodes.some((n) => notesOn.has(nodeId(n)));
+
+	// ---- Row heights: each row has a usual one, and the active bubble's row grows to show everything in it ----
+	// a row's usual height: plain, and with comments hanging beneath its bubbles
 	const ROW_H = 150;
 	const ROW_WITH_COMMENTS_H = 270;
-	const ROW_EDITING_H = 390;
+	/** what the last row is left with, if there is room, when another is active */
+	const LAST_ROW_H = 150;
+	/** the least a row is shrunk to for the active one: a section bubble still shows */
+	const MIN_ROW_H = 96;
+	/** the divider between two rows */
+	const HANDLE_H = 4;
+	/** how long after a click the rows wait to move, so that nothing shifts under a second click */
+	const SETTLE_MS = 300;
+	/** @param {number} d */
+	const usualHeight = (d) => (rowCommented(d) ? ROW_WITH_COMMENTS_H : ROW_H);
+	/** the height of all the rows together */
+	let rowsHeight = $state(0);
+	/** each row's height, once worked out */
+	let heights = $state.raw(/** @type {number[]} */ ([]));
+	/** the bubble whose row is the active one @type {string | null} */
+	let activeId = $state(null);
+
+	/** The height at which row `d` shows all of its contents: measured with every box in it let out to its full height. @param {number} d */
+	function neededHeight(d) {
+		const items = rowItems[d];
+		const row = items?.parentElement;
+		const scroller = items?.closest('.overflow-auto');
+		if (!(row && scroller instanceof HTMLElement)) return 0;
+		const scrolled = Array.from(items.querySelectorAll('[data-front], [data-column], [data-node]'), (el) => ({ el, top: el.scrollTop }));
+		items.classList.add('hv-measure');
+		const full = items.offsetHeight;
+		items.classList.remove('hv-measure');
+		for (const { el, top } of scrolled) el.scrollTop = top;
+		// with the row's own top border, and a sideways scrollbar if there is one
+		return full + (row.offsetHeight - row.clientHeight) + (scroller.offsetHeight - scroller.clientHeight);
+	}
+
+	function fitRows() {
+		const n = rows.length;
+		const usual = rows.map((_, d) => (d === n - 1 ? LAST_ROW_H : usualHeight(d)));
+		const active = rows.findIndex((r) => r.nodes.some((node) => nodeId(node) === activeId));
+		const room = rowsHeight - (n - 1) * HANDLE_H;
+		heights = n < 2 || active === -1 || room <= 0 ? usual : rowHeights(usual, active, neededHeight(active), room, MIN_ROW_H);
+	}
+
+	/** @type {ReturnType<typeof setTimeout> | undefined} */
+	let fitTimer;
+	let pointerHeld = false;
+	let pointerAt = 0;
+	/** Size the rows again, after the page has caught up; never while a bubble is being pressed or dragged. */
+	function scheduleFit() {
+		clearTimeout(fitTimer);
+		const busy = () => pointerHeld || !!dd.dragId;
+		const wait = () => (busy() ? SETTLE_MS : Math.max(0, pointerAt + SETTLE_MS - Date.now()));
+		fitTimer = setTimeout(() => (busy() || wait() ? scheduleFit() : fitRows()), wait());
+	}
+	/** whether this is a divider between rows. Focus moving to or from one leaves the rows alone, or they would undo a drag of it.
+	 * @param {EventTarget | null} t */
+	const isDivider = (t) => t instanceof Element && t.getAttribute('role') === 'separator';
+	/** @param {boolean} held */
+	function pointer(held) {
+		if (!held && !pointerHeld) return;
+		pointerHeld = held;
+		pointerAt = Date.now();
+	}
+	$effect(() => {
+		// (the words being written too: the editor grows with them)
+		void [rows, comments, activeId, editor?.open?.id, editor?.open?.body, rowsHeight];
+		untrack(scheduleFit);
+		return () => clearTimeout(fitTimer);
+	});
 
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
@@ -284,6 +353,17 @@
 	function setCursor(id, type) {
 		cursor = { type, id };
 	}
+
+	// the active bubble is whichever was last given the cursor, or called on to have its comment written
+	$effect(() => {
+		if (cursor) activeId = cursor.id;
+	});
+	$effect(() => {
+		void editor?.called;
+		const id = editor?.open?.id;
+		const written = untrack(() => comments?.find((c) => c.id === id));
+		if (written) activeId = written.anchorId;
+	});
 
 	// ---- Synced with the other views: report the focused bubble, and open centred on the shared one ----
 	$effect(() => {
@@ -558,9 +638,30 @@
 	}
 </script>
 
+<!-- commenting: the button on a bubble's corner, shown while the bubble is pointed at or has focus -->
+{#snippet commentButton(/** @type {string} */ id, /** @type {string} */ label, /** @type {string} */ side)}
+	<button type="button" aria-label={label} use:tip={label} onclick={() => oncomment?.(id)} class="raised absolute top-0 {side} z-10 inline-flex items-center justify-center rounded-full p-1 text-dark opacity-0 shadow-md group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-taupe2!"><QuoteRightAlt width={16} height={16} /></button>
+{/snippet}
+
+<!-- commenting: the comments on a bubble, hanging beneath it one under another -->
+{#snippet hanging(/** @type {string} */ id, /** @type {string} */ width)}
+	<!-- `width` makes this as wide as the bubble: "w-0 min-w-full" takes the width of a column the bubble alone has sized -->
+	{@const own = notesOn.get(id)}
+	{#if own}
+		<div role="complementary" aria-label="Comments" data-comments-for={id} class="flex shrink-0 flex-col gap-2 pt-1 pb-2 {width}">
+			{#each own as c (c.id)}<CommentBubble comment={c} onlit={(x) => (pointed = x)} compact class="relative shrink-0" />{/each}
+		</div>
+	{/if}
+{/snippet}
+
 <!-- A paragraph bubble. In the front-matter column it keeps its natural height (the column
      scrolls); elsewhere it is a fixed-width box that scrolls on its own. -->
 {#snippet paragraphBubble(/** @type {import('#lib/utilities/buildSections.js').ParagraphNode} */ node, /** @type {boolean} */ stacked)}
+	<!-- commenting: the bubble with its comments under it. In a row that is a column of its own, which scrolls; in the
+	     front-matter column they take their places in that one -->
+	<div data-column={comments && !stacked ? '' : undefined} class={comments && !stacked ? '-mx-2 flex h-full min-h-0 shrink-0 flex-col items-start overflow-y-auto px-2' : 'contents'}>
+	<!-- commenting: the bubble and its comment button, side by side in the page (the bubble scrolls, the button must not) -->
+	<div class={oncomment ? `group relative flex shrink-0 ${stacked ? 'flex-col' : ''}` : 'contents'}>
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div
 		data-node={node.paragraph.id}
@@ -590,7 +691,7 @@
 			: undefined}
 		onpointerenter={ondelete && !editing ? (e) => pointerMoved(e) && editHover.enter({ id: node.paragraph.id, kind: 'paragraph', el: e.currentTarget }) : undefined}
 		onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3 focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')} {picked?.has(node.paragraph.id) ? 'outline-4! outline-accent! bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(node.paragraph.id) ? 'outline-4 outline-accent/60' : ''} {oncomment ? 'cursor-pointer' : ''}"
+		class="{stacked ? 'mx-2 my-2' : 'my-2'} flex w-80 shrink-0 flex-col gap-0.5 rounded-md border border-taupe2 bg-taupe1 px-[calc(0.5rem_+_var(--ta-mx,0rem))] py-1.5 [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {ondelete ? 'text-sm' : 'text-base'} {ondelete ? '' : 'hover:outline-2 hover:outline-taupe3'} {ondelete || comments ? '' : 'focus:w-160'} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {stacked ? '' : 'overflow-y-auto'} {dd.dragId === node.paragraph.id ? 'opacity-40' : ''} {dd.classes(node.paragraph.id, stacked ? 'y' : 'x') || (ondelete && !dd.dragId && editHover.is(node.paragraph.id) ? 'outline-2 outline-taupe3' : '')} {picked?.has(node.paragraph.id) ? 'outline-4! outline-accent! bg-[color-mix(in_srgb,var(--color-accent)_18%,var(--color-taupe1))]!' : marked.has(node.paragraph.id) ? 'outline-4 outline-accent/60' : ''} {oncomment ? 'cursor-pointer' : ''}"
 	>
 		<span class="text-xs text-gray-500">{node.paragraphIndex}</span>
 		{#if editing === node.paragraph.id}
@@ -602,6 +703,10 @@
 			{@const withNotes = node.paragraph.text ? renderFootnoteMarks(node.paragraph.text, defs, node.paragraph.id) : null}
 			<p class="md para-text flex-1 whitespace-pre-wrap">{#if withNotes}{@html ondelete ? withNotes : emphasizeFirst(withNotes)}{:else if node.paragraph.text}{#if ondelete}{node.paragraph.text}{:else}{@html plainFirst(node.paragraph.text)}{/if}{:else}<span class="italic text-grey3">empty paragraph</span>{/if}</p>
 		{/if}
+	</div>
+	{#if oncomment}{@render commentButton(node.paragraph.id, 'Comment on this paragraph', stacked ? 'right-0' : '-right-2')}{/if}
+	</div>
+	{@render hanging(node.paragraph.id, stacked ? 'mx-2 w-80' : 'w-0 min-w-full')}
 	</div>
 {/snippet}
 
@@ -641,7 +746,6 @@
 	     and scrolls. -->
 	{@const firstSection = r.nodes.findIndex((n) => n.kind === 'section')}
 	{@const front = firstSection === -1 ? [] : r.nodes.slice(0, firstSection)}
-	{@const notes = rowComments(d)}
 	<div
 		data-row={d}
 		style={tint ? `--c: ${tint}` : ''}
@@ -657,13 +761,12 @@
 			{'#'.repeat(lvl)}
 		</div>
 
-		<!-- the row's bubbles and, beneath them, the lane for the comments on them -->
-		<div class="flex h-full min-h-0 flex-col">
-		<div bind:this={rowItems[d]} class="flex items-stretch gap-4 py-2 pr-2 {notes.length ? 'min-h-24 shrink' : 'h-full'}">
+		<!-- the row's bubbles -->
+		<div bind:this={rowItems[d]} class="flex h-full items-stretch gap-4 py-2 pr-2">
 			<!-- front matter: small bubbles, first in the top row -->
 			{#if d === 0 && matter}{#each matter.front as s (s.id)}<MatterBubble section={s} />{/each}{/if}
 			{#if front.length}
-				<div data-front class="mx-2 flex h-full min-h-0 w-86 shrink-0 {ondelete ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
+				<div data-front class="mx-2 flex h-full min-h-0 w-86 shrink-0 {ondelete || comments ? '' : 'has-[[data-node]:focus]:w-166 [&:has([data-node]:focus)_[data-node]]:w-160'} flex-col gap-0 overflow-y-auto p-1">
 					{#each front as node (node.kind === 'paragraph' ? node.paragraph.id : '')}
 						{#if node.kind === 'paragraph'}
 							{#if oninject}{@render gapEl(node.paragraph.id, 'before', 'y')}{/if}
@@ -678,6 +781,8 @@
 				{#if node.kind === 'section'}
 					{@const isOpen = selected[d] === node.id}
 					{@const t = splitTitle(node.title)}
+					<!-- commenting: a column of the bubble and, under it, its comments -->
+					<div data-column={comments ? '' : undefined} class={comments ? '-mx-2 flex h-full min-h-0 shrink-0 flex-col items-start overflow-y-auto px-2' : 'contents'}>
 					<!-- commenting: the bubble and its comment button, side by side in the page (a button can't hold another) -->
 					<div class={oncomment ? 'group relative flex shrink-0 items-start' : 'contents'}>
 					<svelte:element
@@ -712,7 +817,7 @@
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'}"
+						class="my-2 flex max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'} {notesOn.has(node.id) ? 'min-w-56' : ''}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top -->
 						<span class="flex shrink-0 flex-col items-center gap-0.5">
@@ -743,9 +848,9 @@
 							{/if}
 						</span>
 					</svelte:element>
-					{#if oncomment}
-						<button type="button" aria-label="Comment on this section" use:tip={'Comment on this section'} onclick={() => oncomment(node.id)} class="raised absolute top-0 -right-2 z-10 inline-flex items-center justify-center rounded-full p-1 text-dark opacity-0 shadow-md group-focus-within:opacity-100 group-hover:opacity-100 hover:bg-taupe2!"><QuoteRightAlt width={16} height={16} /></button>
-					{/if}
+					{#if oncomment}{@render commentButton(node.id, 'Comment on this section', '-right-2')}{/if}
+					</div>
+					{@render hanging(node.id, 'w-0 min-w-full')}
 					</div>
 				{:else}
 					{@render paragraphBubble(node, false)}
@@ -756,12 +861,6 @@
 			{#if oninject && r.nodes.length > front.length}{@const last = r.nodes[r.nodes.length - 1]}{@render gapEl(last.kind === 'section' ? last.id : last.paragraph.id, 'after', 'x')}{/if}
 			<!-- back matter: small bubbles, last in the top row -->
 			{#if d === 0 && matter}{#each matter.back as s (s.id)}<MatterBubble section={s} />{/each}{/if}
-		</div>
-		{#if notes.length}
-			<div role="complementary" aria-label="Comments on this row" class="{rowEditing(d) ? 'h-60' : 'h-28'} shrink-0 py-1 pr-2">
-				<CommentFlow comments={notes} axis="x" root={rowItems[d]} attribute="data-node" onlit={(c) => (pointed = c)} />
-			</div>
-		{/if}
 		</div>
 	</div>
 {/snippet}
@@ -775,14 +874,14 @@
 			{@render row(d)}
 		</div>
 	{:else}
-		<SplitPane direction="vertical" sized="first" initial={rowEditing(d) ? ROW_EDITING_H : rowComments(d).length ? ROW_WITH_COMMENTS_H : ROW_H} min={80} max={600}>
+		<SplitPane direction="vertical" sized="first" initial={heights[d] ?? usualHeight(d)} min={80} max={Math.max(600, rowsHeight)}>
 			{#snippet first()}{@render row(d)}{/snippet}
 			{#snippet second()}{@render stack(d + 1)}{/snippet}
 		</SplitPane>
 	{/if}
 {/snippet}
 
-<svelte:window onkeydown={onWindowKeydown} onresize={scheduleShadows} />
+<svelte:window onkeydown={onWindowKeydown} onresize={scheduleShadows} onpointerup={() => pointer(false)} onpointercancel={() => pointer(false)} ondragend={() => pointer(false)} />
 
 <FootnoteTip />
 
@@ -796,9 +895,21 @@
 	onpointermove={hoverMove}
 	onpointerleave={(e) => pointerMoved(e) && gap.leave()}
 	onkeydown={onKeydown}
-	onfocusout={onFocusout}
-	onfocusin={scheduleShadows}
+	onpointerdown={() => pointer(true)}
+	onfocusout={(e) => {
+		onFocusout(e);
+		// a bubble that loses focus narrows, and so grows taller
+		if (!isDivider(e.target) && !isDivider(e.relatedTarget)) scheduleFit();
+	}}
+	onfocusin={(e) => {
+		scheduleShadows();
+		if (!isDivider(e.target)) scheduleFit();
+	}}
 	onscrollcapture={scheduleShadows}
+	ontransitionend={(e) => {
+		// a row has finished changing height: the edit menu follows its bubble
+		if (e.propertyName === 'height' && editHover.target) editHover.enter({ ...editHover.target });
+	}}
 	ondragover={dragOver}
 	ondrop={drop}
 	ondragleave={(e) => {
@@ -806,7 +917,7 @@
 	}}
 	class="flex h-full min-h-0 flex-col"
 >
-	<div class="hv-rows min-h-0 flex-1">
+	<div class="hv-rows min-h-0 flex-1" bind:clientHeight={rowsHeight}>
 		{@render stack(0)}
 	</div>
 
@@ -825,3 +936,15 @@
 		getHost={() => host ?? null}
 	/>
 </div>
+
+<style>
+	/* for the moment a row is being measured, every box in it is as tall as its contents */
+	:global(.hv-measure) {
+		align-self: flex-start;
+	}
+	:global(.hv-measure),
+	:global(.hv-measure :is([data-front], [data-column], [data-node])) {
+		height: auto !important;
+		max-height: none !important;
+	}
+</style>

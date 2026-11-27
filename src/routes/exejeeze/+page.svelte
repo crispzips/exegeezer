@@ -1145,13 +1145,13 @@
     }
 
     // ---- Writing a comment: its bubble, where the view puts it, is the editor ----
-    const editor = new CommentEditor({ send: sendComment, textId: () => textId, blocked: () => notify('Post or cancel the comment you are writing first.') });
+    const editor = new CommentEditor({ send: sendComment, textId: () => textId, failed: notify, remove: removeComment, askToRemove: requestCommentDelete });
     provideCommentEditor(editor);
-    // an unfinished comment belongs to its text (it waits through changes of view and mode, not of text)
+    // a comment belongs to its text: leaving the text finishes with it
     $effect(() => {
         const id = textId;
         untrack(() => {
-            if (editor.open && editor.open.textId !== id) editor.open = null;
+            if (editor.open && editor.open.textId !== id) editor.finish();
         });
     });
 
@@ -1159,7 +1159,20 @@
     function compose(paragraphIds) {
         const id = textId;
         if (!authed || !id) return;
-        if (editor.start({ id: DRAFT_ID, textId: id, paragraphIds, body: '' })) showAnchor(paragraphIds);
+        editor.start({ id: DRAFT_ID, textId: id, paragraphIds, body: '' });
+        showAnchor(paragraphIds);
+    }
+
+    // ---- A click anywhere but on the comment in the editor finishes with it. It is seen to before whatever was clicked
+    // does anything (so that may open another), and not for a press that began on the comment, as a selecting drag may ----
+    let pressedOnComment = false;
+    /** @param {EventTarget | null} t */
+    const onEditedComment = (t) => t instanceof Element && !!t.closest('article[data-editing]');
+    /** @param {MouseEvent} e */
+    function clickAway(e) {
+        const began = pressedOnComment;
+        pressedOnComment = false;
+        if (editor.open && !began && !onEditedComment(e.target)) editor.finish();
     }
 
     /** Open the sections around the place a new comment goes, in the views that keep sections closed. @param {string[]} paragraphIds */
@@ -1170,7 +1183,7 @@
         if (around?.length) hierarchy?.openPath(around);
     }
 
-    // coming to a view (or back to commenting) with a comment unfinished: its bubble is shown there too
+    // coming to a view (or back to commenting) with a comment that couldn't be saved: its bubble is shown there too
     $effect(() => {
         void view;
         if (mode !== 'commenting') return;
@@ -1196,9 +1209,50 @@
         const answer = await res.json().catch(() => null);
         if (!res.ok) return answer?.message ?? 'Could not save the comment.';
         if (isNew && paragraphIds.some((p) => picked.has(p))) clearPicked();
-        // the commentary is a text too: a tab holding it is out of date now (and saving from it would undo this), so it reloads
-        tabs = tabs.map((t) => (t.key !== activeKey && t.textId === answer?.commentaryId && !isDirty(t) ? { ...t, items: null, history: null } : t));
+        reloadCommentary(answer?.commentaryId);
         await loadComments(on);
+    }
+
+    /** A commentary is a text too: once its comments change, a tab holding it is out of date (and saving from it would undo
+     * the change), so it reloads. @param {string | undefined} commentaryId */
+    function reloadCommentary(commentaryId) {
+        tabs = tabs.map((t) => (t.key !== activeKey && t.textId === commentaryId && !isDirty(t) ? { ...t, items: null, history: null } : t));
+    }
+
+    /** @param {import('#lib/utilities/comments.js').AnchoredComment} comment */
+    function requestCommentDelete(comment) {
+        const on = textId;
+        if (!on) return;
+        const excerpt = comment.body.length > 160 ? comment.body.slice(0, 160) + '…' : comment.body;
+        deleteRequest = {
+            title: 'Delete this comment?',
+            message: `"${excerpt}"\n\nThis permanently deletes the comment. This cannot be undone.`,
+            confirm: 'Delete comment',
+            run: () => removeComment(on, comment.id)
+        };
+    }
+
+    /** @param {string} on the text commented on @param {string} commentId */
+    async function removeComment(on, commentId) {
+        // it goes from sight at once (and comes back if the server won't delete it)
+        if (fetched.textId === on) fetched = { textId: on, comments: fetched.comments.filter((c) => c.id !== commentId) };
+        try {
+            await queue;
+            const res = await fetch(`/api/texts/${on}/comments`, {
+                method: 'DELETE',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({ commentId })
+            });
+            const answer = await res.json().catch(() => null);
+            if (!res.ok) notify(answer?.message ?? 'Could not delete the comment.');
+            else reloadCommentary(answer?.commentaryId);
+            // after a refusal too: the comment may already be gone
+            await loadComments(on);
+        } catch (err) {
+            console.warn('Could not delete the comment', err);
+            notify('Could not delete the comment.');
+            await loadComments(on);
+        }
     }
 
     function commentPicked() {
@@ -2106,7 +2160,7 @@
     {/if}
 </dialog>
 
-<svelte:window onclick={onWindowClick} onkeydown={(e) => {
+<svelte:window onpointerdowncapture={(e) => (pressedOnComment = onEditedComment(e.target))} onclickcapture={clickAway} onclick={onWindowClick} onkeydown={(e) => {
         onKeydown(e);
         // Escape unpicks (a comment being written takes its own Escape)
         if (e.key === 'Escape' && picked.size && !editor.open) clearPicked();

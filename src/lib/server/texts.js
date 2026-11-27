@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, inArray, isNull, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNull, lt, notExists, or, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.js';
 import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
@@ -551,6 +551,40 @@ export async function editComment(textId, locals, commentId, body) {
 	if (isPublicized(row)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
 	await db.transaction(async (tx) => {
 		await tx.update(paragraph).set({ body: body.trim() }).where(eq(paragraph.id, row.paragraphId));
+		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, row.commentaryId));
+	});
+	return { ok: true, commentaryId: row.commentaryId };
+}
+
+/**
+ * Delete one of the requester's comments on this text: its row, and its words in their commentary. Comments in a published,
+ * public commentary are frozen. The commentary itself stays, even when this was its last comment.
+ * @param {string} textId the text commented on
+ * @param {App.Locals} locals
+ * @param {string} commentId
+ * @returns {Promise<{ ok: true, commentaryId: string } | { ok: false, status: number, message: string }>}
+ */
+export async function deleteComment(textId, locals, commentId) {
+	const uid = owner(locals);
+	if (!uid || !(await accessible(textId, locals)) || !UUID.test(commentId)) return { ok: false, status: 404, message: 'No such comment' };
+	const [row] = await db
+		.select({ commentaryId: comment.commentaryId, paragraphId: comment.bodyParagraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(comment)
+		.innerJoin(text_, eq(text_.id, comment.commentaryId))
+		.where(and(eq(comment.id, commentId), eq(text_.commentaryOn, textId), eq(text_.userId, uid)));
+	if (!row) return { ok: false, status: 404, message: 'No such comment' };
+	if (isPublicized(row)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
+	await db.transaction(async (tx) => {
+		await tx.delete(comment).where(eq(comment.id, commentId));
+		const inCommentary = eq(textItem.textId, row.commentaryId);
+		const [gone] = await tx.delete(textItem).where(and(inCommentary, eq(textItem.paragraphId, row.paragraphId))).returning({ position: textItem.position });
+		if (gone) {
+			// close the gap, so positions stay 0, 1, 2… (by way of negative numbers: no two rows may share a position, even midway)
+			await tx.update(textItem).set({ position: sql`-${textItem.position}` }).where(and(inCommentary, gt(textItem.position, gone.position)));
+			await tx.update(textItem).set({ position: sql`-${textItem.position} - 1` }).where(and(inCommentary, lt(textItem.position, 0)));
+		}
+		// words another text has taken up stay with it
+		await tx.delete(paragraph).where(and(eq(paragraph.id, row.paragraphId), notExists(tx.select().from(textItem).where(eq(textItem.paragraphId, paragraph.id)))));
 		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, row.commentaryId));
 	});
 	return { ok: true, commentaryId: row.commentaryId };

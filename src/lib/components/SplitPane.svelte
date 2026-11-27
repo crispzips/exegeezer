@@ -36,8 +36,11 @@
 	const horizontal = $derived(direction === 'horizontal');
 	let size = $state(initial);
 	// a new `initial` (the pane's content now needs a different height) resizes the pane; otherwise a dragged size stays
+	let given = untrack(() => initial);
 	$effect.pre(() => {
 		const next = initial;
+		if (next === given) return;
+		given = next;
 		untrack(() => (size = next));
 	});
 	let dragging = $state(false);

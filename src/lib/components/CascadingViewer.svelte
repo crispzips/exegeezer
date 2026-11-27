@@ -251,16 +251,21 @@
 	// The grid is laid out in unscaled units and drawn with CSS `zoom`, so bubbles, gaps, borders
 	// and text all scale together. A cell is PITCH wide; its bubble is SIZE, centred in it.
 	const SIZE = 224;
-	// the gap between bubbles: wide enough for the hover plus (with room around it) when editing, tight when only reading
-	let GAP = $derived(onadd || exploded ? 80 : 24);
+	// the gap between bubbles: wide enough for the hover plus (with room around it) when editing, tight when only reading;
+	// commenting, wide enough that comments are plainly nearer their own bubble than the one on their other side
+	let PLAIN_GAP = $derived(onadd || exploded ? 80 : 24);
+	const COMMENTING_GAP = 48;
+	let GAP = $derived(comments && !exploded ? COMMENTING_GAP : PLAIN_GAP);
 	/** commenting: the room kept above and to the left of every bubble for the comments on it (0 otherwise). While a
 	 * comment is being written every cell has more of it, so the editor fits its place without covering any bubble. */
-	const NOTE_ROOM = 176;
-	const EDITOR_ROOM = 288;
+	const NOTE_ROOM = 198;
+	const EDITOR_ROOM = 310;
+	/** how much of that room is left empty between the comments and the bubble they are about */
+	const NOTE_CLEAR = 28;
 	let INSET = $derived(!comments || exploded ? 0 : comments.some((c) => editor?.is(c.id)) ? EDITOR_ROOM : NOTE_ROOM);
 	let PITCH = $derived(SIZE + GAP + INSET);
 	/** how much the comment room enlarges a cell: cell sizes are scaled by it, so bubbles stay the size they were */
-	let stretch = $derived(PITCH / (SIZE + GAP));
+	let stretch = $derived(PITCH / (SIZE + PLAIN_GAP));
 	/** the middle of a bubble in column (or row) `n` of the grid */
 	const middle = (/** @type {number} */ n) => n * PITCH + (PITCH + INSET) / 2;
 	/** exploded: the tubes' thickness (half of what the exploded circles were) */
@@ -1163,6 +1168,9 @@
 						{#if !exploded && inlineEditId !== pid}
 							<!-- the bubble's menu: top right, shown on hover, a vertical stack of buttons -->
 							<div class="absolute top-[12%] right-[12%] z-10 flex flex-col gap-1 opacity-0 group-focus-within:opacity-100 group-hover:opacity-100">
+								{#if oncomment}
+									<button type="button" aria-label="Comment on this paragraph" use:tip={'Comment on this paragraph'} draggable="false" onclick={(e) => { e.stopPropagation(); oncomment(pid); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><QuoteRightAlt width={18} height={18} /></button>
+								{/if}
 								<button type="button" aria-label="Expand paragraph" use:tip={'Expand'} draggable="false" onclick={(e) => { e.stopPropagation(); openModal(pid); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><Fullscreen width={18} height={18} /></button>
 								{#if onedit}
 									<button type="button" aria-label="Edit paragraph" use:tip={'Edit title, description and text'} draggable="false" onclick={(e) => { e.stopPropagation(); openModal(pid, true); }} ondblclick={(e) => e.stopPropagation()} class="inline-flex items-center justify-center rounded-full p-0.5 text-taupe5 hover:bg-taupe2"><PencilEditCircle width={18} height={18} /></button>
@@ -1189,11 +1197,11 @@
 						data-side={p.horizontal ? 'above' : 'left'}
 						class="absolute flex flex-col overflow-y-auto p-1"
 						style={p.horizontal
-							? `left:${p.col * PITCH + GAP / 2 + INSET}px;top:${p.row * PITCH + GAP / 2}px;width:${SIZE}px;height:${INSET - 6}px`
-							: `left:${p.col * PITCH + GAP / 2}px;top:${p.row * PITCH + GAP / 2 + INSET}px;width:${INSET - 6}px;height:${SIZE}px`}
+							? `left:${p.col * PITCH + GAP / 2 + INSET}px;top:${p.row * PITCH + GAP / 2}px;width:${SIZE}px;height:${INSET - NOTE_CLEAR}px`
+							: `left:${p.col * PITCH + GAP / 2}px;top:${p.row * PITCH + GAP / 2 + INSET}px;width:${INSET - NOTE_CLEAR}px;height:${SIZE}px`}
 					>
 						<div class="flex flex-col gap-1.5 {editing ? 'h-full' : p.horizontal ? 'mt-auto' : 'my-auto'}">
-							{#each notes as c (c.id)}<CommentBubble comment={c} onlit={(x) => (pointed = x)} class={editor?.is(c.id) ? 'h-full shrink-0 overflow-y-auto' : 'shrink-0'} />{/each}
+							{#each notes as c (c.id)}<CommentBubble comment={c} onlit={(x) => (pointed = x)} class={editor?.is(c.id) ? 'relative h-full shrink-0 overflow-y-auto' : 'relative shrink-0'} />{/each}
 						</div>
 					</div>
 				{/if}

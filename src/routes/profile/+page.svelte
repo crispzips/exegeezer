@@ -1,11 +1,12 @@
 <script>
+	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import { goto, invalidateAll } from '$app/navigation';
 	import TextsBrowser from '#lib/components/TextsBrowser.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import AboutMe from '#lib/components/AboutMe.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
+	import { LOCKED_MESSAGE, PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash, Key } from '@boxicons/svelte';
 
 	let { data, form } = $props();
@@ -44,13 +45,24 @@
 		textDialog?.showModal();
 	}
 	/** leave a field: save if its value changed, otherwise just close it */
-	function commitField() {
+	async function commitField() {
 		if (!tfield) return; // already left (e.g. Enter, then the blur from the field going away)
 		tfield = '';
 		const t = data.texts.find((x) => x.id === editTextId);
 		if (!t) return;
 		const same = tdraft.title.trim() === t.title && tdraft.personaId === (t.personaId ?? '') && tdraft.productionStatus === t.productionStatus && tdraft.visibility === t.visibility;
-		if (!same) textFormEl?.requestSubmit();
+		if (same) return;
+		await tick(); // the form posts its hidden fields, which must have caught up with the draft first
+		textFormEl?.requestSubmit();
+	}
+	/** a value just clicked becomes its dropdown, focused and already dropped @param {HTMLSelectElement} node */
+	function dropped(node) {
+		node.focus();
+		try {
+			node.showPicker();
+		} catch {
+			// a browser that can't be told to open it: it is focused, and a click or a key opens it
+		}
 	}
 	function cancelField() {
 		tfield = '';
@@ -101,13 +113,15 @@
 		detailDialog?.showModal();
 	}
 	/** leave a field: save if anything changed, otherwise just close it */
-	function commitPersonaField() {
+	async function commitPersonaField() {
 		if (!pfield) return; // already left (e.g. Enter, then the blur from the field going away)
 		pfield = '';
 		const d = data.personae.find((x) => x.id === detailId);
 		if (!d) return;
 		const same = pdraft.name.trim() === d.name && pdraft.image.trim() === (d.image ?? '') && pdraft.description.trim() === (d.description ?? '');
-		if (!same) personaFormEl?.requestSubmit();
+		if (same) return;
+		await tick(); // as in commitField
+		personaFormEl?.requestSubmit();
 	}
 	function cancelPersonaField() {
 		pfield = '';
@@ -527,13 +541,15 @@
 						<dt class="px-2 text-grey3">{label}</dt>
 						<dd>
 							{#if tfield === key}
-								<!-- svelte-ignore a11y_autofocus -->
 								<select
-									autofocus
+									use:dropped
 									bind:value={tdraft[key]}
 									aria-label={label}
 									onchange={commitField}
-									onblur={() => { if (tfield === key) cancelField(); }}
+									onfocusout={(e) => {
+										// an open dropdown moves focus onto its options, which is not leaving it
+										if (tfield === key && !e.currentTarget.contains(/** @type {Node | null} */ (e.relatedTarget))) cancelField();
+									}}
 									onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); cancelField(); } }}
 									class="w-full rounded-md px-2 py-1"
 								>
@@ -548,8 +564,8 @@
 					</div>
 				{/snippet}
 				{@render row('personaId', 'Author', authorName, data.authorChoices.map((c) => ({ value: c.id, label: c.name })), editText.publicized ? "The author of a published, public text can't be changed" : '')}
-				{@render row('productionStatus', 'Production status', editText.productionStatus, PRODUCTION_STATUSES.map((v) => ({ value: v, label: v })), '')}
-				{@render row('visibility', 'Visibility', editText.visibility, VISIBILITIES.map((v) => ({ value: v, label: v })), '')}
+				{@render row('productionStatus', 'Production status', editText.productionStatus, PRODUCTION_STATUSES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
+				{@render row('visibility', 'Visibility', editText.visibility, VISIBILITIES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
 				<div class="grid grid-cols-[8rem_minmax(0,1fr)] items-center">
 					<dt class="px-2 text-grey3">Type</dt><dd class="px-2 py-1 text-dark">{typeLabel[editText.type] ?? editText.type}</dd>
 				</div>

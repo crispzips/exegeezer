@@ -297,12 +297,22 @@ body {
   --color-taupe2: #101a1c;
   --color-taupe1: #090c12;
   --color-taupe0: #05070b;
-  --color-cyan: #00e5ff;
-  --color-magenta: #ff2a9d;
-  --color-green: #39ff14;
-  --color-accent: #39ff14;
+  /* Neon accents: every hue is set here, none inherited from Solarized */
+  --color-red: #ff1f4b;
+  --color-orange: #ff6a00;
+  --color-yellow: #fff200;
+  --color-green: #26ff00;
+  --color-cyan: #00f6ff;
+  --color-blue: #1f8bff;
+  --color-violet: #bf40ff;
+  --color-magenta: #ff14b5;
+  --color-accent: #26ff00;
   --color-on-accent: #05070b;
+  --color-on-hue: #05070b; /* text on a section colour: dark, since neon is bright */
+  --hue-step: 6%; /* nested sections darken only slightly, so they stay neon under dark text */
 }
+/* an open section bubble is a neon fill: its small labels and caret take the dark text colour too */
+:root[data-theme="cyber"] .bg-\(--c\) :is(.text-taupe4, svg[fill="currentColor"]) { color: var(--color-on-hue); }
 :root[data-theme="taupe"] { color-scheme: light; }
 
 /* A persona (or a user, shown as their "self") without a picture: the silhouette is tinted the persona's colour for

@@ -52,9 +52,10 @@
 	 * least), and a column too tall for its row scrolls. A click on a paragraph bubble (or Enter on it) goes to `oncomment`; a click on a section
 	 * bubble still opens it. Both kinds have a button on their corner, shown on hover, that goes to `oncomment`.
 	 *
-	 * The row holding the active bubble (the one last given the cursor, or whose comment is being written) grows to show
-	 * everything in it, as far as the pane allows. No row is shrunk to make room (for it, or for a newly opened row) below
-	 * the height of its largest section bubble.
+	 * The last row, where most paragraphs are, takes all the height it can: each row above it is only as tall as its
+	 * largest section bubble. A click (or Enter) on a paragraph bubble closes the section open beside it, so that the
+	 * paragraph's row becomes the last. A row above still grows to show everything in it, as far as the pane allows, when
+	 * the keyboard moves the cursor onto one of its paragraphs, or while a comment on one of its bubbles is being written.
 	 *
 	 * With `ondelete`, every bubble is editable: hovering a paragraph or section bubble
 	 * outlines it and floats an editor menu above it.
@@ -78,23 +79,16 @@
 	/** the comments on each bubble, by its id */
 	let notesOn = $derived(Map.groupBy(comments ?? [], (c) => c.anchorId));
 	const editor = useCommentEditor();
-	/** whether a bubble of row `d` has comments @param {number} d */
-	const rowCommented = (d) => !!rows[d]?.nodes.some((n) => notesOn.has(nodeId(n)));
 
-	// ---- Row heights: each row has a usual one, and the active bubble's row grows to show everything in it ----
-	// a row's usual height: plain, and with comments hanging beneath its bubbles
+	// ---- Row heights: the rows above the last are as tall as their section bubbles, and the last takes the rest ----
+	/** a row's height until it has been measured, and what the last row keeps, if there is room, when another grows */
 	const ROW_H = 150;
-	const ROW_WITH_COMMENTS_H = 270;
-	/** what the last row is left with, if there is room, when another is active */
-	const LAST_ROW_H = 150;
-	/** the least any row is shrunk to; a row with taller section bubbles stops at the tallest of them */
+	/** the height of a row with no section bubble to measure, and the least the last row is shrunk to */
 	const MIN_ROW_H = 96;
 	/** the divider between two rows */
 	const HANDLE_H = 4;
 	/** how long after a click the rows wait to move, so that nothing shifts under a second click */
 	const SETTLE_MS = 300;
-	/** @param {number} d */
-	const usualHeight = (d) => (rowCommented(d) ? ROW_WITH_COMMENTS_H : ROW_H);
 	/** the height of all the rows together */
 	let rowsHeight = $state(0);
 	/** each row's height, once worked out */
@@ -102,17 +96,28 @@
 	/** the bubble whose row is the active one @type {string | null} */
 	let activeId = $state(null);
 
-	/** The height at which row `d` shows all of its contents: measured with every box in it let out to its full height. @param {number} d */
+	/**
+	 * Take a measurement with every box in a row let out to its full height, leaving the boxes scrolled as they were.
+	 * @template T
+	 * @param {HTMLElement} items the row's run of bubbles
+	 * @param {() => T} measure
+	 */
+	function letOut(items, measure) {
+		const scrolled = Array.from(items.querySelectorAll('[data-front], [data-column], [data-node]'), (el) => ({ el, top: el.scrollTop }));
+		items.classList.add('hv-measure');
+		const result = measure();
+		items.classList.remove('hv-measure');
+		for (const { el, top } of scrolled) el.scrollTop = top;
+		return result;
+	}
+
+	/** The height at which row `d` shows all of its contents. @param {number} d */
 	function neededHeight(d) {
 		const items = rowItems[d];
 		const row = items?.parentElement;
 		const scroller = items?.closest('.overflow-auto');
 		if (!(row && scroller instanceof HTMLElement)) return 0;
-		const scrolled = Array.from(items.querySelectorAll('[data-front], [data-column], [data-node]'), (el) => ({ el, top: el.scrollTop }));
-		items.classList.add('hv-measure');
-		const full = items.offsetHeight;
-		items.classList.remove('hv-measure');
-		for (const { el, top } of scrolled) el.scrollTop = top;
+		const full = letOut(items, () => items.offsetHeight);
 		// with the row's own top border, and a sideways scrollbar if there is one
 		return full + (row.offsetHeight - row.clientHeight) + (scroller.offsetHeight - scroller.clientHeight);
 	}
@@ -126,29 +131,34 @@
 		const bubbles = Array.from(items.querySelectorAll('[data-section]'), (el) => /** @type {HTMLElement} */ (el));
 		if (!bubbles.length) return 0;
 		const px = (/** @type {string} */ v) => parseFloat(v) || 0;
-		items.classList.add('hv-measure');
-		const tallest = Math.max(
-			...bubbles.map((el) => {
-				const s = getComputedStyle(el);
-				return el.offsetHeight + px(s.marginTop) + px(s.marginBottom);
-			})
+		const tallest = letOut(items, () =>
+			Math.max(
+				...bubbles.map((el) => {
+					const s = getComputedStyle(el);
+					return el.offsetHeight + px(s.marginTop) + px(s.marginBottom);
+				})
+			)
 		);
-		items.classList.remove('hv-measure');
 		const s = getComputedStyle(items);
 		return Math.ceil(tallest + px(s.paddingTop) + px(s.paddingBottom)) + (row.offsetHeight - row.clientHeight) + (scroller.offsetHeight - scroller.clientHeight);
 	}
 
 	function fitRows() {
-		const n = rows.length;
-		const usual = rows.map((_, d) => (d === n - 1 ? LAST_ROW_H : usualHeight(d)));
-		const active = rows.findIndex((r) => r.nodes.some((node) => nodeId(node) === activeId));
-		const room = rowsHeight - (n - 1) * HANDLE_H;
-		if (n < 2 || room <= 0) {
-			heights = usual;
-			return;
-		}
-		const floors = rows.map((_, d) => Math.max(MIN_ROW_H, sectionHeight(d)));
-		heights = rowHeights(usual, active, active === -1 ? 0 : neededHeight(active), room, floors);
+		const last = rows.length - 1;
+		const room = rowsHeight - last * HANDLE_H;
+		if (last < 0 || room <= 0) return;
+		const tight = rows.map((_, d) => sectionHeight(d) || MIN_ROW_H);
+		const floors = tight.map((h, d) => (d === last ? Math.max(MIN_ROW_H, h) : h));
+		const usual = floors.map((h, d) => (d === last ? Math.max(ROW_H, h) : h));
+		// a row above the last grows for a paragraph, or for a comment being written; opening a section leaves it tight
+		const at = rows.findIndex((r) => r.nodes.some((node) => nodeId(node) === activeId));
+		const reading = !!rows[at]?.nodes.some((node) => node.kind === 'paragraph' && node.paragraph.id === activeId);
+		const writing = !!comments?.some((c) => c.id === editor?.open?.id && c.anchorId === activeId);
+		const grown = at < last && (reading || writing) ? at : -1;
+		const fitted = rowHeights(usual, grown, grown === -1 ? 0 : neededHeight(grown), room, floors);
+		// the last row fills what is left whatever its entry says: keep there the height it takes once a row opens beneath it
+		fitted[last] = tight[last];
+		heights = fitted;
 	}
 
 	/** @type {ReturnType<typeof setTimeout> | undefined} */
@@ -181,7 +191,7 @@
 	/** id of the paragraph being edited in place (double-click), or null */
 	/** @type {string | null} */
 	let editing = $state(null);
-	/** id of the section whose title is being edited in place (double-click), or null */
+	/** id of the section whose title is being edited in place (a section just added), or null */
 	/** @type {string | null} */
 	let titleEditId = $state(null);
 	/** where the caret goes when editing starts: the character nearest the double-click */
@@ -208,28 +218,6 @@
 		if (changed) onrename?.({ id, title: /** @type {string} */ (title).trim() });
 		onleave?.(id, changed);
 	}
-
-	/** @type {ReturnType<typeof setTimeout> | undefined} */
-	let clickTimer;
-	/** a title edit waiting for writing mode to be on (a double-click while reading) @type {string | null} */
-	let pendingTitleEdit = null;
-	/** @param {string} id */
-	function editTitle(id) {
-		clearTimeout(clickTimer);
-		if (!onrename) {
-			// reading: ask the page for writing mode, which then opens the title for editing
-			pendingTitleEdit = id;
-			return onwrite?.(id);
-		}
-		editHover.clear();
-		gap.clear();
-		titleEditId = id;
-	}
-	$effect(() => {
-		if (!onrename || !pendingTitleEdit) return;
-		titleEditId = pendingTitleEdit;
-		pendingTitleEdit = null;
-	});
 
 	/** @param {string} id @param {string | null} text */
 	function finishEdit(id, text) {
@@ -495,8 +483,10 @@
 				if (oninject) gap.open = true;
 			} else if (e.key === 'Enter' && oncomment && type === 'paragraph' && e.target === el) {
 				e.preventDefault();
-				oncomment(id);
-			} else if (e.key === 'Enter' && onedit && type === 'paragraph' && e.target === el) {
+				pickParagraph(id, el);
+			} else if (e.key === 'Enter' && type === 'paragraph' && e.target === el) {
+				closeBeside(el);
+				if (!onedit) return;
 				e.preventDefault();
 				editCaret = paragraphs.find((p) => p.id === id)?.text.length ?? 0;
 				editHover.clear();
@@ -624,6 +614,37 @@
 	}
 
 	/**
+	 * Where a focused paragraph bubble is widened (reading), taking its focus at a press on a section bubble would narrow
+	 * it, slide the bubble out from under the pointer and lose the click: the focus stays until the click moves it.
+	 * @param {MouseEvent} e
+	 */
+	function keepWide(e) {
+		if (!ondelete && !comments && document.activeElement?.closest('.hv-rows [data-node]:not([data-section])')) e.preventDefault();
+	}
+
+	/**
+	 * Close the section open in the row holding `el` (a paragraph bubble), and with it every row beneath.
+	 * @param {Element} el
+	 */
+	function closeBeside(el) {
+		const d = Number(el.closest('[data-row]')?.getAttribute('data-row') ?? rows.length);
+		if (selected.length > d) selected = selected.slice(0, d);
+	}
+
+	/**
+	 * A paragraph bubble was clicked: the section beside it closes, and in commenting mode the comment is begun.
+	 * @param {string} id
+	 * @param {HTMLElement} el
+	 */
+	async function pickParagraph(id, el) {
+		closeBeside(el);
+		if (!oncomment) return;
+		// (once the rows have gone: a comment placed in one of them opens it again)
+		await tick();
+		oncomment(id);
+	}
+
+	/**
 	 * Open a section and every section around it (`ids`, outermost first), as if each
 	 * had been clicked in turn, and bring the opened containers into view. Used by the
 	 * minimap.
@@ -699,7 +720,8 @@
 		}}
 		onclick={(e) => {
 			setCursor(node.paragraph.id, 'paragraph');
-			if (oncomment && isCommentClick(e)) oncomment(node.paragraph.id);
+			// (not for a link or footnote mark in it, a selection of its words, or a click in its editor)
+			if (editing !== node.paragraph.id && isCommentClick(e)) pickParagraph(node.paragraph.id, e.currentTarget);
 		}}
 		{...(editing === node.paragraph.id ? {} : dragAttrs(node.paragraph.id, 'paragraph', stacked ? 'y' : 'x'))}
 		ondblclick={onedit || onwrite
@@ -825,26 +847,20 @@
 						{...titleEditId === node.id ? {} : dragAttrs(node.id, 'section', 'x')}
 						data-level={node.level}
 						data-open={isOpen}
+						onmousedown={keepWide}
 						onclick={(/** @type {MouseEvent & { currentTarget: HTMLElement }} */ e) => {
 							if (titleEditId === node.id) return;
 							setCursor(node.id, 'section');
-							const el = e.currentTarget;
 							// opening or closing rebuilds the rows beneath, so take focus back afterwards
-							const run = () =>
-								toggle(d, node.id, el).then(() => {
-									if (cursor?.id === node.id) focusCursor();
-								});
-							// where a double-click edits the title, the toggle waits a moment for a second click
-							clearTimeout(clickTimer);
-							if (onrename || onwrite) clickTimer = setTimeout(run, 260);
-							else run();
+							toggle(d, node.id, e.currentTarget).then(() => {
+								if (cursor?.id === node.id) focusCursor();
+							});
 						}}
-						ondblclick={onrename || onwrite ? () => editTitle(node.id) : undefined}
 						onpointerenter={ondelete ? (e) => pointerMoved(e) && editHover.enter({ id: node.id, kind: 'section', el: e.currentTarget }) : undefined}
 						onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
 						aria-expanded={isOpen}
 						style="--c: {colors.get(node.id)}"
-						class="my-2 {isOpen ? 'flex' : 'flow-root'} max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'} {notesOn.has(node.id) ? 'min-w-56' : ''}"
+						class="my-2 {isOpen ? 'flex' : 'flow-root'} max-h-[calc(100%-1rem)] shrink-0 items-start self-start gap-3 overflow-hidden rounded-md border-2 border-(--c) px-4 py-3 text-left [box-shadow:var(--sx,0px)_3px_3px_var(--color-taupe4)] {cursor?.type === 'gap' ? '' : 'focus:outline-2 focus:outline-offset-2 focus:outline-accent'} {isOpen ? 'font-semibold' : 'text-sm font-normal'} {dd.dragId === node.id ? 'opacity-40' : ''} {dd.classes(node.id, 'x') || (ondelete && !dd.dragId && editHover.is(node.id) ? 'outline-2 outline-offset-2 outline-taupe3' : '')} {picked?.has(node.id) ? 'outline-4 outline-offset-2 outline-accent' : marked.has(node.id) ? 'outline-4 outline-offset-2 outline-accent/60' : ''} {isOpen ? 'w-max bg-(--c) text-on-hue' : 'w-56 bg-taupe1 text-dark hover:bg-taupe2'} {ondelete ? 'pr-9' : ''} {notesOn.has(node.id) ? 'min-w-56' : ''}"
 					>
 						<!-- section label stacked above the caret, so the title starts at the very top; in a closed bubble the pair floats,
 						     and a long title wraps on into the space beneath it -->
@@ -864,7 +880,7 @@
 						     grows wide enough to show the whole title and subtitle -->
 						<span class={isOpen ? 'min-w-0 flex-1 whitespace-nowrap' : 'break-words'}>
 							{#if titleEditId === node.id}
-								<!-- double-clicked: the title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
+								<!-- a section just added: its title is edited in place; Enter saves and adds a new section after it (a sibling), which opens for editing; leaving saves, Esc cancels -->
 								<span data-placeholder="Untitled section" use:editable={{ text: node.title, onfinish: (v) => finishTitle(node.id, v), onenter: onnewitem ? (r) => onnewitem(node.id, r) : undefined }} class="flow-root min-w-8 cursor-text rounded-md bg-taupe1/70 px-2 py-0.5 break-words text-dark outline-2 outline-(--c)"></span>
 							{:else}
 								{#if t.title}{t.title}{:else}<span class="font-normal italic opacity-60">Untitled section</span>{/if}
@@ -894,17 +910,11 @@
 <!-- Rows are stacked split panes: each deeper row appears (with its divider) only
      while a section in the row above is open. -->
 {#snippet stack(/** @type {number} */ d)}
-	{#if d >= rows.length - 1}
-		<!-- the last row has no split pane around it, so it needs its own scroller -->
-		<div class="h-full overflow-auto">
-			{@render row(d)}
-		</div>
-	{:else}
-		<SplitPane direction="vertical" sized="first" initial={heights[d] ?? usualHeight(d)} min={80} max={Math.max(600, rowsHeight)}>
-			{#snippet first()}{@render row(d)}{/snippet}
-			{#snippet second()}{@render stack(d + 1)}{/snippet}
-		</SplitPane>
-	{/if}
+	<!-- the last row is alone in its pane, and stays drawn as it is when a row opens or closes beneath it -->
+	<SplitPane direction="vertical" sized="first" alone={d >= rows.length - 1} initial={heights[d] ?? ROW_H} min={48} max={Math.max(600, rowsHeight)}>
+		{#snippet first()}{@render row(d)}{/snippet}
+		{#snippet second()}{@render stack(d + 1)}{/snippet}
+	</SplitPane>
 {/snippet}
 
 <svelte:window onkeydown={onWindowKeydown} onresize={scheduleShadows} onpointerup={() => pointer(false)} onpointercancel={() => pointer(false)} ondragend={() => pointer(false)} />

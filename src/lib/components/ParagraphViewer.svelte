@@ -72,8 +72,8 @@
 	 * visible text is currently in (taupe2 at 50% opacity when outside any section).
 	 *
 	 * With `ondelete`, the main text is editable: hovering a paragraph (or a header, which
-	 * is a section) outlines it in violet and floats an editor menu above it. The request
-	 * goes to `ondelete`, which asks for confirmation.
+	 * is a section) outlines it in violet and shows its editor menu in its top right corner (rows keep room for it).
+	 * A delete request goes to `ondelete`, which asks for confirmation.
 	 *
 	 * With `onmove`, rows can be dragged: onto the space between rows (a violet line) to move
 	 * them there, or onto the first or second half of a row of the same kind to prepend or
@@ -773,7 +773,7 @@
 	</div>
 {/if}
 
-{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} inside />{/if}
+{#if ondelete}<EditMenu hover={editHover} {ondelete} {onexpand} />{/if}
 <DropTip {dd} />
 {#if oninject}<GapMenu {gap} {oninject} />{/if}
 
@@ -848,7 +848,7 @@
 						? (e) => pointerMoved(e) && editHover.enter({ id: para.id, kind: (para.level ?? 0) > 0 ? 'section' : 'paragraph', el: e.currentTarget })
 						: undefined}
 					onpointerleave={ondelete ? (e) => pointerMoved(e) && editHover.leave() : undefined}
-					class="para-row flex gap-2 rounded py-1.5 pl-1 pr-1 {oncomment ? 'cursor-pointer hover:bg-accent/10' : ''} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')} {picked?.has(para.id) ? 'bg-accent/25 outline-2 outline-accent' : marked.has(para.id) ? 'bg-accent/15' : ''}"
+					class="para-row flex gap-2 rounded py-1.5 pl-1 {ondelete ? 'min-h-12.5 pr-8' : 'pr-1'} {oncomment ? 'cursor-pointer hover:bg-accent/10' : ''} {cursor?.type === 'gap' ? 'focus:outline-0' : 'focus:outline-2 focus:outline-accent'} {dd.dragId === para.id ? 'opacity-40' : ''} {dd.classes(para.id, 'y') || (ondelete && !dd.dragId && editHover.is(para.id) ? 'bg-grey2/15 outline-2 outline-taupe3' : '')} {picked?.has(para.id) ? 'bg-accent/25 outline-2 outline-accent' : marked.has(para.id) ? 'bg-accent/15' : ''}"
 				>
 					<span class="text-xs text-gray-500">{para.originalIndex}</span>
 					{#if editing === para.id}

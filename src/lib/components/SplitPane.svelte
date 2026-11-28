@@ -10,6 +10,8 @@
 	 *   or 'first'. The other pane takes the remaining space.
 	 * - `collapsed` hides the sized pane. Grabbing the handle (or pressing the arrow
 	 *   key that grows the pane) expands it again.
+	 * - `alone` (with `sized` 'first'): the first pane takes the whole of it, with no handle and no
+	 *   second pane. The first pane's contents stay as they are when a second pane comes or goes.
 	 *
 	 * @type {{
 	 *   first: import('svelte').Snippet,
@@ -19,7 +21,8 @@
 	 *   initial?: number,
 	 *   min?: number,
 	 *   max?: number,
-	 *   collapsed?: boolean
+	 *   collapsed?: boolean,
+	 *   alone?: boolean
 	 * }}
 	 */
 	let {
@@ -30,18 +33,20 @@
 		initial = 320,
 		min = 160,
 		max = 800,
-		collapsed = $bindable(false)
+		collapsed = $bindable(false),
+		alone = false
 	} = $props();
 
 	const horizontal = $derived(direction === 'horizontal');
 	let size = $state(initial);
-	// a new `initial` (the pane's content now needs a different height) resizes the pane; otherwise a dragged size stays
-	let given = untrack(() => initial);
+	// a new `initial` (the pane's content now needs a different height) resizes the pane, as does a second pane coming
+	// back; otherwise a dragged size stays
+	let given = untrack(() => (alone ? undefined : initial));
 	$effect.pre(() => {
-		const next = initial;
+		const next = alone ? undefined : initial;
 		if (next === given) return;
 		given = next;
-		untrack(() => (size = next));
+		if (next !== undefined) untrack(() => (size = next));
 	});
 	let dragging = $state(false);
 	/** @type {HTMLDivElement | undefined} */
@@ -89,8 +94,8 @@
 
 {#snippet sizedPane(/** @type {import('svelte').Snippet} */ content)}
 	<div
-		class="shrink-0 {collapsed ? 'overflow-hidden' : 'overflow-auto'} {dragging ? '' : horizontal ? 'transition-[width] duration-200' : 'transition-[height] duration-200'}"
-		style={sizedStyle}
+		class="{alone ? 'min-h-0 min-w-0 flex-1' : 'shrink-0'} {collapsed ? 'overflow-hidden' : 'overflow-auto'} {dragging || alone ? '' : horizontal ? 'transition-[width] duration-200' : 'transition-[height] duration-200'}"
+		style={alone ? '' : sizedStyle}
 		inert={collapsed}
 	>
 		{@render content()}
@@ -113,25 +118,27 @@
 		{@render flexPane(first)}
 	{/if}
 
-	<!-- Drag handle -->
-	<div
-		role="separator"
-		aria-orientation={horizontal ? 'vertical' : 'horizontal'}
-		aria-valuenow={collapsed ? 0 : size}
-		aria-valuemin={min}
-		aria-valuemax={max}
-		tabindex="0"
-		onpointerdown={onPointerDown}
-		onpointermove={onPointerMove}
-		onpointerup={onPointerUp}
-		onpointercancel={onPointerUp}
-		onkeydown={onKeydown}
-		class="shrink-0 touch-none transition-colors hover:bg-accent {horizontal ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'} {dragging ? 'bg-accent' : 'bg-taupe2'}"
-	></div>
+	{#if !alone}
+		<!-- Drag handle -->
+		<div
+			role="separator"
+			aria-orientation={horizontal ? 'vertical' : 'horizontal'}
+			aria-valuenow={collapsed ? 0 : size}
+			aria-valuemin={min}
+			aria-valuemax={max}
+			tabindex="0"
+			onpointerdown={onPointerDown}
+			onpointermove={onPointerMove}
+			onpointerup={onPointerUp}
+			onpointercancel={onPointerUp}
+			onkeydown={onKeydown}
+			class="shrink-0 touch-none transition-colors hover:bg-accent {horizontal ? 'w-1 cursor-col-resize' : 'h-1 cursor-row-resize'} {dragging ? 'bg-accent' : 'bg-taupe2'}"
+		></div>
 
-	{#if sized === 'first'}
-		{@render flexPane(second)}
-	{:else}
-		{@render sizedPane(second)}
+		{#if sized === 'first'}
+			{@render flexPane(second)}
+		{:else}
+			{@render sizedPane(second)}
+		{/if}
 	{/if}
 </div>

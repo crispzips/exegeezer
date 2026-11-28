@@ -2,6 +2,7 @@ export * from './schema';
 import { relations } from "drizzle-orm";
 import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
+import { randomThemeColors } from "../../personaColors.js";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -288,6 +289,8 @@ export const persona = pgTable("persona", {
   description: text("description"),
   // address of the persona's picture (null = none)
   image: text("image"),
+  // its colour in each appearance theme (see personaColors.js), picked at random for a new persona
+  themeColors: jsonb("theme_colors").$defaultFn(() => randomThemeColors()),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

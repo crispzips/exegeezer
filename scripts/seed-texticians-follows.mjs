@@ -1,7 +1,7 @@
-// Dev-only: gives the five seeded texticians (scripts/seed-texticians.mjs) a web of follow relationships.
+// Dev-only: gives the nine seeded texticians (scripts/seed-texticians.mjs) a web of follow relationships.
 //   node scripts/seed-texticians-follows.mjs
 // A fixed, hand-picked pattern: some mutual, some one-way, some followed by many, one followed by none.
-// Safe to re-run: it replaces the follows among these five accounts and touches nothing else.
+// Safe to re-run: it replaces the follows among these nine accounts and touches nothing else.
 // Refuses to touch any database that isn't on localhost.
 import dotenv from 'dotenv';
 import postgres from 'postgres';
@@ -12,7 +12,17 @@ const host = new URL(DATABASE_URL ?? 'x://').hostname;
 if (!['localhost', '127.0.0.1', '::1'].includes(host)) throw new Error(`Refusing: database host "${host}" is not local`);
 
 // follower -> the users they follow (by the number in the email address)
-const FOLLOWS = { 2: [3, 4, 6], 3: [2, 5], 4: [2], 5: [2, 3, 6], 6: [5] };
+const FOLLOWS = {
+	2: [3, 4, 6, 7, 8, 9],
+	3: [2, 5, 4, 7, 8],
+	4: [2, 3, 7, 9],
+	5: [2, 3, 6, 7, 8],
+	6: [5, 2, 3],
+	7: [2, 3, 5, 8],
+	8: [7, 9, 3, 6],
+	9: [2, 7, 8, 4],
+	10: [2, 3, 7, 9]
+};
 const emailOf = (n) => `execgeezer+user${n}@gmail.com`;
 
 const sql = postgres(DATABASE_URL);
@@ -29,7 +39,7 @@ try {
 			n++;
 		}
 	}
-	console.log(`${n} follows among Geezer2-6`);
+	console.log(`${n} follows among Geezer2-10`);
 } finally {
 	await sql.end();
 }

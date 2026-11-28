@@ -1,9 +1,9 @@
-// Dev-only: gives the five seeded texticians (scripts/seed-texticians.mjs) persistent texts of varying length.
+// Dev-only: gives the nine seeded texticians (scripts/seed-texticians.mjs) persistent texts of varying length.
 //   node scripts/seed-texticians-texts.mjs
-// Each account gets 3-10 texts. Everything is a plain test label (titles, section and paragraph titles and
+// Each account gets 6-20 texts (12 on average). Everything is a plain test label (titles, section and paragraph titles and
 // descriptions, bodies): no AI-written content. Statuses, visibility and comment policies are spread across
-// the allowed values by a fixed pattern. Safe to re-run: it replaces the texts it made before (titles starting
-// "Test text") and touches nothing else. Refuses to touch any database that isn't on localhost.
+// the allowed values by a fixed pattern. Safe to re-run: it makes only the texts that aren't there yet (by title),
+// so ones made before, with any edits and commentaries since, are left alone. Refuses to touch any database that isn't on localhost.
 import { randomUUID } from 'node:crypto';
 import dotenv from 'dotenv';
 import postgres from 'postgres';
@@ -15,8 +15,8 @@ if (!['localhost', '127.0.0.1', '::1'].includes(host)) throw new Error(`Refusing
 
 const STATUSES = ['idea', 'draft', 'under review', 'published'];
 const POLICIES = ['authors', 'invitation', 'request', 'anyone'];
-// how many texts each account gets (3-10)
-const COUNTS = { 2: 4, 3: 7, 4: 3, 5: 10, 6: 6 };
+// how many texts each account gets
+const COUNTS = { 2: 8, 3: 14, 4: 6, 5: 20, 6: 12, 7: 9, 8: 16, 9: 11, 10: 12 };
 // paragraph counts cycle through these, so lengths vary from a single paragraph to a few dozen
 const LENGTHS = [1, 3, 6, 12, 2, 24, 5, 40, 9, 4];
 const FILLER = 'Test sentence. ';
@@ -29,26 +29,20 @@ try {
 		if (!u) { console.log(`Skipping user${n}: not found (run seed-texticians.mjs first)`); continue; }
 		const [self] = await sql`select persona_id from user_persona where user_id = ${u.id} and is_self`;
 
-		// remove what an earlier run made, including content nothing else uses
-		const old = await sql`select id from text where user_id = ${u.id} and title like 'Test text %'`;
-		if (old.length) {
-			const ids = old.map((r) => r.id);
-			const ps = await sql`select paragraph_id as id from text_item where text_id in ${sql(ids)} and paragraph_id is not null`;
-			const ss = await sql`select section_id as id from text_item where text_id in ${sql(ids)} and section_id is not null`;
-			await sql`delete from text where id in ${sql(ids)}`;
-			if (ps.length) await sql`delete from paragraph where id in ${sql(ps.map((r) => r.id))} and not exists (select 1 from text_item where paragraph_id = paragraph.id)`;
-			if (ss.length) await sql`delete from section where id in ${sql(ss.map((r) => r.id))} and not exists (select 1 from text_item where section_id = section.id)`;
-		}
-
+		let made = 0;
 		for (let k = 1; k <= count; k++) {
 			const label = `U${n}-${k}`;
 			const nParas = LENGTHS[(k - 1 + Number(n)) % LENGTHS.length];
+			const title = `Test text ${label} (${nParas} paragraph${nParas === 1 ? '' : 's'})`;
+			const [existing] = await sql`select 1 from text where user_id = ${u.id} and title = ${title}`;
+			if (existing) continue;
+			made++;
 			const status = STATUSES[(k + Number(n)) % STATUSES.length];
 			const visibility = status === 'published' || k % 3 === 0 ? 'public' : 'private';
 			const policy = POLICIES[(k * 3 + Number(n)) % POLICIES.length];
 			const [t] = await sql`
 				insert into text (user_id, persona_id, title, production_status, visibility, comment_policy)
-				values (${u.id}, ${self.persona_id}, ${`Test text ${label} (${nParas} paragraph${nParas === 1 ? '' : 's'})`}, ${status}, ${visibility}, ${policy})
+				values (${u.id}, ${self.persona_id}, ${title}, ${status}, ${visibility}, ${policy})
 				returning id`;
 			await sql`insert into text_author (text_id, persona_id, position) values (${t.id}, ${self.persona_id}, 0)`;
 
@@ -75,7 +69,7 @@ try {
 				}
 			}
 		}
-		console.log(`user${n}: ${count} texts`);
+		console.log(`user${n}: ${count} texts (${made} new)`);
 	}
 } finally {
 	await sql.end();

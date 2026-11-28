@@ -12,6 +12,7 @@
 import { createHash } from 'node:crypto';
 import dotenv from 'dotenv';
 import postgres from 'postgres';
+import { randomThemeColors } from '../src/lib/personaColors.js';
 import { commentaryTitle } from '../src/lib/textStatus.js';
 
 dotenv.config();
@@ -96,7 +97,7 @@ try {
 			const label = `${holders.length > 1 ? 'shared ' : ''}U${key}`;
 			const name = `Test persona ${label}`;
 			await sql`
-				insert into persona (id, name, description) values (${id}, ${name}, ${`Test persona description ${label}`})
+				insert into persona (id, name, description, theme_colors) values (${id}, ${name}, ${`Test persona description ${label}`}, ${sql.json(randomThemeColors())})
 				on conflict (id) do update set name = excluded.name, description = excluded.description`;
 			for (const h of holders) await sql`insert into user_persona (user_id, persona_id) values (${users[h].id}, ${id}) on conflict do nothing`;
 			personae[key] = { id, name };

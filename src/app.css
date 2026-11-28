@@ -305,6 +305,21 @@ body {
 }
 :root[data-theme="taupe"] { color-scheme: light; }
 
+/* A persona (or a user, shown as their "self") without a picture: the silhouette is tinted the persona's colour for
+   the theme in effect. The element carries all of them (personaColors.js `tintStyle`); one with none stays taupe. */
+.persona-tint { --persona-color: var(--tint-taupe, var(--color-taupe4)); }
+:root[data-theme="soft"] .persona-tint { --persona-color: var(--tint-soft, var(--color-taupe4)); }
+:root[data-theme="rose"] .persona-tint { --persona-color: var(--tint-rose, var(--color-taupe4)); }
+:root[data-theme="dark"] .persona-tint { --persona-color: var(--tint-dark, var(--color-taupe4)); }
+:root[data-theme="cyber"] .persona-tint { --persona-color: var(--tint-cyber, var(--color-taupe4)); }
+:root[data-theme="fluorescent"] .persona-tint { --persona-color: var(--tint-fluorescent, var(--color-taupe4)); }
+.persona-tint {
+  background: color-mix(in srgb, var(--persona-color) 22%, var(--color-taupe1));
+  border-color: var(--persona-color);
+}
+/* a step toward the theme's ink, so that pale hues still show on their own tint */
+.persona-tint svg[fill="currentColor"] { color: color-mix(in srgb, var(--persona-color) 80%, var(--color-taupe5)); }
+
 /* Rendered Markdown in the linear viewer (Tailwind's reset removes these defaults) */
 .md > :first-child { margin-top: 0; }
 .md > :last-child { margin-bottom: 0; }

@@ -5,13 +5,13 @@ import { OWNERS } from '#lib/server/ownership.js';
 
 /**
  * What a user card shows about another user, and how they relate to the viewer.
- * @typedef {{ id: string, name: string, image: string | null, bio: string, publicTexts: number, memberSince: string, relations: string[], following: boolean }} Card
+ * @typedef {{ id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, memberSince: string, relations: string[], following: boolean }} Card
  */
 
 /**
  * What a persona card shows. `mine`: the persona is one of the viewer's own. `following`: the viewer follows it,
  * by itself or (`viaUser`) by following a user who has it.
- * @typedef {{ id: string, name: string, image: string | null, bio: string, publicTexts: number, mine: boolean, relations: string[], following: boolean, viaUser: boolean }} PersonaCard
+ * @typedef {{ id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, mine: boolean, relations: string[], following: boolean, viaUser: boolean }} PersonaCard
  */
 
 const LIMIT = 60;
@@ -72,7 +72,7 @@ export async function personaCardsFor(ids, me) {
 	const rel = await relatedPersonaIds(me);
 	const rows = /** @type {any[]} */ (
 		await db.execute(sql`
-			select p.id, coalesce(nullif(su.name, ''), p.name) as name, coalesce(p.image, su.image) as image, p.description as bio,
+			select p.id, coalesce(nullif(su.name, ''), p.name) as name, coalesce(p.image, su.image) as image, p.theme_colors as colors, p.description as bio,
 				exists (select 1 from user_persona m where m.persona_id = p.id and m.user_id = ${me}) as mine,
 				exists (select 1 from user_persona up join follow f on f.kind = 'user' and f.target_id = up.user_id
 					where up.persona_id = p.id and f.follower_id = ${me}) as "viaUser",
@@ -98,6 +98,7 @@ export async function personaCardsFor(ids, me) {
 				id,
 				name: r.name,
 				image: r.image ?? null,
+				colors: r.colors ?? null,
 				bio: r.bio ?? '',
 				publicTexts: r.publicTexts,
 				mine: r.mine,
@@ -119,11 +120,13 @@ export async function cardsFor(ids, me) {
 	const rel = await relatedIds(me);
 	const rows = /** @type {any[]} */ (
 		await db.execute(sql`
-			select u.id, u.name, u.image, u.created_at as "createdAt",
-				(select p.description from user_persona up join persona p on p.id = up.persona_id where up.user_id = u.id and up.is_self) as bio,
+			select u.id, u.name, u.image, u.created_at as "createdAt", s.theme_colors as colors, s.description as bio,
 				(select count(*)::int from ${OWNERS} o join text t on t.id = o.text_id
 						where o.user_id = u.id and t.visibility = 'public' and t.production_status = 'published') as "publicTexts"
-			from "user" u where u.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}`)
+			from "user" u
+				left join user_persona us on us.user_id = u.id and us.is_self
+				left join persona s on s.id = us.persona_id
+			where u.id in ${sql`(${sql.join(ids.map((i) => sql`${i}`), sql`, `)})`}`)
 	);
 	const byId = new Map(rows.map((r) => [r.id, r]));
 	return ids
@@ -139,6 +142,7 @@ export async function cardsFor(ids, me) {
 				id,
 				name: r.name,
 				image: r.image ?? null,
+				colors: r.colors ?? null,
 				bio: r.bio ?? '',
 				publicTexts: r.publicTexts,
 				memberSince: new Date(r.createdAt).toISOString(),

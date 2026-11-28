@@ -1,12 +1,12 @@
 <script>
-	import { User } from '@boxicons/svelte';
 	import FollowButton from '#lib/components/FollowButton.svelte';
+	import PersonaPicture from '#lib/components/PersonaPicture.svelte';
 
 	/**
 	 * A compact card for a persona (picture, name, description, relation), for the community page's browse rows.
 	 * Another user's persona has a follow button; one followed through its user can only be unfollowed there.
 	 *
-	 * @type {{ persona: { id: string, name: string, image: string | null, bio: string, publicTexts: number, mine: boolean, relations: string[], following: boolean, viaUser: boolean } }}
+	 * @type {{ persona: { id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, mine: boolean, relations: string[], following: boolean, viaUser: boolean } }}
 	 */
 	let { persona } = $props();
 
@@ -17,9 +17,7 @@
 
 <article class="flex w-56 shrink-0 flex-col gap-2 rounded-xl border border-taupe3 bg-taupe1 p-3 shadow-sm">
 	<div class="flex items-center gap-2">
-		<span class="flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-bubble border-2 border-taupe3 bg-taupe2">
-			{#if persona.image}<img src={persona.image} alt="" class="size-full object-cover" />{:else}<User />{/if}
-		</span>
+		<PersonaPicture image={persona.image} colors={persona.colors} size="size-10" />
 		<div class="min-w-0 flex-1">
 			<p class="truncate text-sm font-medium text-dark">{name}</p>
 			<p class="truncate text-xs text-grey3">{texts}</p>

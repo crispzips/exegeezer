@@ -256,6 +256,7 @@ body {
   --color-taupe1: #002b36;
   --color-taupe0: #00212b;
   --color-accent: #268bd2;
+  --accent-fade: 70%; /* the accent's share of a faded hover shade: a lighter one is lost on this page */
 }
 /* Fluorescent (original to Exegeezer): bright white, black ink, grey chrome, blue accent; the section hues are the rainbow (ROYGBIV) */
 :root[data-theme="fluorescent"] {

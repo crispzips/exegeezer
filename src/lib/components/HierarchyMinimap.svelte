@@ -15,12 +15,9 @@
 	 * Clicking a blip opens that section (and the sections around it), revealing its
 	 * children, and brings the opened containers into view.
 	 *
-	 * Two violet markers show where you are:
-	 *  - a box around the text currently on screen in the bottommost open row of
-	 *    containers (the most granular one); where what is on screen skips over some
-	 *    text, there is a box for each stretch
-	 *  - a line, drawn as a double line like the marker of the vertical Global Linear
-	 *    Minimap, at the start of the deepest section that is open
+	 * A violet box shows where you are: around the text currently on screen in the
+	 * bottommost open row of containers (the most granular one). Where what is on
+	 * screen skips over some text, there is a box for each stretch.
 	 *
 	 * Hovering a top-level section's part of the bar (its whole area, not just the
 	 * blips) shades it in taupe2 and shows its title. Clicking that background
@@ -139,12 +136,6 @@
 
 	// The boxes: the stretches of text in view in the bottommost row, in % of the bar
 	let views = $state([{ left: 0, w: 100 }]);
-
-	/** The line: the start of the deepest open section, in % of the bar (null when none is open) */
-	let linePos = $derived.by(() => {
-		const id = [...selected].reverse().find((x) => layout.starts.has(x));
-		return id === undefined ? null : /** @type {number} */ (layout.starts.get(id)) * 100;
-	});
 
 	/**
 	 * The part of the stretch `from`..`to` that lies between `min` and `max`, as two
@@ -344,7 +335,7 @@
 			></div>
 		{/each}
 
-		<!-- Marker 1, the boxes: the text currently in view in the bottommost row -->
+		<!-- The marker: a box round the text currently in view in the bottommost row -->
 		{#each views as view, i (i)}
 			<div
 				data-view
@@ -352,14 +343,6 @@
 				style="left: {view.left}%; width: {view.w}%"
 			></div>
 		{/each}
-
-		<!-- Marker 2, the line (a double line): the start of the deepest open section -->
-		{#if linePos !== null}
-			<div
-				class="pointer-events-none absolute inset-y-0 w-[5px] -translate-x-1/2 border-x border-accent bg-accent/20"
-				style="left: {linePos}%"
-			></div>
-		{/if}
 
 		<!-- Tooltip, above the bar. Over a blip: the section and its ancestors, one per line,
 		     outermost first. Elsewhere in a top-level section's area: its title. -->

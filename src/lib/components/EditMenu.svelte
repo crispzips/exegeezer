@@ -1,26 +1,30 @@
 <script>
 	import { tick } from 'svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { ArrowInDownRightSquare, FileCog, TrashX } from '@boxicons/svelte';
+	import { ArrowInDownRightSquare, TrashX } from '@boxicons/svelte';
 
 	/**
-	 * The editor menu that floats above the paragraph or section under the pointer.
-	 * It is positioned from the target's on-screen box (fixed), so scrolling panes
-	 * cannot clip it. Its first button is Delete: for a paragraph it asks to delete
-	 * it; for a section it opens a drop-down offering "this section only" or "this
-	 * section and all its descendants". Choosing either calls `ondelete`, and the
-	 * caller then asks for confirmation. The button before it, Expand, opens the item in
-	 * the editor modal (`onexpand`, given the item's current on-screen box so the modal
-	 * can grow out of it).
+	 * The editor menu of the paragraph or section under the pointer: small circles, one under another, inside the item's
+	 * top right corner. It is positioned from the target's on-screen box (fixed), so scrolling panes cannot clip it. The
+	 * first button, Expand, opens the item in the editor modal (`onexpand`, given the item's current on-screen box so the
+	 * modal can grow out of it). The last is Delete: for a paragraph it asks to delete it; for a section it opens a
+	 * drop-down offering "this section only" or "this section and all its descendants". Choosing either calls
+	 * `ondelete`, and the caller then asks for confirmation.
 	 *
 	 * @type {{
 	 *   hover: import('#lib/utilities/editHover.svelte.js').EditHover,
-	 *   inside?: boolean,
 	 *   ondelete: (req: { id: string, kind: 'paragraph' | 'section', scope?: 'only' | 'tree' }) => void,
 	 *   onexpand?: (req: { id: string, kind: 'paragraph' | 'section', from: DOMRect }) => void
 	 * }}
 	 */
-	let { hover, ondelete, onexpand = undefined, inside = false } = $props();
+	let { hover, ondelete, onexpand = undefined } = $props();
+
+	/** how far in from the item's edges the menu sits */
+	const INSET = 4;
+	// a circle sits on the item's own background, so under the pointer it takes the theme's accent, faded
+	const button = 'inline-flex h-5 w-5 items-center justify-center rounded-full border border-taupe3 bg-taupe1 shadow-sm transition-colors hover:border-accent [[data-theme=dark]_&]:hover:text-dark hover:bg-[color-mix(in_srgb,var(--color-accent)_var(--accent-fade,30%),var(--color-taupe1))]';
+	/** the delete button while its drop-down is open: shaded as under the pointer */
+	const held = 'border-accent! [[data-theme=dark]_&]:text-dark! bg-[color-mix(in_srgb,var(--color-accent)_var(--accent-fade,30%),var(--color-taupe1))]!';
 
 	function expand() {
 		if (!target) return;
@@ -36,23 +40,27 @@
 	let menuEl = $state();
 	let pos = $state({ top: 0, left: 0 });
 
-	// Follow the target; close the drop-down when the target changes. The item may grow to make room
-	// for the menu (`inside`), so it is measured once the page has settled.
+	/** Put the menu in the corner of what shows of its item, which may run out of the box it scrolls in. @param {HTMLElement} el */
+	function place(el) {
+		const r = el.getBoundingClientRect();
+		const clip = el.parentElement?.closest('.overflow-auto, .overflow-y-auto')?.getBoundingClientRect();
+		const top = Math.max(r.top, clip?.top ?? 0);
+		const right = Math.min(r.right, clip?.right ?? window.innerWidth);
+		pos = { top: top + INSET, left: right - (menuEl?.offsetWidth ?? 20) - INSET };
+	}
+
+	// Follow the target, keeping to its corner as it changes size (a section opening, a paragraph being typed into);
+	// close the drop-down when the target changes. The item is measured once the page has settled.
 	$effect(() => {
 		if (!target) return;
 		menuOpen = false;
 		const t = target;
 		tick().then(() => {
-			if (hover.target !== t) return;
-			const r = t.el.getBoundingClientRect();
-			const h = menuEl?.offsetHeight ?? 32;
-			const w = menuEl?.offsetWidth ?? 40;
-			// `inside`: in a row in the left margin, outside the item, just left of its index (the grace period lets the pointer cross);
-			// otherwise above the item, aligned to its left edge (if there is no room above, overlapping its top edge)
-			pos = inside
-				? { top: Math.max(r.top, 4), left: Math.max(4, r.left - w - 8) }
-				: { top: Math.max(4, r.top - h), left: Math.max(4, Math.min(r.left, window.innerWidth - w - 4)) };
+			if (hover.target === t) place(t.el);
 		});
+		const sizes = new ResizeObserver(() => place(t.el));
+		sizes.observe(t.el);
+		return () => sizes.disconnect();
 	});
 
 	/** @param {'only' | 'tree' | undefined} scope */
@@ -76,21 +84,21 @@
 		tabindex="-1"
 		onpointerenter={() => hover.hold()}
 		onpointerleave={() => hover.leave()}
-		class="fixed z-40 flex items-center gap-1 rounded-md border border-taupe2 bg-taupe1 p-1 shadow-lg"
+		class="fixed z-40 flex flex-col items-center gap-0.5"
 		style="top: {pos.top}px; left: {pos.left}px"
 	>
 		{#if onexpand}
 			<button
 				type="button"
-				aria-label={inside ? (target.kind === 'section' ? 'Section settings' : 'Paragraph settings') : target.kind === 'section' ? 'Expand section' : 'Expand paragraph'}
-				use:tip={inside ? 'Settings' : 'Expand'}
+				aria-label={target.kind === 'section' ? 'Expand section' : 'Expand paragraph'}
+				use:tip={'Expand'}
 				onclick={expand}
-				class="inline-flex items-center justify-center rounded-md p-1 text-dark hover:bg-taupe2"
+				class="{button} text-dark"
 			>
-				{#if inside}<FileCog />{:else}<ArrowInDownRightSquare />{/if}
+				<ArrowInDownRightSquare width={13} height={13} />
 			</button>
 		{/if}
-		<div class="relative">
+		<div class="relative flex">
 			<button
 				type="button"
 				aria-label={target.kind === 'section' ? 'Delete section' : 'Delete paragraph'}
@@ -98,9 +106,9 @@
 				aria-haspopup={target.kind === 'section' ? 'menu' : undefined}
 				aria-expanded={target.kind === 'section' ? menuOpen : undefined}
 				onclick={() => (target.kind === 'section' ? (menuOpen = !menuOpen) : choose(undefined))}
-				class="inline-flex items-center justify-center rounded-md p-1 text-red hover:bg-taupe2 {menuOpen ? 'bg-taupe2' : ''}"
+				class="{button} text-red {menuOpen ? held : ''}"
 			>
-				<TrashX />
+				<TrashX width={13} height={13} />
 			</button>
 
 			{#if menuOpen && target.kind === 'section'}

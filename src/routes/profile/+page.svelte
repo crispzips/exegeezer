@@ -97,14 +97,14 @@
 	let detailId = $state('');
 	const detail = $derived(data.personae.find((x) => x.id === detailId));
 	/** values being edited in the persona modal; each field saves when you leave it */
-	let pdraft = $state({ name: '', image: '', description: '' });
+	let pdraft = $state({ name: '', image: '', description: '', pseudonymous: false });
 	/** the field open for editing ('' = none: the modal reads like a display) */
 	let pfield = $state('');
 	/** @type {HTMLFormElement | undefined} */
 	let personaFormEl;
 	function resetPersonaDraft() {
 		const d = data.personae.find((x) => x.id === detailId);
-		if (d) pdraft = { name: d.name, image: d.image ?? '', description: d.description ?? '' };
+		if (d) pdraft = { name: d.name, image: d.image ?? '', description: d.description ?? '', pseudonymous: d.pseudonymous };
 	}
 	function openDetail(id) {
 		detailId = id;
@@ -120,6 +120,11 @@
 		if (!d) return;
 		const same = pdraft.name.trim() === d.name && pdraft.image.trim() === (d.image ?? '') && pdraft.description.trim() === (d.description ?? '');
 		if (same) return;
+		await tick(); // as in commitField
+		personaFormEl?.requestSubmit();
+	}
+	/** the pseudonymous box saves as soon as it is changed */
+	async function savePseudonymous() {
 		await tick(); // as in commitField
 		personaFormEl?.requestSubmit();
 	}
@@ -330,6 +335,7 @@
 							<input type="hidden" name="name" value={pdraft.name} />
 							<input type="hidden" name="image" value={pdraft.image} />
 							<input type="hidden" name="description" value={pdraft.description} />
+							<input type="hidden" name="pseudonymous" value={pdraft.pseudonymous ? '1' : '0'} />
 
 							<div class="flex items-center gap-4">
 								{#if detail.image}
@@ -404,6 +410,19 @@
 								{/if}
 							</div>
 
+							<div class="px-2">
+								{#if detail.isSelf}
+									<span class="text-grey3">Pseudonymous</span>
+									<p class="mt-0.5 text-xs text-grey3">No: your "self" persona is you.</p>
+								{:else}
+									<label class="flex items-center gap-2">
+										<input type="checkbox" bind:checked={pdraft.pseudonymous} onchange={savePseudonymous} />
+										Pseudonymous
+									</label>
+									<p class="mt-1 text-xs text-grey3">{pdraft.pseudonymous ? "Others aren't shown that this persona is yours." : "This persona's page shows that it is yours, and your page lists it."}</p>
+								{/if}
+							</div>
+
 							<div>
 								<span class="px-2 text-grey3">Texts authored ({detail.texts.length})</span>
 								{#if detail.texts.length}
@@ -452,6 +471,11 @@
 					<h2 class="text-base font-semibold text-dark">New persona</h2>
 					<input name="name" placeholder="Name" value={form?.personaName ?? ''} class="rounded-md px-2 py-1" />
 					<textarea name="description" rows="2" placeholder="Description (optional)" class="rounded-md px-2 py-1">{form?.personaDescription ?? ''}</textarea>
+					<label class="flex items-center gap-2">
+						<input type="checkbox" name="pseudonymous" value="1" checked />
+						Pseudonymous
+					</label>
+					<p class="text-xs text-grey3">Others aren't shown that a pseudonymous persona is yours.</p>
 					{#if form?.personaMessage}<p role="alert" class="text-red">{form.personaMessage}</p>{/if}
 					<div class="mt-2 flex justify-end gap-2">
 						<button type="button" onclick={() => personaDialog?.close()} class="rounded-md px-3 py-1.5 hover:bg-taupe2">Cancel</button>

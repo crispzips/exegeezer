@@ -25,7 +25,7 @@ export async function ensureSelfPersona(userId) {
 			.innerJoin(persona, eq(userPersona.personaId, persona.id))
 			.where(and(eq(userPersona.userId, userId), eq(userPersona.isSelf, true)));
 		if (existing) return;
-		const [created] = await tx.insert(persona).values({ name: SELF }).returning({ id: persona.id });
+		const [created] = await tx.insert(persona).values({ name: SELF, pseudonymous: false }).returning({ id: persona.id });
 		await tx.insert(userPersona).values({ userId, personaId: created.id, isSelf: true });
 	});
 }

@@ -31,7 +31,7 @@ try {
 
 		let made = 0;
 		for (let k = 1; k <= count; k++) {
-			const label = `U${n}-${k}`;
+			const label = `G${n}-${k}`;
 			const nParas = LENGTHS[(k - 1 + Number(n)) % LENGTHS.length];
 			const title = `Test text ${label} (${nParas} paragraph${nParas === 1 ? '' : 's'})`;
 			const [existing] = await sql`select 1 from text where user_id = ${u.id} and title = ${title}`;

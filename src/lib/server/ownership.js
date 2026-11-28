@@ -32,6 +32,21 @@ export const OWNERS = sql`(
 )`;
 
 /**
+ * Who a text may be shown to others as belonging to: like `OWNERS`, but leaving out every tie that would say whose a
+ * pseudonymous persona is. Use it for anything one user is told about another; `OWNERS` is for what a user may do.
+ * A text with no authors is credited to the account it is saved under.
+ */
+export const CREDITED = sql`(
+	select t.id as text_id, t.user_id from text t
+		where t.user_id is not null and not exists (select 1 from text_author a where a.text_id = t.id)
+	union
+	select a.text_id, up.user_id from text_author a
+		join persona p on p.id = a.persona_id
+		join user_persona up on up.persona_id = a.persona_id
+		where up.is_self or not p.pseudonymous
+)`;
+
+/**
  * Before an account is deleted (which deletes the texts saved under it): save the ones it shares under another of
  * their owners, so they stay.
  * @param {string} uid

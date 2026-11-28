@@ -291,6 +291,9 @@ export const persona = pgTable("persona", {
   image: text("image"),
   // its colour in each appearance theme (see personaColors.js), picked at random for a new persona
   themeColors: jsonb("theme_colors").$defaultFn(() => randomThemeColors()),
+  // a pseudonymous persona doesn't say whose it is: nothing shown to other users ties it to its users. A "self" is
+  // its user, so it never is (readers also treat any self as not pseudonymous, whatever this says)
+  pseudonymous: boolean("pseudonymous").default(true).notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at")
     .defaultNow()

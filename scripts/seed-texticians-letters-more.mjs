@@ -90,7 +90,7 @@ try {
 		}
 		for (const [key, holders] of Object.entries(PERSONAE)) {
 			const id = idFor(`persona:${key}`);
-			const label = `${holders.length > 1 ? 'shared ' : ''}U${key}`;
+			const label = `${holders.length > 1 ? 'shared ' : ''}G${key}`;
 			const name = `Test persona ${label}`;
 			await sql`
 				insert into persona (id, name, description, theme_colors) values (${id}, ${name}, ${`Test persona description ${label}`}, ${sql.json(randomThemeColors())})

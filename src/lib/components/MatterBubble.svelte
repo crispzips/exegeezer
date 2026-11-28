@@ -3,7 +3,8 @@
 	/**
 	 * A front or back matter section as a small bubble in the hierarchical view's top row.
 	 * Clicking it opens the section's text in a panel beneath the bubble (which floats over
-	 * the rows below, so the layout does not move); clicking it again, or anywhere else, closes it.
+	 * the rows below, so the layout does not move); clicking it again, or anywhere else, closes it,
+	 * as does scrolling anything but the panel (which is fixed, and would be left behind its bubble).
 	 *
 	 * @type {{ section: { id: string, title: string, paragraphs: { id: string, text: string, level?: number }[] } }}
 	 */
@@ -11,6 +12,8 @@
 
 	/** @type {HTMLButtonElement | undefined} */
 	let button = $state();
+	/** @type {HTMLDivElement | undefined} */
+	let panel = $state();
 	let open = $state(false);
 	let at = $state({ left: 0, top: 0 });
 
@@ -22,7 +25,7 @@
 	}
 </script>
 
-<svelte:window onclick={(e) => open && !(e.target instanceof Node && (button?.contains(e.target) || (e.target instanceof Element && e.target.closest('[data-matter-panel]')))) && (open = false)} onscrollcapture={() => (open = false)} />
+<svelte:window onclick={(e) => open && !(e.target instanceof Node && (button?.contains(e.target) || (e.target instanceof Element && e.target.closest('[data-matter-panel]')))) && (open = false)} onscrollcapture={(e) => e.target !== panel && (open = false)} />
 
 <button
 	bind:this={button}
@@ -40,8 +43,9 @@
 
 {#if open}
 	<div
+		bind:this={panel}
 		data-matter-panel
-		class="fixed z-30 max-h-[50vh] w-104 max-w-[calc(100vw-16px)] overflow-y-auto rounded-md border bg-taupe1 px-4 py-3 text-sm text-dark shadow-lg"
+		class="fixed z-30 max-h-[50vh] w-104 max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-md border bg-taupe1 px-4 py-3 text-sm text-dark shadow-lg"
 		style="left: {at.left}px; top: {at.top}px; border-color: {MATTER_COLOR}"
 	>
 		{#each section.paragraphs as p (p.id)}

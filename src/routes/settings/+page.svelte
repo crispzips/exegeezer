@@ -1,11 +1,14 @@
 <script>
-	import { Key } from '@boxicons/svelte';
+	import { Key, ChevronDown, Biceps } from '@boxicons/svelte';
+	import { slide } from 'svelte/transition';
 	import { enhance } from '$app/forms';
 	import { THEMES, currentTheme, setTheme } from '#lib/theme.js';
 	import { onMount } from 'svelte';
 
 	let { data, form } = $props();
 	let busy = $state(false);
+	// the password form is an accordion: closed at first, open to show an error, closed again once the change succeeds
+	let changing = $derived(Boolean(form?.message));
 	const field = 'rounded-md px-3 py-2';
 	// The palette shown in the active theme card, read live from the theme variables in app.css.
 	const BASE = ['taupe0', 'taupe1', 'taupe2', 'taupe3', 'taupe4', 'taupe5'];
@@ -63,37 +66,51 @@
 		</p>
 
 		<h2 class="mb-3 font-medium text-dark">Account</h2>
-		<form method="post" action="/logout" class="mb-8">
+		<form method="post" action="/logout" class="mb-3">
 			<button class="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90"><Key width={18} height={18} class="shrink-0 text-inherit!" aria-hidden="true" />Sign out</button>
 		</form>
 
 		{#if data.hasPassword}
-			<h2 class="mb-3 font-medium text-dark">Change password</h2>
-			<form
-				method="post"
-				action="?/changePassword"
-				use:enhance={() => {
-					busy = true;
-					return async ({ update }) => {
-						await update();
-						busy = false;
-					};
-				}}
-				class="flex flex-col gap-4"
+			<button
+				type="button"
+				onclick={() => (changing = !changing)}
+				aria-expanded={changing}
+				aria-controls="change-password"
+				class="inline-flex items-center gap-2 rounded-md border border-taupe3 px-4 py-2.5 font-medium text-dark hover:bg-taupe2"
 			>
-				<label class="flex flex-col gap-1 text-sm font-medium text-dark">
-					Current password
-					<input type="password" name="current" autocomplete="current-password" class={field} />
-				</label>
-				<label class="flex flex-col gap-1 text-sm font-medium text-dark">
-					New password
-					<input type="password" name="next" autocomplete="new-password" class={field} />
-					<span class="text-xs font-normal text-grey3">At least 8 characters.</span>
-				</label>
-				{#if form?.message}<p role="alert" class="text-sm text-red">{form.message}</p>{/if}
-				{#if form?.saved}<p class="text-sm text-grey3">Password changed.</p>{/if}
-				<button disabled={busy} class="rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50">Change password</button>
-			</form>
+				{#if form?.saved}<Biceps pack="filled" width={18} height={18} class="pop-in shrink-0 text-green!" aria-hidden="true" />{/if}
+				Change password
+				<ChevronDown width={18} height={18} class="shrink-0 text-inherit! transition-transform {changing ? 'rotate-180' : ''}" aria-hidden="true" />
+			</button>
+			<span role="status" class="sr-only">{form?.saved ? 'Password changed.' : ''}</span>
+			{#if changing}
+				<form
+					id="change-password"
+					transition:slide={{ duration: 200 }}
+					method="post"
+					action="?/changePassword"
+					use:enhance={() => {
+						busy = true;
+						return async ({ update }) => {
+							await update();
+							busy = false;
+						};
+					}}
+					class="flex flex-col gap-4 pt-4"
+				>
+					<label class="flex flex-col gap-1 text-sm font-medium text-dark">
+						Current password
+						<input type="password" name="current" autocomplete="current-password" class={field} />
+					</label>
+					<label class="flex flex-col gap-1 text-sm font-medium text-dark">
+						New password
+						<input type="password" name="next" autocomplete="new-password" class={field} />
+						<span class="text-xs font-normal text-grey3">At least 8 characters.</span>
+					</label>
+					{#if form?.message}<p role="alert" class="text-sm text-red">{form.message}</p>{/if}
+					<button disabled={busy} class="rounded-md bg-accent px-4 py-2.5 font-medium text-on-accent hover:bg-accent/90 disabled:opacity-50">Save new password</button>
+				</form>
+			{/if}
 		{:else}
 			<p class="text-sm text-grey3">You sign in with Google, so there is no password to change here.</p>
 		{/if}

@@ -574,13 +574,56 @@ export async function duplicateText(id, locals) {
 }
 
 /**
+ * A user's commentary on a text: the one saved under their account, else the oldest on it that they co-own.
+ * @param {Pick<typeof db, 'select'>} conn the database or a transaction
+ * @param {string} uid
+ * @param {string} textId the text commented on
+ */
+export async function commentaryBy(conn, uid, textId) {
+	const [row] = await conn
+		.select({ id: text_.id, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(text_)
+		.where(and(eq(text_.commentaryOn, textId), ownedBy(uid)))
+		.orderBy(sql`(${text_.userId} = ${uid}) desc nulls last`, asc(text_.createdAt))
+		.limit(1);
+	return row ?? null;
+}
+
+/**
+ * A new, empty commentary on a text, written as the user's "self" persona.
+ * @param {Pick<typeof db, 'delete' | 'insert' | 'update'>} conn the database or a transaction
+ * @param {{ uid: string, personaId: string | null, textId: string, title: string }} commentary
+ */
+async function createCommentary(conn, { uid, personaId, textId, title }) {
+	const [row] = await conn
+		.insert(text_)
+		.values({ userId: uid, personaId, type: 'commentary', commentaryOn: textId, title })
+		.returning({ id: text_.id, productionStatus: text_.productionStatus, visibility: text_.visibility });
+	if (personaId) await setAuthors(conn, row.id, [personaId]);
+	return row;
+}
+
+/**
+ * The id of a user's commentary on a text, made if they have none. Whether they may comment is for the caller to decide.
+ * @param {string} uid
+ * @param {{ id: string, title: string }} original the text commented on
+ */
+export async function ensureCommentary(uid, original) {
+	const personaId = await selfPersonaId(uid);
+	const title = commentaryTitle(await authorNames(original.id), original.title);
+	return db.transaction(async (tx) => {
+		const commentary = (await commentaryBy(tx, uid, original.id)) ?? (await createCommentary(tx, { uid, personaId, textId: original.id, title }));
+		return commentary.id;
+	});
+}
+
+/**
  * Leave a comment on one or more paragraphs of a text (a section is commented on by naming all its paragraphs). A commentary
  * is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
  * the commentary is created (named "Commentary on <authors>'s <title>") by the first comment, so a comment never
  * exists without a text to belong to.
  * For now only a text's owners may comment: the comment policy is not enforced yet because other people can't open
- * a text they don't own. "The requester's commentary" is the one saved under their account, else the oldest on this
- * text that they co-own.
+ * a text they don't own. Which commentary is the requester's is `commentaryBy`'s answer.
  * @param {string} textId the text commented on
  * @param {App.Locals} locals
  * @param {string[]} paragraphIds the paragraphs commented on (paragraphs of that text)
@@ -600,18 +643,12 @@ export async function addComment(textId, locals, paragraphIds, body) {
 	const title = commentaryTitle(await authorNames(textId), original.title);
 
 	return db.transaction(async (tx) => {
-		let [commentary] = await tx
-			.select({ id: text_.id, productionStatus: text_.productionStatus, visibility: text_.visibility })
-			.from(text_)
-			.where(and(eq(text_.commentaryOn, textId), ownedBy(uid)))
-			.orderBy(sql`(${text_.userId} = ${uid}) desc nulls last`, asc(text_.createdAt))
-			.limit(1);
+		let commentary = await commentaryBy(tx, uid, textId);
 		// comments are part of their commentary: once that is published and public they are frozen, and no more can be added
 		if (commentary && isPublicized(commentary)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
 		const created = !commentary;
 		if (!commentary) {
-			[commentary] = await tx.insert(text_).values({ userId: uid, personaId, type: 'commentary', commentaryOn: textId, title }).returning({ id: text_.id });
-			if (personaId) await setAuthors(tx, commentary.id, [personaId]);
+			commentary = await createCommentary(tx, { uid, personaId, textId, title });
 		}
 		const [{ n }] = await tx.select({ n: sql`count(*)::int` }).from(textItem).where(eq(textItem.textId, commentary.id));
 		const [para] = await tx.insert(paragraph).values({ body: body.trim() }).returning({ id: paragraph.id });

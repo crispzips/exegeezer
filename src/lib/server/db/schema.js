@@ -1,8 +1,9 @@
 export * from './schema';
 import { relations } from "drizzle-orm";
-import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
+import { pgTable, text, timestamp, boolean, index, uuid, integer, primaryKey, check, uniqueIndex, jsonb, foreignKey, pgView } from "drizzle-orm/pg-core";
 import { sql } from "drizzle-orm";
 import { randomThemeColors } from "../../personaColors.js";
+import { APOSTROPHES } from "../../tagNames.js";
 
 export const user = pgTable("user", {
   id: text("id").primaryKey(),
@@ -131,7 +132,7 @@ export const text_ = pgTable(
     // 'original' or 'commentary'
     type: text("type").notNull().default("original"),
     // commentaries only: the text this is a commentary on. A commentary exists only in relation to its text, so a
-    // text with commentaries can't be deleted (no action: deleting a whole account, which removes them all at once, still works).
+    // text with commentaries can't be deleted (no action: deleting a whole account still works only if nobody else has a commentary on its texts).
     commentaryOn: uuid("commentary_on").references(/** @type {() => any} */ (() => text_.id), { onDelete: "no action" }),
     // 'idea' | 'draft' | 'under review' | 'published'; new texts start as drafts
     productionStatus: text("production_status").notNull().default("draft"),
@@ -379,3 +380,154 @@ export const personaFollow = pgTable(
     index("persona_follow_personaId_idx").on(table.personaId),
   ],
 );
+
+// ---------------------------------------------------------------------------
+// Tags. A tag is just a name, and there is one of each name (ignoring case, and with every kind of apostrophe
+// alike) for everyone: no user owns a tag, and the same tag can be in many sets. A set's kind says what it is:
+// - 'global': a set we add deliberately, for everyone (the first is Thema, loaded by scripts/import-thema.mjs). What
+//   is in it is listed in `tag_set_tag`.
+// - 'personal': one for each user, made up of the tags that user has put on anything. Nothing is filed in it by hand:
+//   it is read from the tags on work (`text_tag`, `persona_tag`), so it can't fall out of step with them.
+// `tag_set_member` answers what is in a set of either kind. Users who share tags are neighbors in what they write
+// about.
+// Because tags are shared, the `tag` table holds words users typed themselves: don't offer it whole to anyone.
+// ---------------------------------------------------------------------------
+
+export const tagSet = pgTable(
+  "tag_set",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // 'personal' | 'global'
+    kind: text("kind").notNull(),
+    // personal sets only: the user whose set it is
+    ownerId: text("owner_id").references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    description: text("description"),
+    // global sets only. `key` is the fixed name an import finds the set by ('thema'); the rest say which release of
+    // the set is loaded, where it came from, its licence, and the credit to show with its tags
+    key: text("key").unique(),
+    version: text("version"),
+    sourceUrl: text("source_url"),
+    licenseUrl: text("license_url"),
+    attribution: text("attribution"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at")
+      .defaultNow()
+      .$onUpdate(() => /* @__PURE__ */ new Date())
+      .notNull(),
+  },
+  (table) => [
+    // a user has one personal set
+    uniqueIndex("tag_set_owner_idx").on(table.ownerId).where(sql`${table.ownerId} is not null`),
+    check("tag_set_kind_check", sql`${table.kind} in ('personal', 'global')`),
+    check("tag_set_owner_check", sql`(${table.kind} = 'personal') = (${table.ownerId} is not null)`),
+  ],
+);
+
+/** SQL for what a name is compared as (`matchForm` in tagNames.js, in the database) */
+export const tagMatchForm = (/** @type {any} */ name) =>
+  sql`lower(translate(${name}, ${sql.raw(`'${APOSTROPHES}'`)}, ${sql.raw(`'${"''".repeat(APOSTROPHES.length)}'`)}))`;
+
+export const tag = pgTable(
+  "tag",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // for a tag in a provided set, that set's own wording, unaltered
+    name: text("name").notNull(),
+    // the name as it is compared, kept by the database
+    matchName: text("match_name")
+      .notNull()
+      .generatedAlwaysAs(/** @returns {import("drizzle-orm").SQL} */ () => tagMatchForm(sql.identifier("name"))),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [uniqueIndex("tag_match_name_idx").on(table.matchName)],
+);
+
+// A tag's place in a global set. What is true of the tag only within that set lives here: the set's code for it, the
+// broader tag it falls under, and the set's guidance on using it.
+export const tagSetTag = pgTable(
+  "tag_set_tag",
+  {
+    tagSetId: uuid("tag_set_id")
+      .notNull()
+      .references(() => tagSet.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tag.id, { onDelete: "cascade" }),
+    // the set's own identifier for the tag (Thema's 'ABA')
+    code: text("code"),
+    // the broader tag it falls under in this set (null = top level); it must be in the same set
+    parentTagId: uuid("parent_tag_id"),
+    notes: text("notes"),
+  },
+  (table) => [
+    primaryKey({ columns: [table.tagSetId, table.tagId] }),
+    foreignKey({
+      name: "tag_set_tag_parent_fk",
+      columns: [table.tagSetId, table.parentTagId],
+      foreignColumns: [table.tagSetId, table.tagId],
+    }),
+    uniqueIndex("tag_set_tag_code_idx").on(table.tagSetId, table.code),
+    index("tag_set_tag_tagId_idx").on(table.tagId),
+    index("tag_set_tag_parent_idx").on(table.tagSetId, table.parentTagId),
+  ],
+);
+
+// The tags on a piece of work: one table for each kind of thing that can be tagged, so that deleting the thing
+// removes its tags. (Anthologies and collections get theirs when they exist.) `user_id` is who put the tag there,
+// which is what puts it in their personal set; a work's owners can each put the same tag on it.
+// Tags on a commentary describe the text it is on, not the commentary: a user's tags for someone else's text are kept
+// on their commentary on it.
+export const textTag = pgTable(
+  "text_tag",
+  {
+    textId: uuid("text_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tag.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("text_tag_idx").on(table.textId, table.tagId, table.userId),
+    index("text_tag_tagId_idx").on(table.tagId),
+    index("text_tag_userId_idx").on(table.userId),
+  ],
+);
+
+export const personaTag = pgTable(
+  "persona_tag",
+  {
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+    tagId: uuid("tag_id")
+      .notNull()
+      .references(() => tag.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    uniqueIndex("persona_tag_idx").on(table.personaId, table.tagId, table.userId),
+    index("persona_tag_tagId_idx").on(table.tagId),
+    index("persona_tag_userId_idx").on(table.userId),
+  ],
+);
+
+// what is in each set: a global set's listed tags, and for a personal set every tag its user has put on anything
+export const tagSetMember = pgView("tag_set_member", {
+  tagSetId: uuid("tag_set_id").notNull(),
+  tagId: uuid("tag_id").notNull(),
+}).as(sql`
+  select tag_set_id, tag_id from tag_set_tag
+  union
+  select s.id as tag_set_id, applied.tag_id from tag_set s
+    join (select user_id, tag_id from text_tag union select user_id, tag_id from persona_tag) applied
+      on applied.user_id = s.owner_id
+`);

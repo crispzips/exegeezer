@@ -1,6 +1,8 @@
 <script>
 	import { goto } from '$app/navigation';
 	import { Search, ListUl, Grid, X } from '@boxicons/svelte';
+	import PersonaCard from '#lib/components/PersonaCard.svelte';
+	import Reel from '#lib/components/Reel.svelte';
 	import UserCard from '#lib/components/UserCard.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 
@@ -58,15 +60,22 @@
 				{#each data.results as u (u.id)}<li><UserCard user={u} variant="icon" /></li>{/each}
 			</ul>
 		{/if}
+		{#if data.personaResults?.length}
+			<h2 class="mt-8 mb-3 text-lg font-semibold text-dark">Personae</h2>
+			<ul class="flex flex-wrap gap-3">
+				{#each data.personaResults as p (p.id)}<li><PersonaCard persona={p} /></li>{/each}
+			</ul>
+		{/if}
 	{:else}
 		{#each data.rows ?? [] as row (row.key)}
 			<section class="mb-8">
 				<h2 class="text-lg font-semibold text-dark">{row.title}</h2>
 				<p class="mb-3 text-xs text-grey3">{row.note}</p>
-				{#if row.users.length}
-					<ul class="flex gap-3 overflow-x-auto pb-2">
+				{#if row.users.length || row.personae?.length}
+					<Reel label={row.title}>
 						{#each row.users as u (u.id)}<li class="shrink-0"><UserCard user={u} /></li>{/each}
-					</ul>
+						{#each row.personae ?? [] as p (p.id)}<li class="shrink-0"><PersonaCard persona={p} /></li>{/each}
+					</Reel>
 				{:else}
 					<p class="rounded-md border border-dashed border-taupe3 px-3 py-4 text-sm text-grey3">{row.key === 'similarity' ? 'Not yet available.' : 'No one here yet.'}</p>
 				{/if}

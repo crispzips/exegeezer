@@ -1,12 +1,12 @@
 import { json, error } from '@sveltejs/kit';
-import { authorChoices, loadTextProperties, updateTextProperties } from '#lib/server/texts.js';
+import { authorOptions, loadTextProperties, updateTextProperties } from '#lib/server/texts.js';
 
 /** A text's properties (not its content), with the authors it may be written as. */
 export async function GET({ params, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
 	const properties = await loadTextProperties(params.id, locals);
 	if (!properties) error(404, 'No such text');
-	return json({ ...properties, authorChoices: await authorChoices(locals) });
+	return json({ ...properties, authorChoices: await authorOptions(params.id, locals) });
 }
 
 /** Change a text's properties: `{ title, personaId, productionStatus, visibility, commentPolicy }`. */

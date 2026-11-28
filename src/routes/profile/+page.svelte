@@ -491,7 +491,8 @@
 	class="m-auto w-[min(92vw,28rem)] rounded-lg border border-taupe2 bg-taupe1 p-5 text-dark backdrop:bg-black/40"
 >
 	{#if editText}
-		{@const authorName = data.authorChoices.find((c) => c.id === (editText.personaId ?? ''))?.name ?? '—'}
+		{@const authorOptions = [...data.authorChoices, ...(editText.coAuthors ?? [])]}
+		{@const authorName = authorOptions.find((c) => c.id === (editText.personaId ?? ''))?.name ?? '—'}
 		<form
 			bind:this={textFormEl}
 			method="post"
@@ -563,7 +564,7 @@
 						</dd>
 					</div>
 				{/snippet}
-				{@render row('personaId', 'Author', authorName, data.authorChoices.map((c) => ({ value: c.id, label: c.name })), editText.publicized ? "The author of a published, public text can't be changed" : '')}
+				{@render row('personaId', 'Author', authorName, authorOptions.map((c) => ({ value: c.id, label: c.name })), editText.publicized ? "The author of a published, public text can't be changed" : '')}
 				{@render row('productionStatus', 'Production status', editText.productionStatus, PRODUCTION_STATUSES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
 				{@render row('visibility', 'Visibility', editText.visibility, VISIBILITIES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
 				<div class="grid grid-cols-[8rem_minmax(0,1fr)] items-center">

@@ -7,7 +7,7 @@ export async function GET({ locals }) {
 	return json(await listTexts(locals));
 }
 
-/** Create a text from `{ title?, visibility, items, importedDetails? }` (visibility is required: 'private' or 'public'; it starts as a draft); responds with its id. `rallyStyle` (optional) is its default rally type. */
+/** Create a text from `{ title?, visibility, items, importedDetails? }` (visibility is required: 'private' or 'public'; it starts as a manuscript); responds with its id. `rallyStyle` (optional) is its default rally type. */
 export async function POST({ request, locals }) {
 	if (!locals.user) error(401, 'Sign in to use your texts');
 	const body = await request.json().catch(() => null);
@@ -19,5 +19,7 @@ export async function POST({ request, locals }) {
 	if (!title) error(400, 'A text needs a title');
 	const importedDetails = parseImportedDetails(body.importedDetails);
 	if (!importedDetails) error(400, 'importedDetails must be a list of entries with short text fields');
-	return json({ id: await createText(locals, title, items, body.visibility, isRallyStyle(body.rallyStyle) ? body.rallyStyle : null, importedDetails) }, { status: 201 });
+	const id = await createText(locals, title, items, body.visibility, isRallyStyle(body.rallyStyle) ? body.rallyStyle : null, importedDetails);
+	if (!id) error(400, "Some of that content belongs to someone else's text");
+	return json({ id }, { status: 201 });
 }

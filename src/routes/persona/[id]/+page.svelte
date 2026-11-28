@@ -1,5 +1,6 @@
 <script>
 	import FollowButton from '#lib/components/FollowButton.svelte';
+	import PublicTexts from '#lib/components/PublicTexts.svelte';
 	import PersonaPicture from '#lib/components/PersonaPicture.svelte';
 	import UserCard from '#lib/components/UserCard.svelte';
 
@@ -28,6 +29,9 @@
 		</div>
 		{#if form?.message}<p role="alert" class="mt-3 text-sm text-red">{form.message}</p>{/if}
 		<p class="mt-4 text-sm whitespace-pre-line text-dark">{persona.bio || 'No description.'}</p>
+
+		<hr class="my-6 border-taupe3" />
+		<PublicTexts texts={data.texts} />
 
 		<hr class="my-6 border-taupe3" />
 		<section aria-label="Who this persona is">

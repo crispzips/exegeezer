@@ -15,6 +15,7 @@
     import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
     import NewTextDialog from '#lib/components/NewTextDialog.svelte';
     import TextSettingsModal from '#lib/components/TextSettingsModal.svelte';
+    import TextHeadModal from '#lib/components/TextHeadModal.svelte';
     import NewItemChooser from '#lib/components/NewItemChooser.svelte';
     import EditModal from '#lib/components/EditModal.svelte';
     import MapModal from '#lib/components/MapModal.svelte';
@@ -40,7 +41,7 @@
             <TitleBar {monocle} />
         {/if}
         <div class="relative min-h-0 flex-1">
-            {#if doc.noText && monocle.authed && !(settings.view === 'rally' && rally.started)}
+            {#if doc.noText && monocle.authed && !doc.publicized && !(settings.view === 'rally' && rally.started)}
                 <BeginTree {monocle} />
             {/if}
             <MainViewer {monocle} />
@@ -71,7 +72,8 @@
 <RallySetup bind:open={rally.setupOpen} writing={editing} bind:size={settings.rallySize} bind:speed={settings.rallySpeed} onstart={rally.start} />
 <ConfirmDialog bind:request={doc.deleteRequest} />
 <NewTextDialog bind:request={doc.newTextRequest} />
-<TextSettingsModal bind:request={whole.settingsRequest} onsaved={whole.onSettingsSaved} />
+<TextSettingsModal bind:request={whole.settingsRequest} onsaved={whole.refresh} />
+<TextHeadModal bind:request={whole.headRequest} />
 <MapModal bind:open={edits.mapOpen} writing={editing} onmove={editing ? edits.moveFromMap : undefined} onmatter={editing ? edits.setMatter : undefined} onundo={editing ? doc.undo : undefined} onredo={editing ? doc.redo : undefined} canundo={doc.history.canUndo} canredo={doc.history.canRedo} title={doc.title} paragraphs={editing ? doc.items : doc.shown} onnavigate={edits.goToSection} />
 <OwnTextsDialog bind:open={load.ownTextsOpen} onchoose={load.onOwnTextChosen} />
 <OpenSourcesDialog bind:open={load.openSourcesOpen} onchoose={load.onWebTextChosen} />

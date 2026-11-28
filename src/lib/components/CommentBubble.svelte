@@ -29,6 +29,8 @@
 	const editing = $derived(!!editor?.is(comment.id));
 	const editable = $derived(!!editor && !!comment.editable && !editing);
 	const isNew = $derived(comment.id === DRAFT_ID);
+	/** whether it is marked public (a new one's mark is the editor's until it is posted) */
+	const open = $derived(isNew ? !!editor?.open?.public : !!comment.public);
 	const names = $derived(comment.authors.join(', ') || 'Anonymous');
 
 	/** @type {HTMLElement | undefined} */
@@ -125,7 +127,21 @@
 	<header class="flex flex-wrap items-baseline gap-x-2 text-xs text-taupe4 {editable ? 'pr-5' : ''}">
 		<span class="font-semibold text-taupe5">{names}</span>
 		{#if comment.scope}<span>on {comment.scope === 'whole section' ? 'the whole section' : comment.scope}</span>{/if}
+		{#if isNew}
+			<!-- a new comment is private unless marked public before it is posted -->
+			<label class="ml-auto flex items-center gap-1" onmousedown={(e) => e.stopPropagation()}>
+				<input type="checkbox" checked={open} onchange={(e) => editor?.open && (editor.open.public = e.currentTarget.checked)} />
+				Public
+			</label>
+		{:else if comment.markable}
+			<button type="button" onclick={(e) => onButton(e, () => editor?.askToMark(comment, !open))} onkeydown={(e) => e.stopPropagation()} aria-pressed={open} use:tip={open ? 'Public: make it private' : "Private (authors and editors): make it public"} class="ml-auto rounded-full border border-taupe3 px-1.5 hover:bg-taupe2">{open ? 'Public' : 'Private'}</button>
+		{:else}
+			<span class="ml-auto">{open ? 'Public' : 'Private'}</span>
+		{/if}
 	</header>
+	{#if isNew && open && editor?.published}
+		<p class="text-xs text-grey3">This text is published: once posted, a public comment can't be changed or deleted.</p>
+	{/if}
 	{#if editing && editor?.open}
 		<div
 			bind:this={field}

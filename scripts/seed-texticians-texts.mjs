@@ -13,7 +13,7 @@ const { DATABASE_URL } = process.env;
 const host = new URL(DATABASE_URL ?? 'x://').hostname;
 if (!['localhost', '127.0.0.1', '::1'].includes(host)) throw new Error(`Refusing: database host "${host}" is not local`);
 
-const STATUSES = ['idea', 'draft', 'under review', 'published'];
+const STATUSES = ['idea', 'manuscript', 'under review', 'published'];
 const POLICIES = ['authors', 'invitation', 'request', 'anyone'];
 // how many texts each account gets
 const COUNTS = { 2: 8, 3: 14, 4: 6, 5: 20, 6: 12, 7: 9, 8: 16, 9: 11, 10: 12 };

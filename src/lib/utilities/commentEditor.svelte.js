@@ -6,7 +6,7 @@ import { getContext, setContext } from 'svelte';
  * apart from the bubbles, so that what has been typed stays while the views redraw them. There is nothing to press to
  * post or cancel: leaving the comment (see `finish`) keeps its words, or deletes it if it has none.
  *
- * @typedef {{ id: string, textId: string, paragraphIds: string[], body: string }} Writing
+ * @typedef {{ id: string, textId: string, paragraphIds: string[], body: string, public?: boolean }} Writing
  */
 
 export const DRAFT_ID = 'draft';
@@ -29,7 +29,9 @@ export class CommentEditor {
 	 *   textId: () => string | null,
 	 *   failed: (problem: string) => void,
 	 *   remove: (textId: string, commentId: string) => void,
-	 *   askToRemove: (comment: import('#lib/utilities/comments.js').AnchoredComment) => void
+	 *   askToRemove: (comment: import('#lib/utilities/comments.js').AnchoredComment) => void,
+	 *   askToMark: (comment: import('#lib/utilities/comments.js').AnchoredComment, open: boolean) => void,
+	 *   published: () => boolean
 	 * }} page `send` posts or saves (returning a message if it can't), `failed` reports such a message when the editor
 	 * isn't there to show it, `remove` deletes a comment and `askToRemove` does so once the user agrees
 	 */
@@ -71,6 +73,17 @@ export class CommentEditor {
 		this.page.askToRemove(comment);
 	}
 
+	/** Mark one of the user's comments public or private (the page asks first where that is for good).
+	 * @param {import('#lib/utilities/comments.js').AnchoredComment} comment @param {boolean} open */
+	askToMark(comment, open) {
+		this.page.askToMark(comment, open);
+	}
+
+	/** whether the text being commented on has been published */
+	get published() {
+		return this.page.published();
+	}
+
 	/**
 	 * Be done with the comment in the editor: words are posted or saved, and a comment left with none is deleted (a new
 	 * one is just dropped).
@@ -90,7 +103,7 @@ export class CommentEditor {
 		this.problem = '';
 		let problem;
 		try {
-			problem = await this.page.send({ id: writing.id, textId: writing.textId, paragraphIds: [...writing.paragraphIds], body });
+			problem = await this.page.send({ id: writing.id, textId: writing.textId, paragraphIds: [...writing.paragraphIds], body, public: writing.public });
 		} catch {
 			problem = 'Could not save the comment.';
 		}

@@ -4,7 +4,8 @@ import { text_, textAuthor, userPersona } from '#lib/server/db/schema.js';
 
 /**
  * Who owns a text. A text can have several owners: every user who has one of the personae listed as its authors.
- * Each owner may do anything with it. `text.user_id` is the account the text is saved under (it goes when that
+ * An owner may write it, and ask for anything else to be done with it; what affects the text waits for every owner's
+ * agreement (consent.js). `text.user_id` is the account the text is saved under (it goes when that
  * account does); it is always an owner, and `setAuthors` keeps it one of the authors' users. It alone owns a text
  * that has no authors.
  *

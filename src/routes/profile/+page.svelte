@@ -8,8 +8,10 @@
 	import AboutMe from '#lib/components/AboutMe.svelte';
 	import SettingsPane from '#lib/components/SettingsPane.svelte';
 	import TagField from '#lib/components/TagField.svelte';
+	import RequestsPane from '#lib/components/RequestsPane.svelte';
+	import CirculationPane from '#lib/components/CirculationPane.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
-	import { LOCKED_MESSAGE, PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
+	import { CHOOSABLE_STATUSES, LOCKED_MESSAGE, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash, Key } from '@boxicons/svelte';
 
 	let { data, form } = $props();
@@ -55,6 +57,9 @@
 		if (!t) return;
 		const same = tdraft.title.trim() === t.title && tdraft.personaId === (t.personaId ?? '') && tdraft.productionStatus === t.productionStatus && tdraft.visibility === t.visibility;
 		if (same) return;
+		// a circulated text made public is published
+		if (t.productionStatus === 'circulated' && tdraft.visibility === 'public' && tdraft.productionStatus === 'circulated') tdraft.productionStatus = 'published';
+		if (tdraft.productionStatus === 'published' && tdraft.visibility === 'public' && !confirm('Publishing is for good. A published, public text is locked and can never be deleted, only recanted or burned. Publish it?')) return resetDraft();
 		await tick(); // the form posts its hidden fields, which must have caught up with the draft first
 		textFormEl?.requestSubmit();
 	}
@@ -87,9 +92,9 @@
 	}
 	function askDelete(t) {
 		deleteRequest = {
-			title: t.type === 'commentary' ? 'Delete this commentary?' : 'Delete this text?',
-			message: `This permanently deletes "${t.title}" and all of its content.`,
-			confirm: 'Delete',
+			title: t.type === 'commentary' ? 'Burn this commentary?' : 'Burn this text?',
+			message: `This destroys everything of "${t.title}": its words, its details and every commentary on it. This cannot be undone. Where it has other authors, it happens once they all agree.`,
+			confirm: 'Burn',
 			run: () => {
 				deleteId = t.id;
 				queueMicrotask(() => deleteFormEl?.requestSubmit());
@@ -135,7 +140,8 @@
 		pfield = '';
 		resetPersonaDraft();
 	}
-	const tabs = ['Profile', 'Texts', 'Commentaries', 'Personae', 'Settings'];
+	const tabs = ['Profile', 'Texts', 'Commentaries', 'Personae', 'Requests', 'Circulation', 'Settings'];
+	const awaiting = $derived(data.requests.filter((r) => r.awaitingMe).length);
 	// `?tab=settings` (where /settings leads) opens that tab; clicking another just switches
 	const tabFor = (/** @type {URL} */ url) => tabs.find((t) => t.toLowerCase() === url.searchParams.get('tab')) ?? 'Profile';
 	let tab = $state(tabFor(page.url));
@@ -227,10 +233,13 @@
 					onclick={() => (tab = t)}
 					class="-mb-px rounded-t-md border-b-2 px-4 py-2 text-sm font-medium {tab === t ? 'border-dark text-dark' : 'border-transparent text-grey3 hover:bg-taupe2'}"
 				>
-					{t}
+					{t}{#if t === 'Requests' && awaiting}<span class="ml-1 rounded-full bg-accent px-1.5 text-xs text-on-accent">{awaiting}</span>{/if}
 				</button>
 			{/each}
 		</div>
+
+		{#if form?.notice}<p role="status" class="mb-3 rounded-md border border-taupe3 px-3 py-2 text-sm text-dark">{form.notice}</p>{/if}
+		{#if tab !== 'Personae' && form?.textMessage && !form?.textEditId}<p role="alert" class="mb-3 text-sm text-red">{form.textMessage}</p>{/if}
 
 		{#if tab === 'Profile'}
 			<div role="tabpanel" id="panel-Profile" aria-labelledby="tab-Profile">
@@ -262,7 +271,7 @@
 					{/if}
 				</div>
 				{#if originals.length}
-					<TextsBrowser texts={originals} {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
+					<TextsBrowser texts={originals} {view} onselect={(t) => (t.editorOnly ? goto(`/exejeeze?text=${t.id}`) : openTextEditor(t.id))} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
 						{#snippet actions(t)}{@render textActions(t)}{/snippet}
 					</TextsBrowser>
 				{:else}
@@ -275,12 +284,20 @@
 					<div class="mb-3 flex justify-end">
 						{@render viewToggle()}
 					</div>
-					<TextsBrowser texts={commentaries} glosses {view} onselect={(t) => openTextEditor(t.id)} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
+					<TextsBrowser texts={commentaries} glosses {view} onselect={(t) => (t.editorOnly ? goto(`/exejeeze?text=${t.id}`) : openTextEditor(t.id))} oniconselect={(t) => goto(`/exejeeze?text=${t.id}`)}>
 						{#snippet actions(t)}{@render textActions(t)}{/snippet}
 					</TextsBrowser>
 				{:else}
 					<p class="text-sm text-grey3">You have no commentaries yet. One begins when you first comment on a text.</p>
 				{/if}
+			</div>
+		{:else if tab === 'Requests'}
+			<div role="tabpanel" id="panel-Requests" aria-labelledby="tab-Requests">
+				<RequestsPane requests={data.requests} renunciations={data.renunciations} />
+			</div>
+		{:else if tab === 'Circulation'}
+			<div role="tabpanel" id="panel-Circulation" aria-labelledby="tab-Circulation">
+				<CirculationPane circulated={data.circulated} groups={data.groups} />
 			</div>
 		{:else if tab === 'Settings'}
 			<div role="tabpanel" id="panel-Settings" aria-labelledby="tab-Settings">
@@ -534,6 +551,8 @@
 	{#if editText}
 		{@const authorOptions = [...data.authorChoices, ...(editText.coAuthors ?? [])]}
 		{@const authorName = authorOptions.find((c) => c.id === (editText.personaId ?? ''))?.name ?? '—'}
+		{@const follows = editText.type === 'commentary' ? "A commentary follows the text it is on" : ''}
+		{@const statuses = CHOOSABLE_STATUSES.filter((v) => v === editText.productionStatus || (editText.visibility === 'public' ? v !== 'circulated' : v !== 'published'))}
 		<form
 			bind:this={textFormEl}
 			method="post"
@@ -606,8 +625,8 @@
 					</div>
 				{/snippet}
 				{@render row('personaId', 'Author', authorName, authorOptions.map((c) => ({ value: c.id, label: c.name })), editText.publicized ? "The author of a published, public text can't be changed" : '')}
-				{@render row('productionStatus', 'Production status', editText.productionStatus, PRODUCTION_STATUSES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
-				{@render row('visibility', 'Visibility', editText.visibility, VISIBILITIES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : '')}
+				{@render row('productionStatus', 'Production status', editText.productionStatus, statuses.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : follows)}
+				{@render row('visibility', 'Visibility', editText.visibility, VISIBILITIES.map((v) => ({ value: v, label: v })), editText.publicized ? LOCKED_MESSAGE : follows)}
 				<div class="grid grid-cols-[8rem_minmax(0,1fr)] items-center">
 					<dt class="px-2 text-grey3">Type</dt><dd class="px-2 py-1 text-dark">{typeLabel[editText.type] ?? editText.type}</dd>
 				</div>
@@ -642,7 +661,10 @@
 
 <!-- the buttons at the end of a row of texts or commentaries -->
 {#snippet textActions(t)}
-	<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Delete {t.title}" use:tip={'Delete'} class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
+	<!-- a publication or palimpsest is never deleted (it is repressed, from the text editor); an editor proposes there too -->
+	{#if !t.publicized && !t.editorOnly}
+		<button type="button" onclick={(e) => { e.stopPropagation(); askDelete(t); }} aria-label="Burn {t.title}" use:tip={'Burn'} class="rounded-md p-1 hover:bg-taupe3"><Trash width={18} height={18} /></button>
+	{/if}
 	<a href="/exejeeze?text={t.id}" onclick={(e) => e.stopPropagation()} aria-label="Open {t.title} in the text editor" use:tip={'Open in the text editor'} class="rounded-md p-1 hover:bg-taupe3"><Edit width={18} height={18} /></a>
 {/snippet}
 

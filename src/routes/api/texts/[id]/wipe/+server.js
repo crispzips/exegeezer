@@ -1,12 +1,7 @@
-import { json, error } from '@sveltejs/kit';
-import { wipeText } from '#lib/server/texts.js';
-import { LOCKED_MESSAGE } from '#lib/textStatus.js';
+import { propose } from '#lib/server/consent.js';
+import { reply, signedIn } from '#lib/server/reply.js';
 
-/** Erase all of a text's content, keeping the text and its properties. */
+/** Erase all of a text's content, keeping the text itself. */
 export async function POST({ params, locals }) {
-	if (!locals.user) error(401, 'Sign in to use your texts');
-	const wiped = await wipeText(params.id, locals);
-	if (wiped === 'locked') error(409, LOCKED_MESSAGE);
-	if (!wiped) error(404, 'No such text');
-	return json({ ok: true });
+	return reply(await propose(signedIn(locals), { action: 'wipe', textId: params.id }));
 }

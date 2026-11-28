@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import postgres from 'postgres';
 import { randomThemeColors } from '../src/lib/personaColors.js';
 import { commentaryTitle } from '../src/lib/textStatus.js';
+import { settleCommentaries } from './settle-commentaries.mjs';
 
 dotenv.config();
 const { DATABASE_URL } = process.env;
@@ -68,7 +69,7 @@ const PERSONA_FOLLOWS = {
 	10: ['8B', '9A', '3+7']
 };
 
-const STATUSES = ['draft', 'published', 'under review', 'draft'];
+const STATUSES = ['manuscript', 'published', 'under review', 'manuscript'];
 
 const sql = postgres(DATABASE_URL, { onnotice: () => {} });
 try {
@@ -122,8 +123,8 @@ try {
 			newTexts++;
 			return { ...made, isNew: true };
 		};
-		const addParagraph = async (text, position, itemPosition, body) => {
-			await sql`insert into paragraph (id, body) values (${text.paragraphs[position]}, ${body})`;
+		const addParagraph = async (text, position, itemPosition, body, open = false) => {
+			await sql`insert into paragraph (id, body, public) values (${text.paragraphs[position]}, ${body}, ${open})`;
 			await sql`insert into text_item (text_id, position, paragraph_id) values (${text.id}, ${itemPosition}, ${text.paragraphs[position]})`;
 		};
 
@@ -196,7 +197,8 @@ try {
 				by: [mine[j % mine.length]],
 				of: on.id,
 				title: commentaryTitle(on.authors, on.title),
-				status: STATUSES[(j + 1) % STATUSES.length],
+				// (a private text is never "published": it is circulated)
+				status: j % 11 === 10 && STATUSES[(j + 1) % STATUSES.length] === 'published' ? 'circulated' : STATUSES[(j + 1) % STATUSES.length],
 				vis: j % 11 === 10 ? 'private' : 'public',
 				bodies
 			});
@@ -204,12 +206,14 @@ try {
 			comments += bodies.length;
 			if (!text.isNew) continue;
 			for (const [c, body] of bodies.entries()) {
-				await addParagraph(text, c, c, body);
+				await addParagraph(text, c, c, body, text.vis === 'public');
 				const commentId = idFor(`comment:${key}-${c + 1}`);
 				await sql`insert into comment (id, commentary_id, body_paragraph_id) values (${commentId}, ${text.id}, ${text.paragraphs[c]})`;
 				await sql`insert into comment_paragraph (comment_id, paragraph_id) values (${commentId}, ${on.paragraphs[targets[c]]})`;
 			}
 		}
+
+		await settleCommentaries(sql);
 
 		for (const [follower, keys] of Object.entries(PERSONA_FOLLOWS)) {
 			for (const k of keys) {

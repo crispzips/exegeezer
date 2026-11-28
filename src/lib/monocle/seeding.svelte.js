@@ -74,7 +74,7 @@ export class Seeding {
     };
 
     /**
-     * Seed from the loaded text (the paragraphs in the preview): make a new text of it and open it, a draft, private until its owner says
+     * Seed from the loaded text (the paragraphs in the preview): make a new text of it and open it, a manuscript, private until its owner says
      * otherwise. A text loaded from the user's own texts brings no title and no settings; any other is named after what was loaded.
      * As with an import, the user may first keep an unaltered `ORIGINAL--<name>` copy.
      */

@@ -1,5 +1,6 @@
 <script>
 	import FollowButton from '#lib/components/FollowButton.svelte';
+	import PublicTexts from '#lib/components/PublicTexts.svelte';
 	import PersonaCard from '#lib/components/PersonaCard.svelte';
 	import PersonaPicture from '#lib/components/PersonaPicture.svelte';
 	import { definitionsOf, isDefinition, renderMarkdown } from '#lib/utilities/renderMarkdown.js';
@@ -46,6 +47,9 @@
 				<p class="text-grey3">Nothing here yet.</p>
 			{/if}
 		</section>
+
+		<hr class="my-6 border-taupe3" />
+		<PublicTexts texts={data.texts} />
 
 		{#if data.personae.length}
 			<hr class="my-6 border-taupe3" />

@@ -15,7 +15,7 @@ import { sendEmail } from '#lib/server/email.ts';
 import { db } from '#lib/server/db/index.js';
 import { text_, user } from '#lib/server/db/schema.js';
 import { ensureSelfPersona } from '#lib/server/personae.js';
-import { handOverSharedTexts } from '#lib/server/ownership.js';
+import { beforeAccountDelete } from '#lib/server/repression.js';
 
 export const auth = betterAuth({
 	baseURL: ORIGIN,
@@ -46,9 +46,10 @@ export const auth = betterAuth({
 	databaseHooks: {
 		user: {
 			delete: {
-				// deleting an account deletes the texts saved under it: ones it shares with others move to them first
+				// deleting an account would delete the texts saved under it: shared ones move to another owner, unpublished
+				// ones are destroyed with their commentaries, and publications stay in the database
 				before: async (gone) => {
-					await handOverSharedTexts(gone.id);
+					await beforeAccountDelete(gone.id);
 				}
 			},
 			create: {

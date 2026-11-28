@@ -1,39 +1,37 @@
 import { json, error } from '@sveltejs/kit';
-import { LOCKED_MESSAGE } from '#lib/textStatus.js';
-import { deleteText, isProductionStatus, isRallyStyle, isVisibility, loadText, parseImportedDetails, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
+import { LOCKED_MESSAGE, PUBLIC_MEMORY_MESSAGE, isPermanent } from '#lib/textStatus.js';
+import { isRallyStyle, loadText, parseImportedDetails, parseItems, saveText, setRallyStyle } from '#lib/server/texts.js';
+import { standing } from '#lib/server/access.js';
+import { propose } from '#lib/server/consent.js';
+import { reply, signedIn } from '#lib/server/reply.js';
 
-/** A text with its paragraphs and sections arranged in order. */
+/** A text with its paragraphs and sections arranged in order, as the requester may read it. */
 export async function GET({ params, locals }) {
-	if (!locals.user) error(401, 'Sign in to use your texts');
+	signedIn(locals);
 	const text = await loadText(params.id, locals);
 	if (!text) error(404, 'No such text');
 	return json(text);
 }
 
-/** Replace a text's contents with `{ title?, items, productionStatus?, visibility?, addImportedDetails? }` (addImportedDetails: details of texts just imported into it, added to its own). */
+/** Replace a text's contents with `{ items, addImportedDetails? }` (addImportedDetails: details of texts just imported into it, added to its own). Its settings change through `properties`. */
 export async function PUT({ params, request, locals }) {
-	if (!locals.user) error(401, 'Sign in to use your texts');
+	signedIn(locals);
 	const body = await request.json().catch(() => null);
 	const items = parseItems(body?.items);
 	if (!items) error(400, 'items must be a list of { id, text, level }');
-	const title = typeof body.title === 'string' ? body.title.trim().slice(0, 200) : undefined;
-	if (body.productionStatus !== undefined && !isProductionStatus(body.productionStatus)) error(400, 'invalid productionStatus');
-	if (body.visibility !== undefined && !isVisibility(body.visibility)) error(400, 'invalid visibility');
-	const status = {
-		...(body.productionStatus !== undefined ? { productionStatus: body.productionStatus } : {}),
-		...(body.visibility !== undefined ? { visibility: body.visibility } : {})
-	};
 	const addDetails = parseImportedDetails(body.addImportedDetails);
 	if (!addDetails) error(400, 'addImportedDetails must be a list of entries with short text fields');
-	const saved = await saveText(params.id, locals, items, title, status, addDetails);
+	const saved = await saveText(params.id, locals, items, addDetails);
 	if (saved === 'locked') error(409, LOCKED_MESSAGE);
+	if (saved === 'memory') error(409, PUBLIC_MEMORY_MESSAGE);
+	if (saved === 'foreign') error(400, "Some of that content belongs to someone else's text");
 	if (!saved) error(404, 'No such text');
 	return json({ ok: true });
 }
 
 /** Give a text its default rally type: `{ rallyStyle }`. */
 export async function PATCH({ params, request, locals }) {
-	if (!locals.user) error(401, 'Sign in to use your texts');
+	signedIn(locals);
 	const body = await request.json().catch(() => null);
 	if (!isRallyStyle(body?.rallyStyle)) error(400, 'invalid rallyStyle');
 	const set = await setRallyStyle(params.id, locals, body.rallyStyle);
@@ -42,12 +40,11 @@ export async function PATCH({ params, request, locals }) {
 	return json({ ok: true });
 }
 
-/** Permanently delete a text. */
+/** Delete a text that was never published: everything of it is burned, commentaries too. A publication can only be repressed. */
 export async function DELETE({ params, locals }) {
-	if (!locals.user) error(401, 'Sign in to use your texts');
-	const result = await deleteText(params.id, locals);
-	if (result === 'locked') error(409, LOCKED_MESSAGE);
-	if (result === 'commented') error(409, "This text has commentaries, so it can't be deleted.");
-	if (!result) error(404, 'No such text');
-	return json({ ok: true });
+	const uid = signedIn(locals);
+	const s = await standing(uid, params.id);
+	if (!s?.read) error(404, 'No such text');
+	if (isPermanent(s.row)) error(409, LOCKED_MESSAGE);
+	return reply(await propose(uid, { action: 'burn', textId: params.id }));
 }

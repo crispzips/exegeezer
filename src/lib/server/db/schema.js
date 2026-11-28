@@ -131,13 +131,16 @@ export const text_ = pgTable(
     title: text("title").notNull().default("Untitled"),
     // 'original' or 'commentary'
     type: text("type").notNull().default("original"),
-    // commentaries only: the text this is a commentary on. A commentary exists only in relation to its text, so a
-    // text with commentaries can't be deleted (no action: deleting a whole account still works only if nobody else has a commentary on its texts).
+    // commentaries only: the text this is a commentary on. A commentary exists only in relation to its text: destroying
+    // a text destroys its commentaries first (server/repression.js), and a publication is never destroyed.
     commentaryOn: uuid("commentary_on").references(/** @type {() => any} */ (() => text_.id), { onDelete: "no action" }),
-    // 'idea' | 'draft' | 'under review' | 'published'; new texts start as drafts
-    productionStatus: text("production_status").notNull().default("draft"),
+    // 'idea' | 'manuscript' | 'under review' | 'circulated' | 'published' | 'recanted' | 'burned' (see textStatus.js);
+    // new texts start as manuscripts. A commentary's status and visibility follow the text it is on.
+    productionStatus: text("production_status").notNull().default("manuscript"),
     // 'private' | 'public'; chosen by the user when the text is created
     visibility: text("visibility").notNull().default("private"),
+    // part of the text's head (its metadata), like its title and tags: null = none
+    description: text("description"),
     // who may comment on the text: 'authors' | 'invitation' | 'request' | 'anyone' (each includes the ones before it)
     commentPolicy: text("comment_policy").notNull().default("authors"),
     // the rally type the text was given when its first rally began ('compose' | 'copy' | 'recall' | 'dictate');
@@ -155,7 +158,13 @@ export const text_ = pgTable(
   (table) => [
     index("text_userId_idx").on(table.userId),
     index("text_personaId_idx").on(table.personaId),
-    check("text_production_status_check", sql`${table.productionStatus} in ('idea', 'draft', 'under review', 'published')`),
+    check("text_production_status_check", sql`${table.productionStatus} in ('idea', 'manuscript', 'under review', 'circulated', 'published', 'recanted', 'burned')`),
+    // only a private text is circulated; only a public one is published, recanted or burned
+    check(
+      "text_status_visibility_check",
+      sql`(${table.productionStatus} <> 'circulated' or ${table.visibility} = 'private')
+        and (${table.productionStatus} not in ('published', 'recanted', 'burned') or ${table.visibility} = 'public')`,
+    ),
     check("text_visibility_check", sql`${table.visibility} in ('private', 'public')`),
     check("text_commentary_on_check", sql`(${table.type} = 'commentary') = (${table.commentaryOn} is not null)`),
     index("text_commentaryOn_idx").on(table.commentaryOn),
@@ -183,12 +192,145 @@ export const textAuthor = pgTable(
   ],
 );
 
+// Editors: personae who may change a text's words, but not delete, circulate, publish or repress it (they can propose
+// those to the authors).
+export const textEditor = pgTable(
+  "text_editor",
+  {
+    textId: uuid("text_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.textId, table.personaId] }),
+    index("text_editor_personaId_idx").on(table.personaId),
+  ],
+);
+
+// A renunciation: an author persona has left a co-authored text. It is part of the text's head and stays as long as
+// the text does. An ordinary one can be undone (the persona returns to `position`); one with extreme prejudice can't.
+export const renunciation = pgTable(
+  "renunciation",
+  {
+    textId: uuid("text_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+    extreme: boolean("extreme").default(false).notNull(),
+    position: integer("position").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.textId, table.personaId] }),
+    index("renunciation_personaId_idx").on(table.personaId),
+  ],
+);
+
+// A user's own named group of users, to circulate texts to. Only its owner sees it.
+export const userGroup = pgTable(
+  "user_group",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    ownerId: text("owner_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    name: text("name").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [index("user_group_ownerId_idx").on(table.ownerId)],
+);
+
+export const userGroupMember = pgTable(
+  "user_group_member",
+  {
+    groupId: uuid("group_id")
+      .notNull()
+      .references(() => userGroup.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+  },
+  (table) => [
+    primaryKey({ columns: [table.groupId, table.userId] }),
+    index("user_group_member_userId_idx").on(table.userId),
+  ],
+);
+
+// Whom a text is circulated to: a user or a group, and what they may do ('read' | 'comment').
+export const textShare = pgTable(
+  "text_share",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    textId: uuid("text_id")
+      .notNull()
+      .references(() => text_.id, { onDelete: "cascade" }),
+    userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
+    groupId: uuid("group_id").references(() => userGroup.id, { onDelete: "cascade" }),
+    privilege: text("privilege").notNull().default("read"),
+  },
+  (table) => [
+    uniqueIndex("text_share_user_idx").on(table.textId, table.userId),
+    uniqueIndex("text_share_group_idx").on(table.textId, table.groupId),
+    index("text_share_userId_idx").on(table.userId),
+    index("text_share_groupId_idx").on(table.groupId),
+    check("text_share_target_check", sql`(${table.userId} is null) <> (${table.groupId} is null)`),
+    check("text_share_privilege_check", sql`${table.privilege} in ('read', 'comment')`),
+  ],
+);
+
+// Something proposed that waits for agreement (server/consent.js): an action on a text, or on a persona. Who must agree
+// is worked out when it is decided: every user of every author persona (or of the persona). It is removed once carried
+// out, declined or withdrawn. `persona_id` alone names a persona's own action; with `text_id` it is the author
+// renouncing (or returning to) that text.
+export const proposal = pgTable(
+  "proposal",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    textId: uuid("text_id").references(() => text_.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id").references(() => persona.id, { onDelete: "cascade" }),
+    action: text("action").notNull(),
+    // what the action changes (only what differs)
+    payload: jsonb("payload"),
+    proposedBy: text("proposed_by")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("proposal_textId_idx").on(table.textId),
+    index("proposal_personaId_idx").on(table.personaId),
+    check("proposal_target_check", sql`${table.textId} is not null or ${table.personaId} is not null`),
+  ],
+);
+
+export const proposalConsent = pgTable(
+  "proposal_consent",
+  {
+    proposalId: uuid("proposal_id")
+      .notNull()
+      .references(() => proposal.id, { onDelete: "cascade" }),
+    userId: text("user_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [primaryKey({ columns: [table.proposalId, table.userId] })],
+);
+
 export const paragraph = pgTable("paragraph", {
   id: uuid("id").primaryKey().defaultRandom(),
   body: text("body").notNull(),
   // optional short title and longer description of the paragraph (null = none)
   title: text("title"),
   description: text("description"),
+  // in a commentary: whether the comment is marked public (otherwise it is for the authors' and editors' eyes). Once
+  // marked public on a published text it is locked.
+  public: boolean("public").default(false).notNull(),
 });
 
 export const section = pgTable("section", {

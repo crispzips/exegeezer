@@ -4,6 +4,7 @@ import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
 import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
 import { danglingCount, insertAt } from '#lib/utilities/editText.js';
 import { toItems, withFrontmatter } from './items.js';
+import { newStanding } from './document.svelte.js';
 
 /** a frame is painted and the event loop has had a turn: the overlay is on screen and input has been handled before heavy work starts */
 // (animation frames pause while the tab is hidden, so a short timer stands in for the frame and the work never waits on one)
@@ -154,7 +155,7 @@ export class LoadText {
     /** The menu's Load text button. */
     open = () => {
         this.forSeeding = false;
-        if (!this.monocle.authed || this.monocle.settings.commenting) return;
+        if (!this.monocle.authed || this.monocle.settings.commenting || this.monocle.doc.publicized) return;
         this.injectGap = null;
         this.dialog?.showModal();
     };
@@ -229,6 +230,8 @@ export class LoadText {
         if (makesNewText) {
             // a new text: saved under the incoming file's name on the next autosave
             doc.id = null;
+            doc.publicized = false;
+            doc.standing = newStanding();
             doc.visibility = ''; // asked again for the new text
             doc.title = this.name || 'Untitled';
             doc.lastSaved = '';

@@ -35,9 +35,9 @@
     <button
         onclick={load.open}
         aria-label="Load text"
-        aria-disabled={!authed || commenting}
-        use:tip={!authed ? 'Load text (sign in first)' : commenting ? "Load text (the text can't be changed while commenting)" : 'Load text'}
-        class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed && !commenting ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
+        aria-disabled={!authed || commenting || doc.publicized}
+        use:tip={!authed ? 'Load text (sign in first)' : doc.publicized ? "Load text (this text can't be changed)" : commenting ? "Load text (the text can't be changed while commenting)" : 'Load text'}
+        class="inline-flex items-center justify-center rounded-md p-1 text-dark {authed && !commenting && !doc.publicized ? 'hover:bg-taupe2' : 'cursor-not-allowed opacity-60'}"
     >
         <ArrowOutDownCircleHalf />
     </button>

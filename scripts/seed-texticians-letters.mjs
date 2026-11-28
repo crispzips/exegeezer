@@ -14,6 +14,7 @@ import dotenv from 'dotenv';
 import postgres from 'postgres';
 import { randomThemeColors } from '../src/lib/personaColors.js';
 import { commentaryTitle } from '../src/lib/textStatus.js';
+import { settleCommentaries } from './settle-commentaries.mjs';
 
 dotenv.config();
 const { DATABASE_URL } = process.env;
@@ -35,41 +36,41 @@ const PERSONAE = { '2A': [2], '2B': [2], '3A': [3], '4A': [4], '5A': [5], '5B': 
 // originals, all public so that others can plausibly have read them
 const TEXTS = [
 	{ key: 'L2-1', owner: 2, by: ['self2'], status: 'published', paras: 5 },
-	{ key: 'L2-2', owner: 2, by: ['2A'], status: 'draft', paras: 4 },
-	{ key: 'L2-3', owner: 2, by: ['2B', '3A'], status: 'draft', paras: 6 },
+	{ key: 'L2-2', owner: 2, by: ['2A'], status: 'manuscript', paras: 4 },
+	{ key: 'L2-3', owner: 2, by: ['2B', '3A'], status: 'manuscript', paras: 6 },
 	{ key: 'L3-1', owner: 3, by: ['self3'], status: 'published', paras: 6 },
 	{ key: 'L3-2', owner: 3, by: ['3A', 'self3'], status: 'under review', paras: 4 },
 	{ key: 'L4-1', owner: 4, by: ['4A'], status: 'published', paras: 5 },
-	{ key: 'L4-2', owner: 4, by: ['self4', '5A', 'self6'], status: 'draft', paras: 4 },
-	{ key: 'L5-1', owner: 5, by: ['5A'], status: 'draft', paras: 8 },
+	{ key: 'L4-2', owner: 4, by: ['self4', '5A', 'self6'], status: 'manuscript', paras: 4 },
+	{ key: 'L5-1', owner: 5, by: ['5A'], status: 'manuscript', paras: 8 },
 	{ key: 'L5-2', owner: 5, by: ['5B', 'self5'], status: 'published', paras: 3 },
 	{ key: 'L6-1', owner: 6, by: ['2+6'], status: 'under review', paras: 5 },
-	{ key: 'L6-2', owner: 6, by: ['6A', 'CA'], status: 'draft', paras: 4 },
+	{ key: 'L6-2', owner: 6, by: ['6A', 'CA'], status: 'manuscript', paras: 4 },
 	{ key: 'LC-1', owner: 'C', by: ['selfC'], status: 'published', paras: 5 },
-	{ key: 'LC-2', owner: 'C', by: ['CA', 'self2'], status: 'draft', paras: 4 }
+	{ key: 'LC-2', owner: 'C', by: ['CA', 'self2'], status: 'manuscript', paras: 4 }
 ];
 
 // commentaries, each after the text it is on; `on` lists, per comment, the paragraphs (from 1) it is about.
 // A commentary on a commentary is about that one's comments. One per account per text, as in the app.
 const COMMENTARIES = [
 	{ key: 'K1', owner: 3, of: 'L2-1', by: ['self3'], status: 'published', vis: 'public', on: [[1], [2, 3], [5]] },
-	{ key: 'K2', owner: 2, of: 'K1', by: ['self2'], status: 'draft', vis: 'public', on: [[1], [2]] },
-	{ key: 'K3', owner: 4, of: 'L2-1', by: ['4A'], status: 'draft', vis: 'public', on: [[2], [4]] },
+	{ key: 'K2', owner: 2, of: 'K1', by: ['self2'], status: 'manuscript', vis: 'public', on: [[1], [2]] },
+	{ key: 'K3', owner: 4, of: 'L2-1', by: ['4A'], status: 'manuscript', vis: 'public', on: [[2], [4]] },
 	{ key: 'K4', owner: 5, of: 'L3-1', by: ['5A', 'self5'], status: 'published', vis: 'public', on: [[1], [3, 4, 5]] },
-	{ key: 'K5', owner: 2, of: 'L3-1', by: ['2A'], status: 'draft', vis: 'private', on: [[6]] },
+	{ key: 'K5', owner: 2, of: 'L3-1', by: ['2A'], status: 'manuscript', vis: 'private', on: [[6]] },
 	{ key: 'K6', owner: 6, of: 'L4-1', by: ['2+6'], status: 'published', vis: 'public', on: [[1], [2]] },
-	{ key: 'K7', owner: 3, of: 'L4-1', by: ['3A'], status: 'draft', vis: 'public', on: [[5]] },
-	{ key: 'K8', owner: 4, of: 'K6', by: ['4A'], status: 'draft', vis: 'public', on: [[1]] },
-	{ key: 'K9', owner: 6, of: 'L5-1', by: ['6A'], status: 'draft', vis: 'public', on: [[2], [6, 7]] },
-	{ key: 'K10', owner: 'C', of: 'L5-1', by: ['CA'], status: 'draft', vis: 'private', on: [[8]] },
-	{ key: 'K11', owner: 5, of: 'LC-1', by: ['5B'], status: 'draft', vis: 'public', on: [[1], [4]] },
-	{ key: 'K12', owner: 2, of: 'L6-2', by: ['2B'], status: 'draft', vis: 'public', on: [[1]] },
-	{ key: 'K13', owner: 3, of: 'L6-1', by: ['self3'], status: 'draft', vis: 'public', on: [[3]] },
-	{ key: 'K14', owner: 'C', of: 'L2-3', by: ['selfC'], status: 'draft', vis: 'public', on: [[2]] },
-	{ key: 'K15', owner: 4, of: 'L3-2', by: ['self4'], status: 'draft', vis: 'public', on: [[1]] },
-	{ key: 'K16', owner: 5, of: 'L2-2', by: ['self5', '6A'], status: 'draft', vis: 'public', on: [[3]] },
-	{ key: 'K17', owner: 'C', of: 'K11', by: ['selfC'], status: 'draft', vis: 'public', on: [[1]] },
-	{ key: 'K18', owner: 2, of: 'L2-2', by: ['2B'], status: 'draft', vis: 'private', on: [[1]] }
+	{ key: 'K7', owner: 3, of: 'L4-1', by: ['3A'], status: 'manuscript', vis: 'public', on: [[5]] },
+	{ key: 'K8', owner: 4, of: 'K6', by: ['4A'], status: 'manuscript', vis: 'public', on: [[1]] },
+	{ key: 'K9', owner: 6, of: 'L5-1', by: ['6A'], status: 'manuscript', vis: 'public', on: [[2], [6, 7]] },
+	{ key: 'K10', owner: 'C', of: 'L5-1', by: ['CA'], status: 'manuscript', vis: 'private', on: [[8]] },
+	{ key: 'K11', owner: 5, of: 'LC-1', by: ['5B'], status: 'manuscript', vis: 'public', on: [[1], [4]] },
+	{ key: 'K12', owner: 2, of: 'L6-2', by: ['2B'], status: 'manuscript', vis: 'public', on: [[1]] },
+	{ key: 'K13', owner: 3, of: 'L6-1', by: ['self3'], status: 'manuscript', vis: 'public', on: [[3]] },
+	{ key: 'K14', owner: 'C', of: 'L2-3', by: ['selfC'], status: 'manuscript', vis: 'public', on: [[2]] },
+	{ key: 'K15', owner: 4, of: 'L3-2', by: ['self4'], status: 'manuscript', vis: 'public', on: [[1]] },
+	{ key: 'K16', owner: 5, of: 'L2-2', by: ['self5', '6A'], status: 'manuscript', vis: 'public', on: [[3]] },
+	{ key: 'K17', owner: 'C', of: 'K11', by: ['selfC'], status: 'manuscript', vis: 'public', on: [[1]] },
+	{ key: 'K18', owner: 2, of: 'L2-2', by: ['2B'], status: 'manuscript', vis: 'private', on: [[1]] }
 ];
 
 // follower -> personae followed by themselves, and (to bring Claude Test into the web) users followed
@@ -121,11 +122,12 @@ try {
 				insert into text (id, user_id, persona_id, title, type, commentary_on, production_status, visibility, comment_policy)
 				values (${id}, ${users[owner].id}, ${personae[by[0]].id}, ${title}, ${of ? 'commentary' : 'original'}, ${of}, ${status}, ${vis}, ${policy})`;
 			for (const [position, p] of by.entries()) await sql`insert into text_author (text_id, persona_id, position) values (${id}, ${personae[p].id}, ${position})`;
-			return (made[key] = { id, title, authors: by.map((p) => personae[p].name), paragraphs: [] });
+			// what is in a public commentary is marked public
+			return (made[key] = { id, title, authors: by.map((p) => personae[p].name), paragraphs: [], open: !!of && vis === 'public' });
 		};
 		const addParagraph = async (text, key, position, body) => {
 			const id = idFor(`paragraph:${key}`);
-			await sql`insert into paragraph (id, body) values (${id}, ${body})`;
+			await sql`insert into paragraph (id, body, public) values (${id}, ${body}, ${!!text.open})`;
 			await sql`insert into text_item (text_id, position, paragraph_id) values (${text.id}, ${position}, ${id})`;
 			text.paragraphs.push(id);
 			return id;
@@ -160,6 +162,8 @@ try {
 				}
 			}
 		}
+
+		await settleCommentaries(sql);
 
 		for (const [follower, keys] of Object.entries(PERSONA_FOLLOWS)) {
 			for (const k of keys) await sql`insert into persona_follow (follower_id, persona_id) values (${users[follower].id}, ${personae[k].id}) on conflict do nothing`;

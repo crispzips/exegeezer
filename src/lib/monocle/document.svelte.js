@@ -3,6 +3,15 @@ import { History } from '#lib/utilities/history.svelte.js';
 import { withoutMatter, matterSections } from '#lib/utilities/matter.js';
 import { danglingCount } from '#lib/utilities/editText.js';
 import { toItems } from './items.js';
+import { PUBLIC_MEMORY_MESSAGE } from '#lib/textStatus.js';
+
+/**
+ * What the user is to the open text and where it stands. A new text is its writer's private manuscript.
+ * @typedef {{ access: 'author' | 'editor' | 'reader', type: string, productionStatus: string, visibility: string,
+ *   canComment: boolean, repressible: boolean, lockedIds: string[] }} Standing
+ */
+/** @returns {Standing} */
+export const newStanding = () => ({ access: 'author', type: 'original', productionStatus: 'manuscript', visibility: 'private', canComment: true, repressible: false, lockedIds: [] });
 
 // ---- The open text is remembered, so a refresh (or coming back by the menu) returns to it ----
 const REMEMBER_TEXT = 'exegeezer.text';
@@ -38,8 +47,9 @@ export class TextDocument {
     authors = $state([]);
     /** 'private' | 'public', chosen in the new-text dialog before a text is first saved */
     visibility = '';
-    /** the loaded text is published and public: it can't be altered, so there is no writing mode */
+    /** the loaded text's words can't be changed by this user (it is locked, or isn't theirs), so there is no writing mode */
     publicized = $state(false);
+    standing = $state.raw(newStanding());
     /** the loaded text's default rally type (null: it has none yet, so the rally's setup is offered) */
     rallyStyle = $state(/** @type {string | null} */ (null));
     /** whether the main text is Markdown, so the linear view renders it */
@@ -105,6 +115,7 @@ export class TextDocument {
         this.title = saved.title;
         this.rallyStyle = saved.rallyStyle ?? null;
         this.publicized = !!saved.publicized;
+        this.standing = { access: saved.access, type: saved.type, productionStatus: saved.productionStatus, visibility: saved.visibility, canComment: saved.canComment, repressible: saved.repressible, lockedIds: saved.lockedIds };
         this.authors = saved.authors ?? [];
         this.items = saved.items.map((/** @type {any} */ p, /** @type {number} */ i) => ({ ...p, originalIndex: i }));
         this.lastSaved = JSON.stringify(toItems(this.items));
@@ -116,6 +127,7 @@ export class TextDocument {
 
     /** Save the main text: create it the first time, replace its contents afterwards. */
     save = () => {
+        if (this.publicized) return;
         const items = toItems($state.snapshot(this.items));
         const json = JSON.stringify(items);
         if (json === this.lastSaved || (!items.length && !this.id)) return;
@@ -162,6 +174,18 @@ export class TextDocument {
         if (danglingCount(next) > danglingCount(this.items)) {
             alert('Paragraphs have to be inside a section. Add a section first.');
             return false;
+        }
+        if (this.standing.lockedIds.length) {
+            const after = new Map(next.map((p) => [p.id, p]));
+            const changed = /** @type {any[]} */ (this.items).some((p) => {
+                if (!this.standing.lockedIds.includes(p.id)) return false;
+                const q = after.get(p.id);
+                return !q || q.text !== p.text || (q.title ?? '') !== (p.title ?? '') || (q.description ?? '') !== (p.description ?? '');
+            });
+            if (changed) {
+                alert(PUBLIC_MEMORY_MESSAGE);
+                return false;
+            }
         }
         this.history.record(this.items);
         this.items = next;

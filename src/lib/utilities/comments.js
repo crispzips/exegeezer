@@ -5,7 +5,7 @@
  * subsections'), the comment belongs to the section and sits by its header or bubble; otherwise it sits by the first
  * paragraph it is about.
  *
- * @typedef {{ id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable?: boolean }} Comment
+ * @typedef {{ id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable?: boolean, public?: boolean, markable?: boolean }} Comment
  * @typedef {Comment & { anchorId: string, targetIds: string[], scope: string }} AnchoredComment
  */
 

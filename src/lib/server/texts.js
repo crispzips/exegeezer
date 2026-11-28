@@ -1,11 +1,12 @@
-import { and, asc, count, desc, eq, gt, inArray, isNull, lt, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gt, inArray, isNull, lt, ne, notExists, or, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import { db } from '#lib/server/db/index.js';
-import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
+import { PUBLIC_MEMORY_MESSAGE, VISIBILITIES, commentaryTitle, isLocked, isPalimpsest, isPermanent, isPublication } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
 import { CREDITED, ownedBy } from '#lib/server/ownership.js';
-import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
-import { comment, commentParagraph, paragraph, persona, section, text_, textAuthor, textItem, user, userPersona } from '#lib/server/db/schema.js';
+import { editedBy, standing } from '#lib/server/access.js';
+import { lockedParagraphs, syncCommentary } from '#lib/server/commentaries.js';
+import { comment, commentParagraph, paragraph, persona, renunciation, section, text_, textAuthor, textEditor, textItem, textShare, user, userPersona } from '#lib/server/db/schema.js';
 
 /**
  * What the app works with: the text as one ordered list. An item with `level` 0 is a
@@ -99,7 +100,7 @@ async function accessible(id, locals) {
 }
 
 /**
- * The requester's texts (shared ones included), most recently changed first.
+ * The texts the requester authors (shared ones included) or edits, most recently changed first.
  * @param {App.Locals} locals
  */
 export async function listTexts(locals) {
@@ -107,22 +108,54 @@ export async function listTexts(locals) {
 	const rows = await db
 		.select({ id: text_.id, title: text_.title, type: text_.type, productionStatus: text_.productionStatus, visibility: text_.visibility, createdAt: text_.createdAt, updatedAt: text_.updatedAt })
 		.from(text_)
-		.where(uid ? ownedBy(uid) : isNull(text_.userId))
+		.where(uid ? or(ownedBy(uid), editedBy(uid)) : isNull(text_.userId))
 		.orderBy(desc(text_.updatedAt));
 	const authors = await namedAuthors(rows.map((r) => r.id));
 	return rows.map((r) => ({ ...r, author: authors.get(r.id)?.map((a) => a.name).join(', ') || null }));
 }
 
 /**
- * Rebuild a text's ordered list from its items.
+ * A text as the requester may read it, in its ordered list. What they may not see (a recanted or burned text's words)
+ * is replaced by a mark in each place, so the shape stays for the commentaries to hang on; a commentary shows others
+ * only its public comments.
  * @param {string} id
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, publicized: boolean, authors: string[], importedDetails: Record<string, string>[], items: Item[] } | null>}
+ * @returns {Promise<{ id: string, title: string, rallyStyle: string | null, publicized: boolean, access: 'author' | 'editor' | 'reader', canEdit: boolean, canComment: boolean, type: string, productionStatus: string, visibility: string, repressible: boolean, lockedIds: string[], authors: string[], importedDetails: Record<string, string>[], items: Item[] } | null>}
  */
 export async function loadText(id, locals) {
-	const row = await accessible(id, locals);
-	if (!row) return null;
-	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id), importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []), items: await itemsOf(id) };
+	const s = await standing(owner(locals), id);
+	if (!s?.read) return null;
+	const { row, author, editor } = s;
+	let items = await itemsOf(id);
+	if (row.type === 'commentary' && !(author || editor || s.overReferent)) {
+		const open = new Set((await db.select({ id: paragraph.id }).from(textItem).innerJoin(paragraph, eq(paragraph.id, textItem.paragraphId)).where(and(eq(textItem.textId, id), eq(paragraph.public, true)))).map((r) => r.id));
+		items = items.filter((i) => i.level > 0 || open.has(i.id));
+	}
+	if (!s.content || row.productionStatus === 'burned') {
+		const mark = `[${row.productionStatus}]`;
+		items = items.map((i) => ({ id: i.id, level: i.level, frontmatter: i.frontmatter, backmatter: i.backmatter, text: i.level > 0 ? `${'#'.repeat(i.level)} ${mark}` : mark }));
+	}
+	const canEdit = (author || editor) && !isLocked(row);
+	const co = (await authorIds(id)).length > 1;
+	const [left] = await db.select({ id: renunciation.textId }).from(renunciation).innerJoin(userPersona, eq(userPersona.personaId, renunciation.personaId)).where(and(eq(renunciation.textId, id), eq(userPersona.userId, /** @type {string} */ (owner(locals))))).limit(1);
+	return {
+		id: row.id,
+		title: row.title,
+		rallyStyle: row.rallyStyle,
+		publicized: !canEdit,
+		access: author ? 'author' : editor ? 'editor' : 'reader',
+		canEdit,
+		canComment: s.comment,
+		type: row.type,
+		productionStatus: row.productionStatus,
+		visibility: row.visibility,
+		// whether the repress menu has anything in it for the requester
+		repressible: ((author || editor) && isPermanent(row)) || (author && co) || !!left,
+		lockedIds: row.type === 'commentary' ? [...(await lockedParagraphs(db, id))] : [],
+		authors: await authorNames(id),
+		importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []),
+		items
+	};
 }
 
 /**
@@ -137,7 +170,7 @@ export async function publicAbout(id, uid) {
 		.select({ title: text_.title, productionStatus: text_.productionStatus, visibility: text_.visibility })
 		.from(text_)
 		.where(and(eq(text_.id, id), sql`exists (select 1 from ${CREDITED} c where c.text_id = ${id} and c.user_id = ${uid})`));
-	return row && isPublicized(row) ? { title: row.title, items: await itemsOf(id) } : null;
+	return row && isPublication(row) ? { title: row.title, items: await itemsOf(id) } : null;
 }
 
 /**
@@ -185,17 +218,47 @@ async function itemsOf(id) {
  *  - an item whose id belongs to content only other texts use is linked, not changed
  *    (a save from one text never rewrites another text's content);
  *  - content that this text used and no text uses any more is deleted.
+ * Content only texts the writer neither authors nor edits use can't be linked (that would be a way to read it), and
+ * content a publication or palimpsest also uses is never rewritten.
  * @param {string} id
  * @param {Item[]} items
+ * @param {string} uid who is writing
+ * @returns {Promise<boolean>} false (and nothing is written) when an item belongs to someone else's text
  */
-async function writeItems(id, items) {
-	await db.transaction(async (tx) => {
+async function writeItems(id, items, uid) {
+	return db.transaction(async (tx) => {
 		const before = await tx
 			.select({ paragraphId: textItem.paragraphId, sectionId: textItem.sectionId })
 			.from(textItem)
 			.where(eq(textItem.textId, id));
 		const hadParagraphs = new Set(before.map((r) => r.paragraphId).filter((x) => x !== null));
 		const hadSections = new Set(before.map((r) => r.sectionId).filter((x) => x !== null));
+
+		for (const [column, had, level] of /** @type {const} */ ([[textItem.paragraphId, hadParagraphs, false], [textItem.sectionId, hadSections, true]])) {
+			const fresh = items.filter((i) => i.level > 0 === level && !had.has(i.id)).map((i) => i.id);
+			for (let k = 0; k < fresh.length; k += CHUNK) {
+				const rows = await tx
+					.select({ id: column, open: sql`bool_or(${or(ownedBy(uid), editedBy(uid))})` })
+					.from(textItem)
+					.innerJoin(text_, eq(text_.id, textItem.textId))
+					.where(inArray(column, fresh.slice(k, k + CHUNK)))
+					.groupBy(column);
+				if (rows.some((r) => !r.open)) return false;
+			}
+		}
+		// what a publication or palimpsest holds stays as it is, whoever else uses it
+		const kept = new Set();
+		for (const column of [textItem.paragraphId, textItem.sectionId]) {
+			const ids = /** @type {string[]} */ ([...(column === textItem.paragraphId ? hadParagraphs : hadSections)]);
+			for (let k = 0; k < ids.length; k += CHUNK) {
+				const rows = await tx
+					.select({ id: column })
+					.from(textItem)
+					.innerJoin(text_, eq(text_.id, textItem.textId))
+					.where(and(inArray(column, ids.slice(k, k + CHUNK)), ne(text_.id, id), eq(text_.visibility, 'public'), inArray(text_.productionStatus, ['published', 'recanted', 'burned'])));
+				for (const r of rows) kept.add(r.id);
+			}
+		}
 
 		await tx.delete(textItem).where(eq(textItem.textId, id));
 
@@ -215,14 +278,14 @@ async function writeItems(id, items) {
 		// only other texts use are left exactly as they are
 		for (let k = 0; k < paragraphs.length; k += CHUNK) {
 			const rows = paragraphs.slice(k, k + CHUNK);
-			const own = rows.filter((r) => hadParagraphs.has(r.id));
+			const own = rows.filter((r) => hadParagraphs.has(r.id) && !kept.has(r.id));
 			const rest = rows.filter((r) => !hadParagraphs.has(r.id));
 			if (own.length) await tx.insert(paragraph).values(own).onConflictDoUpdate({ target: paragraph.id, set: { body: sql`excluded.body`, title: sql`excluded.title`, description: sql`excluded.description` } });
 			if (rest.length) await tx.insert(paragraph).values(rest).onConflictDoNothing();
 		}
 		for (let k = 0; k < sections.length; k += CHUNK) {
 			const rows = sections.slice(k, k + CHUNK);
-			const own = rows.filter((r) => hadSections.has(r.id));
+			const own = rows.filter((r) => hadSections.has(r.id) && !kept.has(r.id));
 			const rest = rows.filter((r) => !hadSections.has(r.id));
 			if (own.length) await tx.insert(section).values(own).onConflictDoUpdate({ target: section.id, set: { title: sql`excluded.title` } });
 			if (rest.length) await tx.insert(section).values(rest).onConflictDoNothing();
@@ -243,6 +306,7 @@ async function writeItems(id, items) {
 			await tx.delete(section).where(and(inArray(section.id, ids), notExists(tx.select().from(textItem).where(eq(textItem.sectionId, section.id)))));
 		}
 		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, id));
+		return true;
 	});
 }
 
@@ -256,36 +320,48 @@ async function writeItems(id, items) {
  * @param {Record<string, string>[]} [importedDetails] where the text was imported from, and its rights (from parseImportedDetails)
  */
 export async function createText(locals, title, items, visibility, rallyStyle = null, importedDetails = []) {
-	const uid = owner(locals);
-	const personaId = uid ? await selfPersonaId(uid) : null;
+	const uid = /** @type {string} */ (owner(locals));
+	const personaId = await selfPersonaId(uid);
 	const [row] = await db.insert(text_).values({ userId: uid, personaId, visibility, rallyStyle, title: title ?? 'Untitled', importedDetails: importedDetails.length ? importedDetails : null }).returning({ id: text_.id });
 	if (personaId) await setAuthors(db, row.id, [personaId]);
-	await writeItems(row.id, items);
+	if (!(await writeItems(row.id, items, uid))) {
+		await db.delete(text_).where(eq(text_.id, row.id));
+		return null;
+	}
 	return row.id;
 }
 
 /**
- * Replace an existing text's contents (and optionally its title).
+ * Replace an existing text's contents. Its authors and editors may, while its words are open to change; in a published
+ * commentary the public comments are not.
  * @param {string} id
  * @param {App.Locals} locals
  * @param {Item[]} items
- * @param {string | undefined} title
- * @param {{ productionStatus?: string, visibility?: string }} [status]
  * @param {Record<string, string>[]} [addDetails] imported details to add to the text's own (an import into an existing text)
- * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
+ * @returns {Promise<true | false | 'locked' | 'memory' | 'foreign'>} false when the text does not exist or is not the requester's to edit
  */
-export async function saveText(id, locals, items, title, status = {}, addDetails = []) {
-	const row = await accessible(id, locals);
-	if (!row) return false;
-	if (isPublicized(row)) return 'locked';
-	if (title) await db.update(text_).set({ title }).where(eq(text_.id, id));
-	if (status.productionStatus || status.visibility) await db.update(text_).set(status).where(eq(text_.id, id));
+export async function saveText(id, locals, items, addDetails = []) {
+	const uid = owner(locals);
+	const s = await standing(uid, id);
+	if (!uid || !s || !(s.author || s.editor)) return false;
+	const { row } = s;
+	if (isLocked(row)) return 'locked';
+	if (row.type === 'commentary') {
+		const locked = await lockedParagraphs(db, id);
+		if (locked.size) {
+			const had = (await itemsOf(id)).filter((i) => locked.has(i.id));
+			const next = new Map(items.map((i) => [i.id, i]));
+			const same = (/** @type {Item} */ a, /** @type {Item | undefined} */ b) => !!b && a.text === b.text && (a.title ?? '') === (b.title ?? '') && (a.description ?? '') === (b.description ?? '');
+			if (!had.every((i) => same(i, next.get(i.id)))) return 'memory';
+		}
+	}
+	if (!(await writeItems(id, items, uid))) return 'foreign';
 	if (addDetails.length) {
 		const had = /** @type {Record<string, string>[]} */ (row.importedDetails ?? []);
 		const fresh = addDetails.filter((d) => !had.some((h) => h.source === d.source && h.sourceUrl === d.sourceUrl && h.title === d.title));
 		if (fresh.length) await db.update(text_).set({ importedDetails: [...had, ...fresh].slice(0, MAX_DETAILS) }).where(eq(text_.id, id));
 	}
-	await writeItems(id, items);
+	if (row.type === 'commentary') await syncCommentary(db, id);
 	return true;
 }
 
@@ -300,19 +376,15 @@ export const isRallyStyle = (v) => typeof v === 'string' && ['compose', 'copy', 
  * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
  */
 export async function setRallyStyle(id, locals, rallyStyle) {
-	const row = await accessible(id, locals);
-	if (!row) return false;
-	if (isPublicized(row)) return 'locked';
+	const s = await standing(owner(locals), id);
+	if (!s || !(s.author || s.editor)) return false;
+	if (isLocked(s.row)) return 'locked';
 	await db.update(text_).set({ rallyStyle }).where(eq(text_.id, id));
 	return true;
 }
 
 /** @param {unknown} v */
 export const isVisibility = (v) => typeof v === 'string' && VISIBILITIES.includes(v);
-/** @param {unknown} v */
-export const isCommentPolicy = (v) => typeof v === 'string' && COMMENT_POLICIES.includes(v);
-/** @param {unknown} v */
-export const isProductionStatus = (v) => typeof v === 'string' && PRODUCTION_STATUSES.includes(v);
 
 /**
  * What the profile's lists say about commentaries: which of the user's texts have one (their own, or a public one by
@@ -359,66 +431,31 @@ export async function commentaryOverview(uid) {
 }
 
 /**
- * Delete a text and the paragraphs and sections that only it used.
- * @param {string} id
- * @param {App.Locals} locals
- * @returns {Promise<true | false | 'commented' | 'locked'>} false when the text does not exist or is not the requester's; 'commented' when it has commentaries, so it is kept; 'locked' when it is published and public
- */
-export async function deleteText(id, locals) {
-	const row = await accessible(id, locals);
-	if (!row) return false;
-	if (isPublicized(row)) return 'locked';
-	// a text that has commentaries (by anyone) can't go: they exist only in relation to it
-	const [commented] = await db.select({ id: text_.id }).from(text_).where(eq(text_.commentaryOn, id)).limit(1);
-	if (commented) return 'commented';
-	await db.transaction(async (tx) => {
-		const items = await tx.select({ p: textItem.paragraphId, s: textItem.sectionId }).from(textItem).where(eq(textItem.textId, id));
-		await tx.delete(text_).where(eq(text_.id, id)); // its text_item rows go with it
-		const ps = /** @type {string[]} */ (items.map((i) => i.p).filter(Boolean));
-		const ss = /** @type {string[]} */ (items.map((i) => i.s).filter(Boolean));
-		for (let k = 0; k < ps.length; k += CHUNK) {
-			await tx.delete(paragraph).where(and(inArray(paragraph.id, ps.slice(k, k + CHUNK)), notExists(tx.select().from(textItem).where(eq(textItem.paragraphId, paragraph.id)))));
-		}
-		for (let k = 0; k < ss.length; k += CHUNK) {
-			await tx.delete(section).where(and(inArray(section.id, ss.slice(k, k + CHUNK)), notExists(tx.select().from(textItem).where(eq(textItem.sectionId, section.id)))));
-		}
-	});
-	return true;
-}
-
-/**
- * Erase all of a text's content, keeping the text itself (its title and other properties).
- * Content only this text used is deleted; content other texts share stays with them.
- * @param {string} id
- * @param {App.Locals} locals
- * @returns {Promise<true | false | 'locked'>} false when the text does not exist or is not the requester's; 'locked' when it is published and public
- */
-export async function wipeText(id, locals) {
-	const row = await accessible(id, locals);
-	if (!row) return false;
-	if (isPublicized(row)) return 'locked';
-	await writeItems(id, []);
-	return true;
-}
-
-/**
- * A text's properties (everything but its content), for the settings modal.
+ * A text's properties (everything but its content), for the settings modal: for its authors, and (to read, and to
+ * propose from) its editors.
  * @param {string} id
  * @param {App.Locals} locals
  */
 export async function loadTextProperties(id, locals) {
-	const row = await accessible(id, locals);
-	if (!row) return null;
+	const s = await standing(owner(locals), id);
+	if (!s || !(s.author || s.editor)) return null;
+	const { row } = s;
+	const editors = await db.select({ id: textEditor.personaId }).from(textEditor).where(eq(textEditor.textId, id));
+	const shares = await db.select({ userId: textShare.userId, groupId: textShare.groupId, privilege: textShare.privilege }).from(textShare).where(eq(textShare.textId, id));
 	return {
 		id: row.id,
 		title: row.title,
+		description: row.description ?? '',
 		type: row.type,
+		access: s.author ? 'author' : 'editor',
 		personaIds: await authorIds(id),
+		editorIds: editors.map((e) => e.id),
+		shares,
 		productionStatus: row.productionStatus,
 		visibility: row.visibility,
 		commentPolicy: row.commentPolicy,
 		importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []),
-		publicized: isPublicized(row),
+		publicized: isPermanent(row),
 		createdAt: row.createdAt.toISOString(),
 		updatedAt: row.updatedAt.toISOString()
 	};
@@ -512,64 +549,35 @@ export async function authorOptions(textId, locals) {
 }
 
 /**
- * Change a text's properties.
- * @param {string} id
- * @param {App.Locals} locals
- * @param {{ title: string, personaIds: string[], productionStatus: string, visibility: string, commentPolicy: string }} next
- * @returns {Promise<{ ok: true } | { ok: false, status: number, message: string }>}
- */
-export async function updateTextProperties(id, locals, { title, personaIds, productionStatus, visibility, commentPolicy }) {
-	const row = await accessible(id, locals);
-	if (!row) return { ok: false, status: 404, message: 'No such text' };
-	if (!title) return { ok: false, status: 400, message: 'Enter a title.' };
-	if (!isProductionStatus(productionStatus) || !isVisibility(visibility) || !isCommentPolicy(commentPolicy)) return { ok: false, status: 400, message: 'Choose a production status, visibility and commenting policy.' };
-	const choices = await authorChoices(locals);
-	const options = await authorOptions(id, locals);
-	const unique = [...new Set(personaIds)];
-	// at least one author stays the requester's, so saving never shuts them out of the text
-	if (!unique.every((p) => options.some((o) => o.id === p)) || !unique.some((p) => choices.some((c) => c.id === p))) return { ok: false, status: 400, message: 'Choose at least one of your personae as an author.' };
-	if (isPublicized(row)) {
-		// nothing about a published, public text may change, except who may comment on it
-		const had = await authorIds(id);
-		const same = title === row.title && productionStatus === row.productionStatus && visibility === row.visibility && had.length === unique.length && had.every((p) => unique.includes(p));
-		if (!same) return { ok: false, status: 409, message: LOCKED_MESSAGE };
-		await db.update(text_).set({ commentPolicy }).where(eq(text_.id, id));
-		return { ok: true };
-	}
-	await db.transaction(async (tx) => {
-		await tx.update(text_).set({ title, productionStatus, visibility, commentPolicy }).where(eq(text_.id, id));
-		await setAuthors(tx, id, unique);
-	});
-	return { ok: true };
-}
-
-/**
- * Copy a text into a new one called `COPYOF--<title>`, with the same properties and content.
- * The copy gets fresh paragraph and section ids, so it shares nothing with the original.
+ * Copy a text into a new one called `COPYOF--<title>`, with the same content. The copy starts over as a private
+ * manuscript (so copying a publication makes nothing permanent). It gets fresh paragraph and section ids, so it shares
+ * nothing with the original. Only an author may.
  * @param {string} id
  * @param {App.Locals} locals
  * @returns {Promise<string | null>} the copy's id; null when the text does not exist or is not the requester's
  */
 export async function duplicateText(id, locals) {
 	const row = await accessible(id, locals);
-	const loaded = row && (await loadText(id, locals));
-	if (!row || !loaded) return null;
+	if (!row || row.productionStatus === 'burned') return null;
+	const uid = /** @type {string} */ (owner(locals));
+	const items = await itemsOf(id);
 	const [copy] = await db
 		.insert(text_)
 		.values({
 			// the copy is saved under whoever made it; its authors (and so its owners) are the original's
-			userId: owner(locals),
+			userId: uid,
 			personaId: row.personaId,
 			type: row.type,
-			productionStatus: row.productionStatus,
-			visibility: row.visibility,
+			commentaryOn: row.commentaryOn,
 			commentPolicy: row.commentPolicy,
+			description: row.description,
 			importedDetails: row.importedDetails,
 			title: `COPYOF--${row.title}`.slice(0, 200)
 		})
 		.returning({ id: text_.id });
 	await setAuthors(db, copy.id, await authorIds(id));
-	await writeItems(copy.id, loaded.items.map((i) => ({ ...i, id: crypto.randomUUID() })));
+	await writeItems(copy.id, items.map((i) => ({ ...i, id: crypto.randomUUID() })), uid);
+	if (row.type === 'commentary') await syncCommentary(db, copy.id);
 	return copy.id;
 }
 
@@ -613,6 +621,7 @@ export async function ensureCommentary(uid, original) {
 	const title = commentaryTitle(await authorNames(original.id), original.title);
 	return db.transaction(async (tx) => {
 		const commentary = (await commentaryBy(tx, uid, original.id)) ?? (await createCommentary(tx, { uid, personaId, textId: original.id, title }));
+		await syncCommentary(tx, commentary.id);
 		return commentary.id;
 	});
 }
@@ -621,46 +630,68 @@ export async function ensureCommentary(uid, original) {
  * Leave a comment on one or more paragraphs of a text (a section is commented on by naming all its paragraphs). A commentary
  * is a text too, so it can be commented on in turn. The comment is a paragraph in the requester's commentary on that text;
  * the commentary is created (named "Commentary on <authors>'s <title>") by the first comment, so a comment never
- * exists without a text to belong to.
- * For now only a text's owners may comment: the comment policy is not enforced yet because other people can't open
- * a text they don't own. Which commentary is the requester's is `commentaryBy`'s answer.
+ * exists without a text to belong to. Who may comment is `standing`'s answer. A comment is private (for the authors'
+ * and editors' eyes) unless marked public. Which commentary is the requester's is `commentaryBy`'s answer.
  * @param {string} textId the text commented on
  * @param {App.Locals} locals
  * @param {string[]} paragraphIds the paragraphs commented on (paragraphs of that text)
  * @param {string} body the comment
+ * @param {boolean} [open] mark it public
  * @returns {Promise<{ ok: true, commentaryId: string, commentId: string, created: boolean } | { ok: false, status: number, message: string }>}
  */
-export async function addComment(textId, locals, paragraphIds, body) {
-	const original = await accessible(textId, locals);
+export async function addComment(textId, locals, paragraphIds, body, open = false) {
 	const uid = owner(locals);
-	if (!original || !uid) return { ok: false, status: 404, message: 'No such text' };
+	const s = await standing(uid, textId);
+	if (!uid || !s?.read) return { ok: false, status: 404, message: 'No such text' };
+	if (!s.comment) return { ok: false, status: 403, message: isPalimpsest(s.row) ? "A repressed text takes no new comments." : "You can't comment on this text." };
 	if (!body.trim()) return { ok: false, status: 400, message: 'Write a comment.' };
 	const targets = [...new Set(paragraphIds)];
 	if (!targets.length || targets.length > CHUNK || !targets.every((id) => UUID.test(id))) return { ok: false, status: 400, message: 'Choose a paragraph.' };
 	const onText = await db.select({ p: textItem.paragraphId }).from(textItem).where(and(eq(textItem.textId, textId), inArray(textItem.paragraphId, targets)));
 	if (new Set(onText.map((r) => r.p)).size !== targets.length) return { ok: false, status: 400, message: "That paragraph isn't in this text." };
 	const personaId = await selfPersonaId(uid);
-	const title = commentaryTitle(await authorNames(textId), original.title);
+	const title = commentaryTitle(await authorNames(textId), s.row.title);
 
 	return db.transaction(async (tx) => {
 		let commentary = await commentaryBy(tx, uid, textId);
-		// comments are part of their commentary: once that is published and public they are frozen, and no more can be added
-		if (commentary && isPublicized(commentary)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
+		if (commentary && isPalimpsest(commentary)) return { ok: false, status: 409, message: 'You have repressed your commentary on this text, so nothing more goes into it.' };
 		const created = !commentary;
 		if (!commentary) {
 			commentary = await createCommentary(tx, { uid, personaId, textId, title });
 		}
 		const [{ n }] = await tx.select({ n: sql`count(*)::int` }).from(textItem).where(eq(textItem.textId, commentary.id));
-		const [para] = await tx.insert(paragraph).values({ body: body.trim() }).returning({ id: paragraph.id });
+		const [para] = await tx.insert(paragraph).values({ body: body.trim(), public: open }).returning({ id: paragraph.id });
 		await tx.insert(textItem).values({ textId: commentary.id, position: Number(n), paragraphId: para.id });
 		const [row] = await tx.insert(comment).values({ commentaryId: commentary.id, bodyParagraphId: para.id }).returning({ id: comment.id });
 		await tx.insert(commentParagraph).values(targets.map((paragraphId) => ({ commentId: row.id, paragraphId })));
+		await syncCommentary(tx, commentary.id);
 		return { ok: true, commentaryId: commentary.id, commentId: row.id, created };
 	});
 }
 
 /**
- * Change the words of a comment of the requester's, on this text. Comments in a published, public commentary are frozen.
+ * One of the requester's comments on a text (in a commentary they author or edit), if it may still change.
+ * @param {string} textId the text commented on
+ * @param {App.Locals} locals
+ * @param {string} commentId
+ * @returns {Promise<{ ok: true, commentaryId: string, paragraphId: string } | { ok: false, status: number, message: string }>}
+ */
+export async function ownComment(textId, locals, commentId) {
+	const uid = owner(locals);
+	const missing = /** @type {const} */ ({ ok: false, status: 404, message: 'No such comment' });
+	if (!uid || !UUID.test(textId) || !UUID.test(commentId)) return missing;
+	const [row] = await db
+		.select({ commentaryId: comment.commentaryId, paragraphId: comment.bodyParagraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(comment)
+		.innerJoin(text_, eq(text_.id, comment.commentaryId))
+		.where(and(eq(comment.id, commentId), eq(text_.commentaryOn, textId), or(ownedBy(uid), editedBy(uid))));
+	if (!row) return missing;
+	if (isPalimpsest(row) || (await lockedParagraphs(db, row.commentaryId)).has(row.paragraphId)) return { ok: false, status: 409, message: PUBLIC_MEMORY_MESSAGE };
+	return { ok: true, commentaryId: row.commentaryId, paragraphId: row.paragraphId };
+}
+
+/**
+ * Change the words of a comment of the requester's, on this text.
  * @param {string} textId the text commented on
  * @param {App.Locals} locals
  * @param {string} commentId
@@ -668,16 +699,9 @@ export async function addComment(textId, locals, paragraphIds, body) {
  * @returns {Promise<{ ok: true, commentaryId: string } | { ok: false, status: number, message: string }>}
  */
 export async function editComment(textId, locals, commentId, body) {
-	const uid = owner(locals);
-	if (!uid || !(await accessible(textId, locals)) || !UUID.test(commentId)) return { ok: false, status: 404, message: 'No such comment' };
+	const row = await ownComment(textId, locals, commentId);
+	if (!row.ok) return row;
 	if (!body.trim()) return { ok: false, status: 400, message: 'Write a comment.' };
-	const [row] = await db
-		.select({ commentaryId: comment.commentaryId, paragraphId: comment.bodyParagraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
-		.from(comment)
-		.innerJoin(text_, eq(text_.id, comment.commentaryId))
-		.where(and(eq(comment.id, commentId), eq(text_.commentaryOn, textId), ownedBy(uid)));
-	if (!row) return { ok: false, status: 404, message: 'No such comment' };
-	if (isPublicized(row)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
 	await db.transaction(async (tx) => {
 		await tx.update(paragraph).set({ body: body.trim() }).where(eq(paragraph.id, row.paragraphId));
 		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, row.commentaryId));
@@ -686,23 +710,16 @@ export async function editComment(textId, locals, commentId, body) {
 }
 
 /**
- * Delete one of the requester's comments on this text: its row, and its words in their commentary. Comments in a published,
- * public commentary are frozen. The commentary itself stays, even when this was its last comment.
+ * Delete one of the requester's comments on this text: its row, and its words in their commentary. The commentary
+ * itself stays, even when this was its last comment.
  * @param {string} textId the text commented on
  * @param {App.Locals} locals
  * @param {string} commentId
  * @returns {Promise<{ ok: true, commentaryId: string } | { ok: false, status: number, message: string }>}
  */
 export async function deleteComment(textId, locals, commentId) {
-	const uid = owner(locals);
-	if (!uid || !(await accessible(textId, locals)) || !UUID.test(commentId)) return { ok: false, status: 404, message: 'No such comment' };
-	const [row] = await db
-		.select({ commentaryId: comment.commentaryId, paragraphId: comment.bodyParagraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
-		.from(comment)
-		.innerJoin(text_, eq(text_.id, comment.commentaryId))
-		.where(and(eq(comment.id, commentId), eq(text_.commentaryOn, textId), ownedBy(uid)));
-	if (!row) return { ok: false, status: 404, message: 'No such comment' };
-	if (isPublicized(row)) return { ok: false, status: 409, message: 'Your commentary on this text is published and public, so its comments are frozen.' };
+	const row = await ownComment(textId, locals, commentId);
+	if (!row.ok) return row;
 	await db.transaction(async (tx) => {
 		await tx.delete(comment).where(eq(comment.id, commentId));
 		const inCommentary = eq(textItem.textId, row.commentaryId);
@@ -715,37 +732,53 @@ export async function deleteComment(textId, locals, commentId) {
 		// words another text has taken up stay with it
 		await tx.delete(paragraph).where(and(eq(paragraph.id, row.paragraphId), notExists(tx.select().from(textItem).where(eq(textItem.paragraphId, paragraph.id)))));
 		await tx.update(text_).set({ updatedAt: new Date() }).where(eq(text_.id, row.commentaryId));
+		await syncCommentary(tx, row.commentaryId);
 	});
 	return { ok: true, commentaryId: row.commentaryId };
 }
 
 /**
- * The comments on a text, oldest first: those in the requester's own commentary and in public ones.
+ * The comments on a text that the requester may see, oldest first: all of them for the text's authors and editors,
+ * their own commentary's for its authors and editors, and otherwise those marked public. A repressed commentary's
+ * words are withheld as a text's are.
  * @param {string} textId
  * @param {App.Locals} locals
- * @returns {Promise<{ id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean }[] | null>} null when the requester can't open the text
+ * @returns {Promise<{ id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean, public: boolean, markable: boolean }[] | null>} null when the requester can't read the text
  */
 export async function listComments(textId, locals) {
-	if (!(await accessible(textId, locals))) return null;
-	const uid = /** @type {string} */ (owner(locals));
+	const uid = owner(locals);
+	const s = await standing(uid, textId);
+	if (!uid || !s?.read) return null;
 	const rows = await db
-		.select({ id: comment.id, commentaryId: comment.commentaryId, body: paragraph.body, createdAt: comment.createdAt, paragraphId: commentParagraph.paragraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.select({ id: comment.id, commentaryId: comment.commentaryId, body: paragraph.body, open: paragraph.public, bodyId: paragraph.id, createdAt: comment.createdAt, paragraphId: commentParagraph.paragraphId, productionStatus: text_.productionStatus, visibility: text_.visibility })
 		.from(comment)
 		.innerJoin(text_, eq(text_.id, comment.commentaryId))
 		.innerJoin(paragraph, eq(paragraph.id, comment.bodyParagraphId))
 		.innerJoin(commentParagraph, eq(commentParagraph.commentId, comment.id))
-		.where(and(eq(text_.commentaryOn, textId), or(ownedBy(uid), eq(text_.visibility, 'public'))))
+		.where(eq(text_.commentaryOn, textId))
 		.orderBy(asc(comment.createdAt), asc(comment.id));
+	const mine = new Map((await db.select({ id: text_.id, author: sql`${ownedBy(uid)}`.mapWith(Boolean) }).from(text_).where(and(eq(text_.commentaryOn, textId), or(ownedBy(uid), editedBy(uid))))).map((t) => [t.id, t.author]));
+	const seen = rows.filter((r) => mine.has(r.commentaryId) || s.author || s.editor || r.open);
 	/** @type {Map<string, string[]>} commentary -> its authors */
 	const names = new Map();
-	for (const id of new Set(rows.map((r) => r.commentaryId))) names.set(id, await authorNames(id));
-	const owned = new Set((await db.select({ id: text_.id }).from(text_).where(and(eq(text_.commentaryOn, textId), ownedBy(uid)))).map((t) => t.id));
-	/** @type {Map<string, { id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean }>} */
+	/** @type {Map<string, Set<string>>} commentary -> its paragraphs in public memory */
+	const memory = new Map();
+	for (const id of new Set(seen.map((r) => r.commentaryId))) {
+		names.set(id, await authorNames(id));
+		memory.set(id, await lockedParagraphs(db, id));
+	}
+	/** @type {Map<string, { id: string, commentaryId: string, authors: string[], body: string, createdAt: string, paragraphIds: string[], editable: boolean, public: boolean, markable: boolean }>} */
 	const out = new Map();
-	for (const r of rows) {
+	for (const r of seen) {
 		const c = out.get(r.id);
-		if (c) c.paragraphIds.push(r.paragraphId);
-		else out.set(r.id, { id: r.id, commentaryId: r.commentaryId, authors: names.get(r.commentaryId) ?? [], body: r.body, createdAt: r.createdAt.toISOString(), paragraphIds: [r.paragraphId], editable: owned.has(r.commentaryId) && !isPublicized(r) });
+		if (c) {
+			c.paragraphIds.push(r.paragraphId);
+			continue;
+		}
+		const own = mine.has(r.commentaryId);
+		const fixed = isPalimpsest(r) || !!memory.get(r.commentaryId)?.has(r.bodyId);
+		const withheld = r.productionStatus === 'burned' || (r.productionStatus === 'recanted' && !own);
+		out.set(r.id, { id: r.id, commentaryId: r.commentaryId, authors: names.get(r.commentaryId) ?? [], body: withheld ? `[${r.productionStatus}]` : r.body, createdAt: r.createdAt.toISOString(), paragraphIds: [r.paragraphId], editable: own && !fixed, public: r.open, markable: !!mine.get(r.commentaryId) && !fixed });
 	}
 	return [...out.values()];
 }

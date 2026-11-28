@@ -16,6 +16,15 @@ import { CREDITED, OWNERS } from '#lib/server/ownership.js';
  */
 
 const LIMIT = 60;
+
+/** The public texts a `where` picks out (publications, palimpsests and others), newest first, to be listed on a page. */
+async function publicTexts(/** @type {any} */ where) {
+	return /** @type {{ id: string, title: string, status: string, commentary: boolean }[]} */ ([
+		...(await db.execute(sql`
+			select t.id, t.title, t.production_status as status, t.type = 'commentary' as commentary from text t
+			where t.visibility = 'public' and ${where} order by t.created_at desc limit ${LIMIT}`))
+	]);
+}
 const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 
 /** ids of the users related to `me` in each way the community page browses by */
@@ -175,7 +184,8 @@ export async function personaPage(id, me) {
 	if (self) return { selfOf: self.userId };
 	const pseudonymous = holders.some((h) => h.pseudonymous);
 	// nothing about a pseudonymous persona's users leaves the server
-	return { selfOf: null, persona: card, pseudonymous, users: pseudonymous ? [] : await cardsFor(holders.map((h) => h.userId), me) };
+	const texts = await publicTexts(sql`exists (select 1 from text_author a where a.text_id = t.id and a.persona_id = ${id})`);
+	return { selfOf: null, persona: card, pseudonymous, texts, users: pseudonymous ? [] : await cardsFor(holders.map((h) => h.userId), me) };
 }
 
 /**
@@ -197,7 +207,9 @@ export async function userPage(id, me) {
 	return {
 		user: card,
 		about: { markdown: row.about ?? '', text: row.aboutTextId ? await publicAbout(row.aboutTextId, id) : null },
-		personae: await personaCardsFor(shown.map((p) => p.id), me)
+		personae: await personaCardsFor(shown.map((p) => p.id), me),
+		// only what is credited to them, so no pseudonymous persona is given away
+		texts: await publicTexts(sql`exists (select 1 from ${CREDITED} c where c.text_id = t.id and c.user_id = ${id})`)
 	};
 }
 

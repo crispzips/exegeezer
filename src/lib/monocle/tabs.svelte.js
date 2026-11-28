@@ -5,7 +5,7 @@ import { EXAMPLE_ITEMS, EXAMPLE_TITLE } from '#lib/exampleText.js';
 import { History } from '#lib/utilities/history.svelte.js';
 import { cleanMarkdown } from '#lib/utilities/cleanMarkdown.js';
 import { splitParagraphs } from '#lib/utilities/splitParagraphs.js';
-import { fetchSaved, rememberedText } from './document.svelte.js';
+import { fetchSaved, newStanding, rememberedText } from './document.svelte.js';
 import { VIEWS } from './settings.svelte.js';
 import { toItems, withFrontmatter } from './items.js';
 
@@ -26,7 +26,8 @@ const dissertationFiles = import.meta.glob('/src/lib/assets/Dissertation.md', { 
  * @typedef {{
  *   key: string, textId: string | null, title: string, view: import('./settings.svelte.js').View, focusId: string | null,
  *   items: any[] | null, history: History<any> | null, lastSaved: string, authors: string[], publicized: boolean,
- *   rallyStyle: string | null, markdown: boolean, pendingDetails: Record<string, string>[], lastActive: number
+ *   rallyStyle: string | null, markdown: boolean, pendingDetails: Record<string, string>[], lastActive: number,
+ *   standing: import('./document.svelte.js').Standing
  * }} Tab
  * (`items` is null while the tab is deloaded)
  */
@@ -106,7 +107,7 @@ export class Tabs {
 
     /** @param {Partial<Tab>} [from] @returns {Tab} */
     create = (from = {}) => {
-        return { key: crypto.randomUUID(), textId: null, title: 'Untitled', view: this.monocle.settings.view, focusId: null, items: null, history: null, lastSaved: '', authors: [], publicized: false, rallyStyle: null, markdown: false, pendingDetails: [], lastActive: 0, ...from };
+        return { key: crypto.randomUUID(), textId: null, title: 'Untitled', view: this.monocle.settings.view, focusId: null, items: null, history: null, lastSaved: '', authors: [], publicized: false, rallyStyle: null, markdown: false, pendingDetails: [], lastActive: 0, standing: newStanding(), ...from };
     };
 
     /** an empty tab: its content is the empty-state tree @returns {Tab} */
@@ -120,7 +121,7 @@ export class Tabs {
     /** File the page's live state away in the active tab's record. */
     captureActive = () => {
         const { doc, settings } = this.monocle;
-        if (this.activeKey) this.patch(this.activeKey, { textId: doc.id, title: doc.title, authors: doc.authors, publicized: doc.publicized, rallyStyle: doc.rallyStyle, markdown: doc.markdown, items: doc.items, history: doc.history, lastSaved: doc.lastSaved, pendingDetails: $state.snapshot(doc.pendingDetails), view: settings.view, focusId: doc.focusId });
+        if (this.activeKey) this.patch(this.activeKey, { textId: doc.id, title: doc.title, authors: doc.authors, publicized: doc.publicized, standing: doc.standing, rallyStyle: doc.rallyStyle, markdown: doc.markdown, items: doc.items, history: doc.history, lastSaved: doc.lastSaved, pendingDetails: $state.snapshot(doc.pendingDetails), view: settings.view, focusId: doc.focusId });
     };
 
     /** Save the active tab's text and wait for it. @returns {Promise<boolean>} whether it is safe to leave the tab */
@@ -203,6 +204,7 @@ export class Tabs {
                 doc.title = target.title;
                 doc.authors = target.authors;
                 doc.publicized = target.publicized;
+                doc.standing = target.standing;
                 doc.rallyStyle = target.rallyStyle;
                 doc.markdown = target.markdown;
                 doc.pendingDetails = target.pendingDetails;
@@ -277,16 +279,17 @@ export class Tabs {
         const byId = new Map(texts.map((t) => [t.id, t]));
         const stored = this.readStored();
         this.list = stored.tabs
-            .filter((s, i) => byId.has(s.textId) && stored.tabs.findIndex((x) => x.textId === s.textId) === i)
+            // (someone else's text is not in the user's list: opening its tab asks whether it may still be read)
+            .filter((s, i) => stored.tabs.findIndex((x) => x.textId === s.textId) === i)
             .slice(0, MAX_TABS)
-            .map((s) => this.create({ textId: s.textId, title: byId.get(s.textId).title, view: VIEWS.includes(/** @type {any} */ (s.view)) ? /** @type {any} */ (s.view) : settings.view, focusId: s.focusId ?? null }));
+            .map((s) => this.create({ textId: s.textId, title: byId.get(s.textId)?.title ?? s.title ?? '', view: VIEWS.includes(/** @type {any} */ (s.view)) ? /** @type {any} */ (s.view) : settings.view, focusId: s.focusId ?? null }));
 
         const startNew = params.has('new');
         const wanted = params.get('text') ?? (startNew ? null : (stored.active ?? (stored.known ? null : rememberedText())));
         /** @type {Tab | undefined} */
-        let pick = wanted && byId.has(wanted) ? this.list.find((t) => t.textId === wanted) : undefined;
-        if (!pick && wanted && byId.has(wanted)) {
-            if (this.list.length < MAX_TABS) this.list = [...this.list, (pick = this.create({ textId: wanted, title: byId.get(wanted).title }))];
+        let pick = wanted ? this.list.find((t) => t.textId === wanted) : undefined;
+        if (!pick && wanted) {
+            if (this.list.length < MAX_TABS) this.list = [...this.list, (pick = this.create({ textId: wanted, title: byId.get(wanted)?.title ?? '' }))];
             else this.notify('Ten tabs are open, the most there can be. Close one to open another text.');
         }
         if (!pick && startNew && this.list.length < MAX_TABS) this.list = [...this.list, (pick = this.blank())];

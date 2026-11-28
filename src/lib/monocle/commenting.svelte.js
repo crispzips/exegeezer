@@ -36,7 +36,7 @@ export class Commenting {
         if (!this.monocle.settings.commenting) return undefined;
         const saved = this.fetched.textId === this.monocle.doc.id ? this.fetched.comments : [];
         // the new one counts as the latest, so it follows the others in its place
-        const draft = this.draftOn ? [{ id: DRAFT_ID, commentaryId: '', authors: [this.monocle.userName], body: '', createdAt: '9999', paragraphIds: this.draftOn }] : [];
+        const draft = this.draftOn ? [{ id: DRAFT_ID, commentaryId: '', authors: [this.monocle.userName], body: '', createdAt: '9999', paragraphIds: this.draftOn, public: false }] : [];
         return anchorComments([...saved, ...draft], this.monocle.doc.shown);
     });
     /** what the views mark: what is picked, and what the comment in the editor is about */
@@ -49,7 +49,7 @@ export class Commenting {
     constructor(monocle) {
         this.monocle = monocle;
         /** the one comment being written: its bubble, where the view puts it, is the editor */
-        this.editor = new CommentEditor({ send: (writing) => this.send(writing), textId: () => monocle.doc.id, failed: (problem) => monocle.tabs.notify(problem), remove: (on, id) => this.remove(on, id), askToRemove: (comment) => this.requestDelete(comment) });
+        this.editor = new CommentEditor({ send: (writing) => this.send(writing), textId: () => monocle.doc.id, failed: (problem) => monocle.tabs.notify(problem), remove: (on, id) => this.remove(on, id), askToRemove: (comment) => this.requestDelete(comment), askToMark: (comment, open) => this.requestMark(comment, open), published: () => this.published });
         provideCommentEditor(this.editor);
 
         // what was picked doesn't carry over to another text or mode
@@ -150,7 +150,8 @@ export class Commenting {
     compose = (paragraphIds) => {
         const id = this.monocle.doc.id;
         if (!this.monocle.authed || !id) return;
-        this.editor.start({ id: DRAFT_ID, textId: id, paragraphIds, body: '' });
+        if (!this.monocle.doc.standing.canComment) return this.monocle.tabs.notify(this.noComment);
+        this.editor.start({ id: DRAFT_ID, textId: id, paragraphIds, body: '', public: false });
         this.showAnchor(paragraphIds);
     };
 
@@ -197,13 +198,13 @@ export class Commenting {
     };
 
     /** @param {import('#lib/utilities/commentEditor.svelte.js').Writing} writing @returns {Promise<string | void>} what went wrong, if it did */
-    send = async ({ id, textId: on, paragraphIds, body }) => {
+    send = async ({ id, textId: on, paragraphIds, body, public: open }) => {
         const isNew = id === DRAFT_ID;
         await this.monocle.doc.queue; // let any save in flight finish first, so the paragraphs exist on the server
         const res = await fetch(`/api/texts/${on}/comments`, {
             method: isNew ? 'POST' : 'PATCH',
             headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(isNew ? { paragraphIds, body } : { commentId: id, body })
+            body: JSON.stringify(isNew ? { paragraphIds, body, public: open } : { commentId: id, body })
         });
         const answer = await res.json().catch(() => null);
         if (!res.ok) return answer?.message ?? 'Could not save the comment.';
@@ -249,6 +250,51 @@ export class Commenting {
             tabs.notify('Could not delete the comment.');
             await this.load(on);
         }
+    };
+
+    /** whether the open text has been published (a public comment on it can then never change) */
+    get published() {
+        return ['published', 'recanted', 'burned'].includes(this.monocle.doc.standing.productionStatus) && this.monocle.doc.standing.visibility === 'public';
+    }
+
+    get noComment() {
+        const { productionStatus } = this.monocle.doc.standing;
+        return productionStatus === 'recanted' || productionStatus === 'burned' ? 'A repressed text takes no new comments.' : "You can't comment on this text.";
+    }
+
+    /** Mark one of the user's comments public or private. On a published text, making it public is for good, so it is asked first.
+     * @param {import('#lib/utilities/comments.js').AnchoredComment} comment @param {boolean} open */
+    requestMark = (comment, open) => {
+        const { doc } = this.monocle;
+        const on = doc.id;
+        if (!on) return;
+        if (!open || !this.published) return void this.mark(on, comment.id, open);
+        doc.deleteRequest = {
+            title: 'Make this comment public for good?',
+            message: `"${excerptOf(comment.body)}"\n\nThe text is published, so a public comment on it enters public memory: it can't be changed, hidden or deleted.`,
+            confirm: 'Make public',
+            run: () => this.mark(on, comment.id, open)
+        };
+    };
+
+    /** @param {string} on the text commented on @param {string} commentId @param {boolean} open */
+    mark = async (on, commentId, open) => {
+        const { tabs, doc } = this.monocle;
+        try {
+            await doc.queue;
+            const commentaryId = this.fetched.comments.find((c) => c.id === commentId)?.commentaryId;
+            const res = await fetch(`/api/texts/${on}/comments`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ commentId, public: open }) });
+            const answer = await res.json().catch(() => null);
+            if (!res.ok) tabs.notify(answer?.message ?? 'Could not mark the comment.');
+            else {
+                tabs.deload(commentaryId);
+                if (answer?.message) tabs.notify(answer.message);
+            }
+        } catch (err) {
+            console.warn('Could not mark the comment', err);
+            tabs.notify('Could not mark the comment.');
+        }
+        await this.load(on);
     };
 
     commentPicked = () => {

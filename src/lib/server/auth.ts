@@ -15,6 +15,7 @@ import { sendEmail } from '#lib/server/email.ts';
 import { db } from '#lib/server/db/index.js';
 import { text_, user } from '#lib/server/db/schema.js';
 import { ensureSelfPersona } from '#lib/server/personae.js';
+import { handOverSharedTexts } from '#lib/server/ownership.js';
 
 export const auth = betterAuth({
 	baseURL: ORIGIN,
@@ -44,6 +45,12 @@ export const auth = betterAuth({
 	},
 	databaseHooks: {
 		user: {
+			delete: {
+				// deleting an account deletes the texts saved under it: ones it shares with others move to them first
+				before: async (gone) => {
+					await handOverSharedTexts(gone.id);
+				}
+			},
 			create: {
 				// every account (email or Google sign-up) starts with the persona "self";
 				// the very first account also adopts every text saved before accounts existed

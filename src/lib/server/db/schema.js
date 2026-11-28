@@ -121,7 +121,8 @@ export const text_ = pgTable(
   "text",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    // null = not tied to an account
+    // the account the text is saved under (null = not tied to an account). Not its only owner: every user with one of
+    // its author personae owns it too (see server/ownership.js)
     userId: text("user_id").references(() => user.id, { onDelete: "cascade" }),
     // the persona the text is written as (new texts get their owner's "self")
     personaId: uuid("persona_id").references(() => persona.id, { onDelete: "set null" }),
@@ -327,6 +328,8 @@ export const userPersonaRelations = relations(userPersona, ({ one }) => ({
 // only users can be followed; their ids will simply be stored in `target_id`). `owner_id` is always the user
 // the followed thing belongs to (for a user, themself), so following someone's anthology or collection makes
 // you "amiable" with its owner without a second lookup.
+// Following a user means following all their personae, including ones they make later, so that is not stored
+// persona by persona: `persona_follow` holds only the personae followed by themselves.
 // ---------------------------------------------------------------------------
 
 export const follow = pgTable(
@@ -349,5 +352,24 @@ export const follow = pgTable(
     index("follow_ownerId_idx").on(table.ownerId),
     check("follow_kind_check", sql`${table.kind} in ('user', 'anthology', 'collection')`),
     check("follow_not_self_check", sql`${table.followerId} <> ${table.ownerId}`),
+  ],
+);
+
+// A persona followed by itself. It has its own table because a persona can be shared by several users (so there is
+// no one `owner_id`), and so that deleting a persona removes its follows.
+export const personaFollow = pgTable(
+  "persona_follow",
+  {
+    followerId: text("follower_id")
+      .notNull()
+      .references(() => user.id, { onDelete: "cascade" }),
+    personaId: uuid("persona_id")
+      .notNull()
+      .references(() => persona.id, { onDelete: "cascade" }),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => [
+    primaryKey({ columns: [table.followerId, table.personaId] }),
+    index("persona_follow_personaId_idx").on(table.personaId),
   ],
 );

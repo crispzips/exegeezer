@@ -1,9 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
-import { and, asc, count, desc, eq } from 'drizzle-orm';
+import { and, asc, count, desc, eq, or } from 'drizzle-orm';
 import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.js';
 import { persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
-import { authorIds, commentaryOverview, deleteText, isProductionStatus, isVisibility, loadText, setAuthors } from '#lib/server/texts.js';
+import { authorIds, commentaryOverview, deleteText, isProductionStatus, isVisibility, loadText, namedAuthors, setAuthors } from '#lib/server/texts.js';
+import { ownedBy } from '#lib/server/ownership.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 import { isReservedName, selfPersonaId } from '#lib/server/personae.js';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -11,13 +12,13 @@ import { APIError } from 'better-auth/api';
 
 export const load = async ({ locals }) => {
 	if (!locals.user) redirect(302, '/login');
-	const [{ n }] = await db.select({ n: count() }).from(text_).where(eq(text_.userId, locals.user.id));
+	const [{ n }] = await db.select({ n: count() }).from(text_).where(ownedBy(locals.user.id));
 	const [row] = await db.select().from(user).where(eq(user.id, locals.user.id));
 	const texts = (
 		await db
 			.select({ id: text_.id, title: text_.title, type: text_.type, personaId: text_.personaId, productionStatus: text_.productionStatus, visibility: text_.visibility, createdAt: text_.createdAt, updatedAt: text_.updatedAt })
 			.from(text_)
-			.where(eq(text_.userId, locals.user.id))
+			.where(ownedBy(locals.user.id))
 			.orderBy(desc(text_.updatedAt))
 	).map((t) => ({ ...t, createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString() }));
 	const personae = (
@@ -29,23 +30,17 @@ export const load = async ({ locals }) => {
 			.orderBy(desc(userPersona.isSelf), asc(persona.createdAt))
 	).map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
 	// personae listed as the author of a published, public text can't be deleted
-	const used = await db.select({ id: text_.id, title: text_.title, type: text_.type, personaId: text_.personaId, productionStatus: text_.productionStatus, visibility: text_.visibility }).from(text_).where(eq(text_.userId, locals.user.id));
-	// every author of every one of the user's texts, in order (a text can have several)
-	const authorRows = await db
-		.select({ textId: textAuthor.textId, personaId: textAuthor.personaId })
-		.from(textAuthor)
-		.innerJoin(text_, eq(textAuthor.textId, text_.id))
-		.where(eq(text_.userId, locals.user.id))
-		.orderBy(asc(textAuthor.position));
+	const used = await db.select({ id: text_.id, title: text_.title, type: text_.type, personaId: text_.personaId, productionStatus: text_.productionStatus, visibility: text_.visibility }).from(text_).where(ownedBy(locals.user.id));
+	// every author of every one of the user's texts, in order (a text can have several, some of them other users')
+	const named = await namedAuthors(used.map((t) => t.id));
 	/** @type {Map<string, string[]>} */
-	const authorsOf = new Map();
-	for (const r of authorRows) authorsOf.set(r.textId, [...(authorsOf.get(r.textId) ?? []), r.personaId]);
+	const authorsOf = new Map([...named].map(([id, list]) => [id, list.map((a) => a.id)]));
 	const overview = await commentaryOverview(locals.user.id);
 	const publicizedIds = new Set(used.filter(isPublicized).map((t) => t.id));
-	const locked = new Set(authorRows.filter((r) => publicizedIds.has(r.textId)).map((r) => r.personaId));
+	const locked = new Set([...publicizedIds].flatMap((id) => authorsOf.get(id) ?? []));
 	// a persona's name as an author: a user's "self" is shown as the user's profile name
 	const authorName = (/** @type {{ isSelf: boolean, name: string }} */ pa) => (pa.isSelf ? row.name || pa.name : pa.name);
-	const authors = new Map(personae.map((pa) => [pa.id, authorName(pa)]));
+	const mine = new Set(personae.map((pa) => pa.id));
 	// "about me": Markdown, or one of the user's own published, public texts (shown in its place)
 	const aboutChoices = used.filter(isPublicized).map((t) => ({ id: t.id, title: t.title }));
 	const aboutText = row.aboutTextId && aboutChoices.some((t) => t.id === row.aboutTextId) ? await loadText(row.aboutTextId, locals) : null;
@@ -57,7 +52,7 @@ export const load = async ({ locals }) => {
 			choices: aboutChoices
 		},
 		textCount: n,
-		texts: texts.map((t) => ({ ...t, author: (authorsOf.get(t.id) ?? []).map((p) => authors.get(p)).filter(Boolean).join(', ') || null, publicized: isPublicized(t), commented: overview.commented.has(t.id), ...overview.commentaries.get(t.id) })),
+		texts: texts.map((t) => ({ ...t, author: named.get(t.id)?.map((a) => a.name).join(', ') || null, coAuthors: named.get(t.id)?.filter((a) => !mine.has(a.id)) ?? [], publicized: isPublicized(t), commented: overview.commented.has(t.id), ...overview.commentaries.get(t.id) })),
 		authorChoices: personae.map((pa) => ({ id: pa.id, name: authorName(pa) })),
 		personae: personae.map((p) => ({
 			...p,
@@ -102,7 +97,7 @@ export const actions = {
 			const [t] = await db
 				.select({ productionStatus: text_.productionStatus, visibility: text_.visibility })
 				.from(text_)
-				.where(and(eq(text_.id, textId), eq(text_.userId, locals.user.id)));
+				.where(and(eq(text_.id, textId), ownedBy(locals.user.id)));
 			if (!t || !isPublicized(t)) return fail(400, { aboutMessage: 'Only one of your own published, public texts can be your about.', aboutMarkdown: markdown });
 			// the Markdown stays saved, so switching back to writing finds it again
 			await db.update(user).set({ aboutTextId: textId, about: markdown.trim() || null }).where(eq(user.id, locals.user.id));
@@ -143,16 +138,23 @@ export const actions = {
 			.where(eq(textAuthor.personaId, id));
 		if (rows.some(isPublicized)) return fail(400, { personaMessage: 'This persona is the author of a published, public text, so it can\'t be deleted.' });
 		const self = await selfPersonaId(locals.user.id);
+		const held = await db
+			.select({ userId: userPersona.userId, personaId: userPersona.personaId })
+			.from(userPersona)
+			.where(or(eq(userPersona.userId, locals.user.id), eq(userPersona.personaId, id)));
+		const shared = held.some((h) => h.personaId === id && h.userId !== locals.user.id);
+		const kept = new Set(held.filter((h) => h.userId === locals.user.id && h.personaId !== id).map((h) => h.personaId));
 		await db.transaction(async (tx) => {
-			// the persona stops being an author; a text left with no author falls back to "self"
+			// The persona stops being an author; where that would leave the user no author persona, "self" takes its place.
+			// A shared persona lives on for its other users, so it only leaves the texts saved under this account.
 			const affected = await tx
 				.select({ id: text_.id })
 				.from(textAuthor)
 				.innerJoin(text_, eq(textAuthor.textId, text_.id))
-				.where(and(eq(text_.userId, locals.user.id), eq(textAuthor.personaId, id)));
+				.where(and(eq(textAuthor.personaId, id), shared ? eq(text_.userId, locals.user.id) : undefined));
 			for (const { id: textId } of affected) {
 				const rest = (await authorIds(textId)).filter((x) => x !== id);
-				await setAuthors(tx, textId, rest.length ? rest : self ? [self] : []);
+				await setAuthors(tx, textId, rest.some((x) => kept.has(x)) || !self ? rest : [...rest, self]);
 			}
 			await tx.delete(userPersona).where(and(eq(userPersona.userId, locals.user.id), eq(userPersona.personaId, id)));
 			// a persona nobody has any more goes away; one still shared stays
@@ -200,20 +202,20 @@ export const actions = {
 		if (!UUID.test(id)) return fail(404, { ...keep, textMessage: 'Text not found.' });
 		if (!title) return fail(400, { ...keep, textMessage: 'Enter a title.' });
 		if (!isProductionStatus(productionStatus) || !isVisibility(visibility)) return fail(400, { ...keep, textMessage: 'Choose a production status and visibility.' });
-		const [current] = await db.select().from(text_).where(and(eq(text_.id, id), eq(text_.userId, locals.user.id)));
+		const [current] = await db.select().from(text_).where(and(eq(text_.id, id), ownedBy(locals.user.id)));
 		if (!current) return fail(404, { ...keep, textMessage: 'Text not found.' });
-		if (!UUID.test(personaId)) return fail(400, { ...keep, textMessage: 'Choose one of your personae as the author.' });
-		const [link] = await db
-			.select({ personaId: userPersona.personaId })
-			.from(userPersona)
-			.where(and(eq(userPersona.userId, locals.user.id), eq(userPersona.personaId, personaId)));
-		if (!link) return fail(400, { ...keep, textMessage: 'Choose one of your personae as the author.' });
 		if (isPublicized(current)) return fail(409, { ...keep, textMessage: LOCKED_MESSAGE });
 		// this table edits the first author; any further authors stay (they are set in the viewer's text settings)
-		const current_ = await authorIds(id);
+		const had = await authorIds(id);
+		const next = [personaId, ...had.slice(1).filter((x) => x !== personaId)];
+		const held = await db.select({ id: userPersona.personaId }).from(userPersona).where(eq(userPersona.userId, locals.user.id));
+		const isMine = (/** @type {string} */ p) => held.some((h) => h.id === p);
+		// the first author is one of the user's personae, or the one it already was; and one of theirs stays an author
+		if (!isMine(personaId) && !had.includes(personaId)) return fail(400, { ...keep, textMessage: 'Choose one of your personae as the author.' });
+		if (!next.some(isMine)) return fail(400, { ...keep, textMessage: 'Keep at least one of your personae as an author.' });
 		await db.transaction(async (tx) => {
 			await tx.update(text_).set({ title, productionStatus, visibility }).where(eq(text_.id, id));
-			await setAuthors(tx, id, [personaId, ...current_.slice(1).filter((x) => x !== personaId)]);
+			await setAuthors(tx, id, next);
 		});
 		return { textUpdated: true };
 	},

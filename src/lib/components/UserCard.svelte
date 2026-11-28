@@ -1,7 +1,6 @@
 <script>
-	import { enhance } from '$app/forms';
-	import { invalidateAll } from '$app/navigation';
-	import { User, UserPlus, UserCheck } from '@boxicons/svelte';
+	import { User } from '@boxicons/svelte';
+	import FollowButton from '#lib/components/FollowButton.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 
 	/**
@@ -30,30 +29,6 @@
 	</span>
 {/snippet}
 
-{#snippet followButton(/** @type {boolean} */ labelled)}
-	<form
-		method="post"
-		action="/community?/follow"
-		use:enhance={() => async ({ update }) => {
-			await update({ reset: false });
-			await invalidateAll();
-		}}
-		class="shrink-0"
-	>
-		<input type="hidden" name="userId" value={user.id} />
-		<input type="hidden" name="on" value={user.following ? '0' : '1'} />
-		<button
-			aria-label="{user.following ? 'Unfollow' : 'Follow'} {name}"
-			aria-pressed={user.following}
-			use:tip={user.following ? 'Following (click to unfollow)' : 'Follow'}
-			class="inline-flex items-center gap-1 rounded-md border border-taupe3 px-1.5 py-1 text-xs {user.following ? 'bg-taupe3' : 'bg-taupe2 hover:bg-taupe3'}"
-		>
-			{#if user.following}<UserCheck size="sm" />{:else}<UserPlus size="sm" />{/if}
-			{#if labelled}{user.following ? 'Following' : 'Follow'}{/if}
-		</button>
-	</form>
-{/snippet}
-
 {#if variant === 'card'}
 	<article class="flex w-56 shrink-0 flex-col gap-2 rounded-xl border border-taupe3 bg-taupe1 p-3 shadow-sm">
 		<div class="flex items-center gap-2">
@@ -66,7 +41,7 @@
 		<p class="line-clamp-3 min-h-12 text-xs text-dark">{user.bio || '—'}</p>
 		<div class="flex items-center justify-between gap-2">
 			<span class="min-w-0 truncate text-xs text-grey3" use:tip={relation || 'No relation yet'}>{relation || ' '}</span>
-			{@render followButton(false)}
+			<FollowButton field="userId" id={user.id} {name} following={user.following} />
 		</div>
 	</article>
 {:else if variant === 'row'}
@@ -76,12 +51,12 @@
 		<span class="truncate text-xs text-dark" use:tip={user.bio || ''}>{user.bio || '—'}</span>
 		<span class="truncate text-xs text-grey3" use:tip={relation || ''}>{relation || '—'}</span>
 		<span class="truncate text-right text-xs text-grey3">{since}</span>
-		<span class="flex justify-end">{@render followButton(false)}</span>
+		<span class="flex justify-end"><FollowButton field="userId" id={user.id} {name} following={user.following} /></span>
 	</div>
 {:else}
 	<div class="relative flex w-20 flex-col items-center gap-1.5" use:tip={[name, texts, relation].filter(Boolean).join(' · ')}>
 		{@render avatar('size-16')}
 		<span class="w-full truncate rounded-2xl border border-taupe3 bg-taupe1 px-2 py-1 text-center text-xs text-taupe5 shadow-lg">{name}</span>
-		{@render followButton(false)}
+		<FollowButton field="userId" id={user.id} {name} following={user.following} />
 	</div>
 {/if}

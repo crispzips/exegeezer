@@ -2,7 +2,7 @@ import { fail, redirect } from '@sveltejs/kit';
 import { and, asc, count, desc, eq, or } from 'drizzle-orm';
 import { auth } from '#lib/server/auth.ts';
 import { db } from '#lib/server/db/index.js';
-import { persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
+import { account, persona, text_, textAuthor, user, userPersona } from '#lib/server/db/schema.js';
 import { authorIds, commentaryOverview, deleteText, isProductionStatus, isVisibility, loadText, namedAuthors, setAuthors } from '#lib/server/texts.js';
 import { ownedBy } from '#lib/server/ownership.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
@@ -44,7 +44,10 @@ export const load = async ({ locals }) => {
 	// "about me": Markdown, or one of the user's own published, public texts (shown in its place)
 	const aboutChoices = used.filter(isPublicized).map((t) => ({ id: t.id, title: t.title }));
 	const aboutText = row.aboutTextId && aboutChoices.some((t) => t.id === row.aboutTextId) ? await loadText(row.aboutTextId, locals) : null;
+	// only email+password accounts have a password to change (Google-only accounts do not)
+	const credentials = await db.select({ id: account.id }).from(account).where(and(eq(account.userId, locals.user.id), eq(account.providerId, 'credential')));
 	return {
+		hasPassword: credentials.length > 0,
 		about: {
 			markdown: row.about ?? '',
 			textId: aboutText ? row.aboutTextId : null,
@@ -84,6 +87,21 @@ export const actions = {
 			return fail(400, { message: error instanceof APIError ? error.message : 'Could not save.', name });
 		}
 		return { saved: true, name };
+	},
+
+	changePassword: async ({ request, locals }) => {
+		if (!locals.user) redirect(302, '/login');
+		const formData = await request.formData();
+		const currentPassword = formData.get('current')?.toString() ?? '';
+		const newPassword = formData.get('next')?.toString() ?? '';
+		if (!currentPassword || !newPassword) return fail(400, { passwordMessage: 'Enter your current and new password.' });
+		if (newPassword.length < 8) return fail(400, { passwordMessage: 'Use a new password of at least 8 characters.' });
+		try {
+			await auth.api.changePassword({ body: { currentPassword, newPassword, revokeOtherSessions: true }, headers: request.headers });
+		} catch (error) {
+			return fail(400, { passwordMessage: error instanceof APIError ? error.message : 'Could not change the password.' });
+		}
+		return { passwordSaved: true };
 	},
 
 	updateAbout: async ({ request, locals }) => {

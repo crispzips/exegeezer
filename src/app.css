@@ -272,16 +272,25 @@ body {
   --color-taupe2: #f8f8f8;
   --color-taupe1: #ffffff;
   --color-taupe0: #ffffff;
+  /* Windows 98 accents: the three primaries, their three complements, hot pink and lime.
+     The slots are named for the other themes' hues, so cyan holds lime and magenta hot pink. */
   --color-red: #ff0000;
-  --color-orange: #ff7f00;
-  --color-yellow: #ffd400;
-  --color-green: #00b300;
+  --color-yellow: #ffff00;
   --color-blue: #0000ff;
-  --color-cyan: #4b0082; /* indigo (the palette has no cyan slot to spare) */
-  --color-violet: #8f00ff;
-  --color-magenta: #c000ff;
+  --color-green: #008000;
+  --color-violet: #800080;
+  --color-orange: #ff8000;
+  --color-magenta: #ff0080; /* hot pink */
+  --color-cyan: #00ff00; /* lime */
   --color-accent: #0000ff; /* the theme's blue */
 }
+/* these range from very dark to very bright, so text on a section colour picks black or white by its lightness */
+:root[data-theme="fluorescent"] .bg-\(--c\) { color: oklch(from var(--c) clamp(0, (0.6 - l) * 1000, 1) 0 0); }
+:root[data-theme="fluorescent"] .bg-\(--c\) :is(.text-taupe4, .text-on-hue\/70, svg[fill="currentColor"]) { color: inherit; }
+/* a map label can't read its bubble's colour, so it is outlined */
+:root[data-theme="fluorescent"] .fill-on-hue { stroke: #000000; stroke-width: 0.25em; paint-order: stroke; }
+/* lime is unreadable as code text on white */
+:root[data-theme="fluorescent"] :is(.hljs-attr, .hljs-attribute, .hljs-property, .hljs-params, .hljs-variable:not(.constant_)) { color: var(--color-violet); }
 /* Cyber (original to Exegeezer): near-black with a blue-violet cast, neon green ink and edges, hotter accents */
 :root[data-theme="cyber"] {
   color-scheme: dark;

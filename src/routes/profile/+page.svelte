@@ -1,10 +1,12 @@
 <script>
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { afterNavigate, goto, invalidateAll } from '$app/navigation';
+	import { page } from '$app/state';
 	import TextsBrowser from '#lib/components/TextsBrowser.svelte';
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import AboutMe from '#lib/components/AboutMe.svelte';
+	import SettingsPane from '#lib/components/SettingsPane.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { LOCKED_MESSAGE, PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash, Key } from '@boxicons/svelte';
@@ -132,8 +134,14 @@
 		pfield = '';
 		resetPersonaDraft();
 	}
-	const tabs = ['Profile', 'Texts', 'Commentaries', 'Personae'];
-	let tab = $state('Profile');
+	const tabs = ['Profile', 'Texts', 'Commentaries', 'Personae', 'Settings'];
+	// `?tab=settings` (where /settings leads) opens that tab; clicking another just switches
+	const tabFor = (/** @type {URL} */ url) => tabs.find((t) => t.toLowerCase() === url.searchParams.get('tab')) ?? 'Profile';
+	let tab = $state(tabFor(page.url));
+	// following a link here picks the tab afresh; a form's own navigation (it drops the query) leaves it be
+	afterNavigate(({ type, to }) => {
+		if (type !== 'form' && to) tab = tabFor(to.url);
+	});
 	/** 'list' | 'icons' */
 	let view = $state(/** @type {'list' | 'icons'} */ ('list'));
 	const day = (iso) => new Date(iso).toLocaleDateString(undefined, { dateStyle: 'medium' });
@@ -208,7 +216,7 @@
 		</form>
 		</div>
 
-		<div role="tablist" aria-label="Profile sections" class="mb-5 flex gap-1 border-b border-taupe3">
+		<div role="tablist" aria-label="Profile sections" class="mb-5 flex flex-wrap gap-1 border-b border-taupe3">
 			{#each tabs as t (t)}
 				<button
 					role="tab"
@@ -272,6 +280,10 @@
 				{:else}
 					<p class="text-sm text-grey3">You have no commentaries yet. One begins when you first comment on a text.</p>
 				{/if}
+			</div>
+		{:else if tab === 'Settings'}
+			<div role="tabpanel" id="panel-Settings" aria-labelledby="tab-Settings">
+				<SettingsPane hasPassword={data.hasPassword} message={form?.passwordMessage} saved={form?.passwordSaved} />
 			</div>
 		{:else}
 			<div role="tabpanel" id="panel-Personae" aria-labelledby="tab-Personae">

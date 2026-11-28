@@ -7,6 +7,7 @@
 	import ConfirmDialog from '#lib/components/ConfirmDialog.svelte';
 	import AboutMe from '#lib/components/AboutMe.svelte';
 	import SettingsPane from '#lib/components/SettingsPane.svelte';
+	import TagField from '#lib/components/TagField.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 	import { LOCKED_MESSAGE, PRODUCTION_STATUSES, VISIBILITIES } from '#lib/textStatus.js';
 	import { Scroll, MessageCircleReply, ListUl, Grid, Plus, Feather, Edit, Trash, Key } from '@boxicons/svelte';
@@ -435,6 +436,10 @@
 								{/if}
 							</div>
 
+							<div class="px-2">
+								<TagField kind="persona" id={detail.id} />
+							</div>
+
 							<div>
 								<span class="px-2 text-grey3">Texts authored ({detail.texts.length})</span>
 								{#if detail.texts.length}
@@ -613,6 +618,9 @@
 					<dt class="px-2 text-grey3">Last changed</dt><dd class="px-2 py-1 text-dark">{fmt(editText.updatedAt)}</dd>
 				</div>
 			</dl>
+			<div class="mt-2 px-2">
+				<TagField kind="text" id={editText.id} />
+			</div>
 			<p class="mt-2 px-2 text-xs text-grey3">Click a value to change it. Changes save when you leave the field; Esc cancels.</p>
 			<div class="mt-3 flex justify-end">
 				<button type="button" onclick={() => textDialog?.close()} class="rounded-md px-3 py-1.5 hover:bg-taupe2">Close</button>

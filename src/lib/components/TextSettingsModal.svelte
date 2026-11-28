@@ -1,5 +1,6 @@
 <script>
 	import MultiSelect from '#lib/components/MultiSelect.svelte';
+	import TagField from '#lib/components/TagField.svelte';
 	import { COMMENT_POLICIES, COMMENT_POLICY_LABELS, PRODUCTION_STATUSES, VISIBILITIES, LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 
 	/**
@@ -86,7 +87,7 @@
 	{#if request}
 		<form onsubmit={(e) => { e.preventDefault(); save(); }} class="flex flex-col gap-2 text-sm">
 			<h2 class="text-base font-semibold">Text settings</h2>
-			{#if info?.publicized}<p class="text-xs text-grey3">{LOCKED_MESSAGE} Only who may comment can still be changed.</p>{/if}
+			{#if info?.publicized}<p class="text-xs text-grey3">{LOCKED_MESSAGE} Only who may comment, and its tags, can still be changed.</p>{/if}
 			{#if info}
 				<label class="grid grid-cols-[8rem_minmax(0,1fr)] items-center gap-2">
 					<span class="text-grey3">Title</span>
@@ -114,6 +115,7 @@
 						{#each COMMENT_POLICIES as v (v)}<option value={v}>{COMMENT_POLICY_LABELS[v]}</option>{/each}
 					</select>
 				</label>
+				<TagField kind="text" id={info.id} />
 				<dl class="grid grid-cols-[8rem_minmax(0,1fr)] gap-x-2 gap-y-1">
 					<dt class="text-grey3">Type</dt><dd>{typeLabel[info.type] ?? info.type}</dd>
 					<dt class="text-grey3">Created</dt><dd>{fmt(info.createdAt)}</dd>

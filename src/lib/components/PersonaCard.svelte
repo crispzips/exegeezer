@@ -3,7 +3,7 @@
 	import PersonaPicture from '#lib/components/PersonaPicture.svelte';
 
 	/**
-	 * A compact card for a persona (picture, name, description, relation), for the community page's browse rows.
+	 * A compact card for a persona (picture, name, description, relation). The name opens the persona's page.
 	 * Another user's persona has a follow button; one followed through its user can only be unfollowed there.
 	 *
 	 * @type {{ persona: { id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, mine: boolean, relations: string[], following: boolean, viaUser: boolean } }}
@@ -19,7 +19,7 @@
 	<div class="flex items-center gap-2">
 		<PersonaPicture image={persona.image} colors={persona.colors} size="size-10" />
 		<div class="min-w-0 flex-1">
-			<p class="truncate text-sm font-medium text-dark">{name}</p>
+			<a href="/persona/{persona.id}" class="block truncate text-sm font-medium text-dark hover:underline">{name}</a>
 			<p class="truncate text-xs text-grey3">{texts}</p>
 		</div>
 		{#if persona.mine}<span class="shrink-0 rounded-md border border-taupe3 bg-taupe2 px-1.5 py-0.5 text-xs">Yours</span>{/if}

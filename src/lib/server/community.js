@@ -1,7 +1,8 @@
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { db } from '#lib/server/db/index.js';
-import { follow, personaFollow, user, userPersona } from '#lib/server/db/schema.js';
-import { OWNERS } from '#lib/server/ownership.js';
+import { follow, persona, personaFollow, user, userPersona } from '#lib/server/db/schema.js';
+import { publicAbout } from '#lib/server/texts.js';
+import { CREDITED, OWNERS } from '#lib/server/ownership.js';
 
 /**
  * What a user card shows about another user, and how they relate to the viewer.
@@ -20,6 +21,7 @@ const UUID = /^[0-9a-f]{8}-(?:[0-9a-f]{4}-){3}[0-9a-f]{12}$/i;
 /** ids of the users related to `me` in each way the community page browses by */
 export async function relatedIds(/** @type {string} */ me) {
 	const rows = async (/** @type {any} */ q) => /** @type {{ id: string }[]} */ (await db.execute(q)).map((r) => r.id);
+	// What I am told about another user goes by what is credited to them (never through a pseudonymous persona).
 	// amiables: users I follow (or whose anthologies/collections I follow), and users who follow me (or mine, my
 	// personae included). Following a persona does not list its user: that would say whose the persona is.
 	const iFollow = await rows(sql`select distinct owner_id as id from follow where follower_id = ${me}`);
@@ -32,11 +34,11 @@ export async function relatedIds(/** @type {string} */ me) {
 	const commentedOnMine = await rows(sql`
 		select distinct co.user_id as id from text c
 			join ${OWNERS} mine on mine.text_id = c.commentary_on and mine.user_id = ${me}
-			join ${OWNERS} co on co.text_id = c.id and co.user_id <> ${me}`);
+			join ${CREDITED} co on co.text_id = c.id and co.user_id <> ${me}`);
 	const iCommentedOn = await rows(sql`
 		select distinct oo.user_id as id from text c
 			join ${OWNERS} mine on mine.text_id = c.id and mine.user_id = ${me}
-			join ${OWNERS} oo on oo.text_id = c.commentary_on and oo.user_id <> ${me}`);
+			join ${CREDITED} oo on oo.text_id = c.commentary_on and oo.user_id <> ${me}`);
 	return { iFollow, followMe, commentedOnMine, iCommentedOn };
 }
 
@@ -61,8 +63,9 @@ export async function relatedPersonaIds(/** @type {string} */ me) {
 }
 
 /**
- * Cards for the given personae, in the given order. A "self" shows as its user's profile name; no other persona
- * says whose it is.
+ * Cards for the given personae, in the given order. A "self" shows as its user's profile name; no other card
+ * says whose its persona is (a persona's page does, unless it is pseudonymous). Following a user therefore only
+ * shows on their personae that aren't pseudonymous.
  * @param {string[]} ids
  * @param {string} me the viewer
  * @returns {Promise<PersonaCard[]>}
@@ -75,7 +78,7 @@ export async function personaCardsFor(ids, me) {
 			select p.id, coalesce(nullif(su.name, ''), p.name) as name, coalesce(p.image, su.image) as image, p.theme_colors as colors, p.description as bio,
 				exists (select 1 from user_persona m where m.persona_id = p.id and m.user_id = ${me}) as mine,
 				exists (select 1 from user_persona up join follow f on f.kind = 'user' and f.target_id = up.user_id
-					where up.persona_id = p.id and f.follower_id = ${me}) as "viaUser",
+					where up.persona_id = p.id and f.follower_id = ${me} and (up.is_self or not p.pseudonymous)) as "viaUser",
 				(select count(*)::int from text_author a join text t on t.id = a.text_id
 					where a.persona_id = p.id and t.visibility = 'public' and t.production_status = 'published') as "publicTexts"
 			from persona p
@@ -121,7 +124,7 @@ export async function cardsFor(ids, me) {
 	const rows = /** @type {any[]} */ (
 		await db.execute(sql`
 			select u.id, u.name, u.image, u.created_at as "createdAt", s.theme_colors as colors, s.description as bio,
-				(select count(*)::int from ${OWNERS} o join text t on t.id = o.text_id
+				(select count(*)::int from ${CREDITED} o join text t on t.id = o.text_id
 						where o.user_id = u.id and t.visibility = 'public' and t.production_status = 'published') as "publicTexts"
 			from "user" u
 				left join user_persona us on us.user_id = u.id and us.is_self
@@ -152,8 +155,61 @@ export async function cardsFor(ids, me) {
 		});
 }
 
-/** users matching a search: name, about, or any of their personae's names and descriptions */
-export async function searchIds(/** @type {string} */ q, /** @type {string} */ me) {
+/**
+ * What a persona's page shows: its card and, unless it is pseudonymous, the cards of the other users who have it.
+ * A "self" has no page of its own (`selfOf`: the user whose it is). Null when there is no such persona.
+ * @param {string} id
+ * @param {string} me the viewer
+ */
+export async function personaPage(id, me) {
+	if (!UUID.test(id)) return null;
+	const [card] = await personaCardsFor([id], me);
+	if (!card) return null;
+	const holders = await db
+		.select({ userId: userPersona.userId, isSelf: userPersona.isSelf, pseudonymous: persona.pseudonymous })
+		.from(userPersona)
+		.innerJoin(persona, eq(persona.id, userPersona.personaId))
+		.where(eq(userPersona.personaId, id))
+		.orderBy(asc(userPersona.createdAt));
+	const self = holders.find((h) => h.isSelf);
+	if (self) return { selfOf: self.userId };
+	const pseudonymous = holders.some((h) => h.pseudonymous);
+	// nothing about a pseudonymous persona's users leaves the server
+	return { selfOf: null, persona: card, pseudonymous, users: pseudonymous ? [] : await cardsFor(holders.map((h) => h.userId), me) };
+}
+
+/**
+ * What another user's page shows: their card, their about and their personae that aren't pseudonymous. Null when
+ * there is no such user (or it is the viewer, whose page is the profile).
+ * @param {string} id
+ * @param {string} me the viewer
+ */
+export async function userPage(id, me) {
+	const [card] = await cardsFor([id], me);
+	if (!card) return null;
+	const [row] = await db.select({ about: user.about, aboutTextId: user.aboutTextId }).from(user).where(eq(user.id, id));
+	const shown = await db
+		.select({ id: persona.id })
+		.from(userPersona)
+		.innerJoin(persona, eq(persona.id, userPersona.personaId))
+		.where(and(eq(userPersona.userId, id), eq(userPersona.isSelf, false), eq(persona.pseudonymous, false)))
+		.orderBy(asc(persona.createdAt));
+	return {
+		user: card,
+		about: { markdown: row.about ?? '', text: row.aboutTextId ? await publicAbout(row.aboutTextId, id) : null },
+		personae: await personaCardsFor(shown.map((p) => p.id), me)
+	};
+}
+
+/**
+ * users matching a search: name, about, or their "self" description; oldest account first. Their other personae are
+ * not searched here (`searchPersonaIds` finds those), so a search for a persona never gives away who has it.
+ * `limit`: null for every match.
+ * @param {string} q
+ * @param {string} me the viewer
+ * @param {number | null} [limit]
+ */
+export async function searchIds(q, me, limit = LIMIT) {
 	const like = `%${q.replace(/[\\%_]/g, '\\$&')}%`;
 	const rows = /** @type {{ id: string }[]} */ (
 		await db.execute(sql`
@@ -161,9 +217,9 @@ export async function searchIds(/** @type {string} */ q, /** @type {string} */ m
 			where u.id <> ${me} and (
 				u.name ilike ${like} or coalesce(u.about, '') ilike ${like}
 				or exists (select 1 from user_persona up join persona p on p.id = up.persona_id
-					where up.user_id = u.id and (p.name ilike ${like} or coalesce(p.description, '') ilike ${like}))
+					where up.user_id = u.id and up.is_self and coalesce(p.description, '') ilike ${like})
 			)
-			order by u.created_at limit ${LIMIT}`)
+			order by u.created_at limit ${limit}`)
 	);
 	return rows.map((r) => r.id);
 }

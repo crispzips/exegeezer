@@ -14,7 +14,8 @@
 		{ href: '/community', label: 'Community', Icon: Earth },
 		{ href: '/settings', label: 'Settings', Icon: Gear }
 	];
-	const current = $derived(pages.find((p) => page.url.pathname.startsWith(p.href))?.href ?? '/exejeeze');
+	/** a persona's or another user's page belongs to the community */
+	const current = $derived(/^\/(persona|user)\//.test(page.url.pathname) ? '/community' : (pages.find((p) => page.url.pathname.startsWith(p.href))?.href ?? '/exejeeze'));
 </script>
 
 <!-- The vertical menu column: always at the right edge of every page. Pages put their own buttons at its top (the text viewer does); at its bottom is the toggle between the text viewer, the profile, the community and the settings -->

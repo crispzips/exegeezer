@@ -8,7 +8,7 @@
 	 *  - 'card': a small card (picture, name, bio, relation, follow), for the browse rows
 	 *  - 'row': one line of a list (the same facts in columns)
 	 *  - 'icon': a picture bubble with the name under it, for the icon view
-	 * The follow button submits the community page's `follow` action.
+	 * The name opens the user's page. The follow button submits the community page's `follow` action.
 	 *
 	 * @type {{
 	 *   user: { id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, memberSince: string, relations: string[], following: boolean },
@@ -21,6 +21,7 @@
 	const since = $derived(new Date(user.memberSince).toLocaleDateString(undefined, { dateStyle: 'medium' }));
 	const texts = $derived(`${user.publicTexts} published text${user.publicTexts === 1 ? '' : 's'}`);
 	const relation = $derived(user.relations.join(' · '));
+	const href = $derived(`/user/${encodeURIComponent(user.id)}`);
 </script>
 
 {#snippet avatar(/** @type {string} */ size)}
@@ -32,7 +33,7 @@
 		<div class="flex items-center gap-2">
 			{@render avatar('size-10')}
 			<div class="min-w-0 flex-1">
-				<p class="truncate text-sm font-medium text-dark">{name}</p>
+				<a {href} class="block truncate text-sm font-medium text-dark hover:underline">{name}</a>
 				<p class="truncate text-xs text-grey3">{texts}</p>
 			</div>
 		</div>
@@ -45,7 +46,7 @@
 {:else if variant === 'row'}
 	<div class="grid grid-cols-[2.25rem_9rem_minmax(0,1fr)_7rem_6rem_2rem] items-center gap-x-3 rounded-md px-1 py-1.5 hover:bg-taupe2">
 		{@render avatar('size-9')}
-		<span class="truncate text-sm font-medium text-dark">{name}</span>
+		<a {href} class="truncate text-sm font-medium text-dark hover:underline">{name}</a>
 		<span class="truncate text-xs text-dark" use:tip={user.bio || ''}>{user.bio || '—'}</span>
 		<span class="truncate text-xs text-grey3" use:tip={relation || ''}>{relation || '—'}</span>
 		<span class="truncate text-right text-xs text-grey3">{since}</span>
@@ -54,7 +55,7 @@
 {:else}
 	<div class="relative flex w-20 flex-col items-center gap-1.5" use:tip={[name, texts, relation].filter(Boolean).join(' · ')}>
 		{@render avatar('size-16')}
-		<span class="w-full truncate rounded-2xl border border-taupe3 bg-taupe1 px-2 py-1 text-center text-xs text-taupe5 shadow-lg">{name}</span>
+		<a {href} class="w-full truncate rounded-2xl border border-taupe3 bg-taupe1 px-2 py-1 text-center text-xs text-taupe5 shadow-lg hover:bg-taupe2">{name}</a>
 		<FollowButton field="userId" id={user.id} {name} following={user.following} />
 	</div>
 {/if}

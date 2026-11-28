@@ -5,7 +5,7 @@
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 
 	/**
-	 * Follow or unfollow a user or a persona, by submitting the community page's `follow` action.
+	 * Follow or unfollow a user or a persona, by submitting the community page's `follow` action (from any page).
 	 * `locked`: why the state can't be changed here (the button then only shows it, with this as its tooltip).
 	 *
 	 * @type {{ field: 'userId' | 'personaId', id: string, name: string, following: boolean, locked?: string }}

@@ -257,7 +257,7 @@ body {
   --color-taupe0: #00212b;
   --color-accent: #268bd2;
 }
-/* Fluorescent (original to Exegeezer): bright white, black ink, grey chrome and accent; the section hues are the rainbow (ROYGBIV) */
+/* Fluorescent (original to Exegeezer): bright white, black ink, grey chrome, blue accent; the section hues are the rainbow (ROYGBIV) */
 :root[data-theme="fluorescent"] {
   color-scheme: light;
   --color-dark: #000000;
@@ -280,7 +280,7 @@ body {
   --color-cyan: #4b0082; /* indigo (the palette has no cyan slot to spare) */
   --color-violet: #8f00ff;
   --color-magenta: #c000ff;
-  --color-accent: #5c5c5c;
+  --color-accent: #0000ff; /* the theme's blue */
 }
 /* Cyber (original to Exegeezer): near-black with a blue-violet cast, neon green ink and edges, hotter accents */
 :root[data-theme="cyber"] {

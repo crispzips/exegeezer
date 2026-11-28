@@ -23,12 +23,12 @@ export const load = async ({ locals }) => {
 	).map((t) => ({ ...t, createdAt: t.createdAt.toISOString(), updatedAt: t.updatedAt.toISOString() }));
 	const personae = (
 		await db
-			.select({ id: persona.id, name: persona.name, description: persona.description, image: persona.image, createdAt: persona.createdAt, isSelf: userPersona.isSelf })
+			.select({ id: persona.id, name: persona.name, description: persona.description, image: persona.image, pseudonymous: persona.pseudonymous, createdAt: persona.createdAt, isSelf: userPersona.isSelf })
 			.from(userPersona)
 			.innerJoin(persona, eq(userPersona.personaId, persona.id))
 			.where(eq(userPersona.userId, locals.user.id))
 			.orderBy(desc(userPersona.isSelf), asc(persona.createdAt))
-	).map((r) => ({ ...r, createdAt: r.createdAt.toISOString() }));
+	).map((r) => ({ ...r, pseudonymous: r.pseudonymous && !r.isSelf, createdAt: r.createdAt.toISOString() }));
 	// personae listed as the author of a published, public text can't be deleted
 	const used = await db.select({ id: text_.id, title: text_.title, type: text_.type, personaId: text_.personaId, productionStatus: text_.productionStatus, visibility: text_.visibility }).from(text_).where(ownedBy(locals.user.id));
 	// every author of every one of the user's texts, in order (a text can have several, some of them other users')
@@ -112,10 +112,11 @@ export const actions = {
 		const formData = await request.formData();
 		const name = formData.get('name')?.toString().trim() ?? '';
 		const description = formData.get('description')?.toString().trim() ?? '';
+		const pseudonymous = formData.get('pseudonymous') === '1';
 		if (!name) return fail(400, { personaMessage: 'Enter a name for the persona.', personaName: name, personaDescription: description });
 		if (isReservedName(name)) return fail(400, { personaMessage: '"self" is reserved for your default persona.', personaName: name, personaDescription: description });
 		await db.transaction(async (tx) => {
-			const [created] = await tx.insert(persona).values({ name, description: description || null }).returning({ id: persona.id });
+			const [created] = await tx.insert(persona).values({ name, description: description || null, pseudonymous }).returning({ id: persona.id });
 			await tx.insert(userPersona).values({ userId: locals.user.id, personaId: created.id });
 		});
 		return { personaCreated: true };
@@ -171,6 +172,8 @@ export const actions = {
 		const name = formData.get('name')?.toString().trim() ?? '';
 		const description = formData.get('description')?.toString().trim() ?? '';
 		const image = formData.get('image')?.toString().trim() ?? '';
+		// '1' or '0'; left as it is when not sent
+		const pseudonymous = formData.get('pseudonymous')?.toString();
 		const keep = { personaMessage: undefined, editId: id, personaName: name, personaDescription: description, personaImage: image };
 		if (!UUID.test(id)) return fail(404, { personaMessage: 'Persona not found.' });
 		const [link] = await db
@@ -185,7 +188,8 @@ export const actions = {
 		if (image && !/^https?:\/\/\S+$/i.test(image)) return fail(400, { ...keep, personaMessage: 'The image must be a web address starting with http:// or https://.' });
 		await db
 			.update(persona)
-			.set({ ...(link.isSelf ? {} : { name }), description: description || null, image: image || null })
+			// a "self" keeps its name and is never pseudonymous
+			.set({ ...(link.isSelf ? {} : { name, ...(pseudonymous === '1' || pseudonymous === '0' ? { pseudonymous: pseudonymous === '1' } : {}) }), description: description || null, image: image || null })
 			.where(eq(persona.id, id));
 		return { personaUpdated: true };
 	},

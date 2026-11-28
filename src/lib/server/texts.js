@@ -3,7 +3,7 @@ import { alias } from 'drizzle-orm/pg-core';
 import { db } from '#lib/server/db/index.js';
 import { COMMENT_POLICIES, PRODUCTION_STATUSES, VISIBILITIES, commentaryTitle } from '#lib/textStatus.js';
 import { selfPersonaId } from '#lib/server/personae.js';
-import { ownedBy } from '#lib/server/ownership.js';
+import { CREDITED, ownedBy } from '#lib/server/ownership.js';
 import { LOCKED_MESSAGE, isPublicized } from '#lib/textStatus.js';
 import { comment, commentParagraph, paragraph, persona, section, text_, textAuthor, textItem, user, userPersona } from '#lib/server/db/schema.js';
 
@@ -122,6 +122,30 @@ export async function listTexts(locals) {
 export async function loadText(id, locals) {
 	const row = await accessible(id, locals);
 	if (!row) return null;
+	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id), importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []), items: await itemsOf(id) };
+}
+
+/**
+ * The text a user shows as their "about", as anyone may read it: only while it is published and public and is
+ * credited to them (see `CREDITED`), so it can't give away a pseudonymous persona of theirs.
+ * @param {string} id the chosen text
+ * @param {string} uid the user whose about it is
+ * @returns {Promise<{ title: string, items: Item[] } | null>}
+ */
+export async function publicAbout(id, uid) {
+	const [row] = await db
+		.select({ title: text_.title, productionStatus: text_.productionStatus, visibility: text_.visibility })
+		.from(text_)
+		.where(and(eq(text_.id, id), sql`exists (select 1 from ${CREDITED} c where c.text_id = ${id} and c.user_id = ${uid})`));
+	return row && isPublicized(row) ? { title: row.title, items: await itemsOf(id) } : null;
+}
+
+/**
+ * A text's content, in order. Says nothing about who may read it: the callers check that.
+ * @param {string} id
+ * @returns {Promise<Item[]>}
+ */
+async function itemsOf(id) {
 	const rows = await db
 		.select({
 			paragraphId: textItem.paragraphId,
@@ -139,8 +163,7 @@ export async function loadText(id, locals) {
 		.leftJoin(section, eq(section.id, textItem.sectionId))
 		.where(eq(textItem.textId, id))
 		.orderBy(asc(textItem.position));
-	/** @type {Item[]} */
-	const items = rows.map((r) =>
+	return rows.map((r) =>
 		r.sectionId
 			? { id: r.sectionId, text: `${'#'.repeat(r.level ?? 1)} ${r.title}`, level: r.level ?? 1, frontmatter: r.frontmatter ?? false, backmatter: r.backmatter ?? false }
 			: {
@@ -151,7 +174,6 @@ export async function loadText(id, locals) {
 					...(r.description ? { description: r.description } : {})
 				}
 	);
-	return { id: row.id, title: row.title, rallyStyle: row.rallyStyle, publicized: isPublicized(row), authors: await authorNames(id), importedDetails: /** @type {Record<string, string>[]} */ (row.importedDetails ?? []), items };
 }
 
 /**

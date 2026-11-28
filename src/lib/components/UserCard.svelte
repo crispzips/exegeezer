@@ -1,6 +1,6 @@
 <script>
-	import { User } from '@boxicons/svelte';
 	import FollowButton from '#lib/components/FollowButton.svelte';
+	import PersonaPicture from '#lib/components/PersonaPicture.svelte';
 	import { tip } from '#lib/utilities/menuTip.svelte.js';
 
 	/**
@@ -11,7 +11,7 @@
 	 * The follow button submits the community page's `follow` action.
 	 *
 	 * @type {{
-	 *   user: { id: string, name: string, image: string | null, bio: string, publicTexts: number, memberSince: string, relations: string[], following: boolean },
+	 *   user: { id: string, name: string, image: string | null, colors: Record<string, string> | null, bio: string, publicTexts: number, memberSince: string, relations: string[], following: boolean },
 	 *   variant?: 'card' | 'row' | 'icon'
 	 * }}
 	 */
@@ -24,9 +24,7 @@
 </script>
 
 {#snippet avatar(/** @type {string} */ size)}
-	<span class="flex shrink-0 items-center justify-center overflow-hidden rounded-bubble border-2 border-taupe3 bg-taupe2 {size}">
-		{#if user.image}<img src={user.image} alt="" class="size-full object-cover" />{:else}<User />{/if}
-	</span>
+	<PersonaPicture image={user.image} colors={user.colors} {size} />
 {/snippet}
 
 {#if variant === 'card'}
